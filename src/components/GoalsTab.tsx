@@ -27,7 +27,7 @@ import {
 import { PlannerData, Goal, GoalMilestone, GoalTask, CoreTask, SecondaryTask, ReminderItem } from '../types';
 
 const GEMINI_API_KEY = "AQ.Ab8RN6LZeGduixWhXMBvCtIlmcOuq0ZLSPSoX-B9rQha2sQL3A";
-const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent";
 
 // Clean JSON string returned by Gemini
 const cleanJsonString = (raw: string): string => {
@@ -166,59 +166,30 @@ Respond strictly in JSON format matching this schema:
 
     try {
       let result;
-      try {
-        const url = `${GEMINI_URL}?key=${GEMINI_API_KEY}`;
-        const response = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            contents: [{
-              parts: [{ text: prompt }]
-            }],
-            generationConfig: {
-              responseMimeType: "application/json"
-            }
-          })
-        });
+      const response = await fetch("/api/gemini/analyze-goal", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          action: "analyze",
+          title: newGoalTitle,
+          totalWeeks: newGoalWeeks,
+          averageTcr: userStatsContext.tcr,
+          universityHours: userStatsContext.activeClassesStatus === 'فعال' ? 15 : 0
+        })
+      });
 
-        if (!response.ok) {
-          throw new Error(`Gemini HTTP Error: ${response.status}`);
-        }
-
-        const resData = await response.json();
-        const rawText = resData.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!rawText) throw new Error("پاسخی از جمنای دریافت نشد");
-
-        const jsonStr = cleanJsonString(rawText);
-        result = JSON.parse(jsonStr);
-      } catch (directError) {
-        console.warn("Direct client-side Gemini request failed. Falling back to backend proxy...", directError);
-        const response = await fetch("/api/gemini/analyze-goal", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            action: "analyze",
-            title: newGoalTitle,
-            totalWeeks: newGoalWeeks,
-            averageTcr: userStatsContext.tcr,
-            universityHours: userStatsContext.activeClassesStatus === 'فعال' ? 15 : 0
-          })
-        });
-
-        if (!response.ok) {
-          throw new Error("ارتباط مستقیم و غیرمستقیم با هوش مصنوعی برقرار نشد. لطفاً اینترنت و کلید API خود را بررسی کنید.");
-        }
-
-        const resData = await response.json();
-        if (resData.success === false) {
-          throw new Error(resData.error || "خطای نامشخص در سرور پروکسی");
-        }
-        result = resData;
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => ({}));
+        throw new Error(errJson.error || "ارتباط با هوش مصنوعی سرور برقرار نشد.");
       }
+
+      const resData = await response.json();
+      if (resData.success === false) {
+        throw new Error(resData.error || "خطای نامشخص در تحلیل هوش مصنوعی");
+      }
+      result = resData;
 
       const newGoalId = `goal_${Date.now()}`;
       
@@ -305,67 +276,38 @@ ${JSON.stringify(goal.milestones)}
 }`;
 
       let result;
-      try {
-        const url = `${GEMINI_URL}?key=${GEMINI_API_KEY}`;
-        const response = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            contents: [{
-              parts: [{ text: prompt }]
-            }],
-            generationConfig: {
-              responseMimeType: "application/json"
+      const response = await fetch("/api/gemini/analyze-goal", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          action: "next-week",
+          title: goal.title,
+          totalWeeks: goal.total_weeks,
+          averageTcr: userStatsContext.tcr,
+          currentWeekIndex: goal.current_week_index - 1,
+          milestones: goal.milestones,
+          completedWeeksHistory: [
+            {
+              week_index: goal.current_week_index - 1,
+              completed_tasks: completedTasks,
+              failed_tasks: failedTasks
             }
-          })
-        });
+          ]
+        })
+      });
 
-        if (!response.ok) {
-          throw new Error(`Gemini Error: ${response.status}`);
-        }
-
-        const resData = await response.json();
-        const rawText = resData.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!rawText) throw new Error("پاسخی از جمنای دریافت نشد");
-
-        const jsonStr = cleanJsonString(rawText);
-        result = JSON.parse(jsonStr);
-      } catch (directError) {
-        console.warn("Direct client-side Gemini next-week request failed. Falling back to backend proxy...", directError);
-        const response = await fetch("/api/gemini/analyze-goal", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            action: "next-week",
-            title: goal.title,
-            totalWeeks: goal.total_weeks,
-            averageTcr: userStatsContext.tcr,
-            currentWeekIndex: goal.current_week_index - 1,
-            milestones: goal.milestones,
-            completedWeeksHistory: [
-              {
-                week_index: goal.current_week_index - 1,
-                completed_tasks: completedTasks,
-                failed_tasks: failedTasks
-              }
-            ]
-          })
-        });
-
-        if (!response.ok) {
-          throw new Error("ارتباط مستقیم و غیرمستقیم با هوش مصنوعی برقرار نشد. لطفاً اینترنت و کلید API خود را بررسی کنید.");
-        }
-
-        const resData = await response.json();
-        if (resData.success === false) {
-          throw new Error(resData.error || "خطای نامشخص در سرور پروکسی");
-        }
-        result = resData;
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => ({}));
+        throw new Error(errJson.error || "ارتباط با هوش مصنوعی سرور برقرار نشد.");
       }
+
+      const resData = await response.json();
+      if (resData.success === false) {
+        throw new Error(resData.error || "خطای نامشخص در تحلیل هوش مصنوعی");
+      }
+      result = resData;
 
       onUpdateData(prev => {
         const updatedGoals = (prev.goals || []).map(g => {

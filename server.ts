@@ -19,7 +19,7 @@ import { eq, and, ne } from "drizzle-orm";
 const app = express();
 const PORT = 3000;
 
-const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_MODEL = "gemini-3.6-flash";
 
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "nimadarai05@gmail.com")
   .split(",")

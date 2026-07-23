@@ -978,6 +978,36 @@ export default function App() {
   const [successMessage, setSuccessMessage] = useState<string>('');
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
 
+  // Android / Mobile Browser Hardware Back Button Handler
+  useEffect(() => {
+    const hasAnyModal = isCalendarRangeOpen || isDailyTaskModalOpen || isSlotModalOpen || isProfileModalOpen || completionTarget !== null;
+
+    if (hasAnyModal || activeTab !== 1) {
+      window.history.pushState({ modalOpen: hasAnyModal, activeTab }, '');
+    }
+
+    const handlePopState = () => {
+      if (isCalendarRangeOpen) {
+        setIsCalendarRangeOpen(false);
+      } else if (isDailyTaskModalOpen) {
+        setIsDailyTaskModalOpen(false);
+      } else if (isSlotModalOpen) {
+        setIsSlotModalOpen(false);
+      } else if (isProfileModalOpen) {
+        setIsProfileModalOpen(false);
+      } else if (completionTarget !== null) {
+        setCompletionTarget(null);
+      } else if (activeTab !== 1) {
+        setActiveTab(1);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [isCalendarRangeOpen, isDailyTaskModalOpen, isSlotModalOpen, isProfileModalOpen, completionTarget, activeTab]);
+
   // Sync state to localStorage
   useEffect(() => {
     localStorage.setItem('planner_data', JSON.stringify(data));
@@ -6053,212 +6083,217 @@ export default function App() {
 
       {/* 1. CALENDAR RANGE SELECTOR (HOTEL RESERVATION STYLE) */}
       {isCalendarRangeOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <div className="w-full max-w-3xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden transform transition-all p-6 text-right animate-in fade-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="w-full max-w-3xl max-h-[92vh] sm:max-h-[90vh] bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col text-right animate-in fade-in zoom-in-95 duration-200">
             
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
-              <h3 className="font-black text-slate-900 text-sm flex items-center gap-2">
-                <CalendarDays className="w-5 h-5 text-indigo-600" />
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-3.5 sm:p-5 border-b border-slate-100 bg-white shrink-0">
+              <h3 className="font-black text-slate-900 text-xs sm:text-sm flex items-center gap-2">
+                <CalendarDays className="w-5 h-5 text-indigo-600 shrink-0" />
                 تنظیم تقویم هفتگی (انتخاب بازه اول و آخر هفته)
               </h3>
               <button
+                type="button"
                 onClick={() => setIsCalendarRangeOpen(false)}
-                className="p-1.5 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                className="p-1.5 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition-colors cursor-pointer shrink-0"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Month & Year Selection Bar */}
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] text-slate-400 font-bold">سال هجری شمسی</label>
-                <select
-                  value={tempYear}
-                  onChange={(e) => setTempYear(parseInt(e.target.value) || 1405)}
-                  className="p-2 border border-slate-200 rounded-xl bg-slate-50 text-xs font-black"
-                >
-                  {YEARS_1400_TO_1430.map(y => (
-                    <option key={y} value={y}>{y}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] text-slate-400 font-bold">ماه شمسی (شروع بازه)</label>
-                <select
-                  value={tempMonth}
-                  onChange={(e) => {
-                    setTempMonth(e.target.value);
-                    setTempStartDay(null);
-                    setTempStartMonth(null);
-                    setTempEndDay(null);
-                    setTempEndMonth(null);
-                  }}
-                  className="p-2 border border-slate-200 rounded-xl bg-slate-50 text-xs font-black"
-                >
-                  {['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'].map(m => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Instruction alert */}
-            <div className="p-3 bg-indigo-50 border border-indigo-100 text-indigo-900 rounded-xl text-xs font-bold mb-4 leading-relaxed">
-              👉 بر روی <span className="text-indigo-600">اولین روز هفته</span> و سپس بر روی <span className="text-indigo-600">آخرین روز هفته</span> کلیک کنید تا بازه هفته انتخاب شود (می‌توانید روزهایی از دو ماه متوالی را کنار هم انتخاب کنید).
-            </div>
-
-            {/* Days Grids for Two Consecutive Months */}
-            {(() => {
-              const month1Idx = JALALI_MONTHS.indexOf(tempMonth);
-              const month1FirstWeekday = month1Idx >= 0 ? getJalaliWeekday(tempYear, month1Idx + 1, 1).index : 0;
-
-              const month2Name = getNextMonth(tempMonth);
-              const month2Idx = JALALI_MONTHS.indexOf(month2Name);
-              const month2Year = tempMonth === 'اسفند' ? tempYear + 1 : tempYear;
-              const month2FirstWeekday = month2Idx >= 0 ? getJalaliWeekday(month2Year, month2Idx + 1, 1).index : 0;
-
-              return (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                  {/* Month 1: tempMonth */}
-                  <div className="border border-slate-150 rounded-2xl p-4 bg-slate-50/30">
-                    <h4 className="text-center font-black text-xs text-indigo-800 mb-3 pb-2 border-b border-slate-200/60 flex items-center justify-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
-                      {tempMonth} {tempYear}
-                    </h4>
-
-                    {/* Weekday Header Row */}
-                    <div className="grid grid-cols-7 gap-1 text-center mb-1.5">
-                      {JALALI_WEEKDAYS.map((w) => (
-                        <div key={`m1-w-${w.key}`} className="p-1 text-[9px] font-black text-indigo-600 bg-indigo-50/70 rounded-lg text-center flex items-center justify-center">
-                          {lang === 'fa' ? w.fa : w.en.slice(0, 3)}
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="grid grid-cols-7 gap-1.5 text-center">
-                      {/* Empty padding slots before Day 1 */}
-                      {Array.from({ length: month1FirstWeekday }).map((_, idx) => (
-                        <div key={`m1-pad-${idx}`} className="p-1.5" />
-                      ))}
-
-                      {Array.from({ length: getDaysInMonth(tempMonth) }, (_, i) => i + 1).map((d) => {
-                        const month1 = tempMonth;
-                        const daysInMonth1 = getDaysInMonth(tempMonth);
-                        const absVal = d;
-                        
-                        const startAbs = (tempStartDay !== null && tempStartMonth)
-                          ? (tempStartMonth === tempMonth ? tempStartDay : (daysInMonth1 + tempStartDay))
-                          : null;
-                          
-                        const endAbs = (tempEndDay !== null && tempEndMonth)
-                          ? (tempEndMonth === tempMonth ? tempEndDay : (daysInMonth1 + tempEndDay))
-                          : null;
-                          
-                        const isStart = tempStartDay === d && tempStartMonth === month1;
-                        const isEnd = tempEndDay === d && tempEndMonth === month1;
-                        const isInRange = startAbs !== null && endAbs !== null && absVal > startAbs && absVal < endAbs;
-                        
-                        let bgClass = 'bg-white hover:bg-slate-100 text-slate-850 border border-slate-200/60 shadow-2xs';
-                        if (isStart) bgClass = 'bg-indigo-600 text-white font-black ring-2 ring-indigo-300';
-                        else if (isEnd) bgClass = 'bg-emerald-600 text-white font-black ring-2 ring-emerald-300';
-                        else if (isInRange) bgClass = 'bg-indigo-50 border border-indigo-200 text-indigo-900 font-bold';
-
-                        return (
-                          <button
-                            key={`m1-${d}`}
-                            type="button"
-                            onClick={() => handleCalendarDayClick(d, month1)}
-                            className={`p-1.5 rounded-xl text-[10px] font-bold transition-all cursor-pointer ${bgClass}`}
-                          >
-                            {d}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Month 2: getNextMonth(tempMonth) */}
-                  <div className="border border-slate-150 rounded-2xl p-4 bg-slate-50/30">
-                    <h4 className="text-center font-black text-xs text-emerald-850 mb-3 pb-2 border-b border-slate-200/60 flex items-center justify-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                      {getNextMonth(tempMonth)} {month2Year}
-                    </h4>
-
-                    {/* Weekday Header Row */}
-                    <div className="grid grid-cols-7 gap-1 text-center mb-1.5">
-                      {JALALI_WEEKDAYS.map((w) => (
-                        <div key={`m2-w-${w.key}`} className="p-1 text-[9px] font-black text-emerald-600 bg-emerald-50/70 rounded-lg text-center flex items-center justify-center">
-                          {lang === 'fa' ? w.fa : w.en.slice(0, 3)}
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="grid grid-cols-7 gap-1.5 text-center">
-                      {/* Empty padding slots before Day 1 */}
-                      {Array.from({ length: month2FirstWeekday }).map((_, idx) => (
-                        <div key={`m2-pad-${idx}`} className="p-1.5" />
-                      ))}
-
-                      {Array.from({ length: getDaysInMonth(getNextMonth(tempMonth)) }, (_, i) => i + 1).map((d) => {
-                        const month2 = getNextMonth(tempMonth);
-                        const daysInMonth1 = getDaysInMonth(tempMonth);
-                        const absVal = daysInMonth1 + d;
-                        
-                        const startAbs = (tempStartDay !== null && tempStartMonth)
-                          ? (tempStartMonth === tempMonth ? tempStartDay : (daysInMonth1 + tempStartDay))
-                          : null;
-                          
-                        const endAbs = (tempEndDay !== null && tempEndMonth)
-                          ? (tempEndMonth === tempMonth ? tempEndDay : (daysInMonth1 + tempEndDay))
-                          : null;
-                          
-                        const isStart = tempStartDay === d && tempStartMonth === month2;
-                        const isEnd = tempEndDay === d && tempEndMonth === month2;
-                        const isInRange = startAbs !== null && endAbs !== null && absVal > startAbs && absVal < endAbs;
-                        
-                        let bgClass = 'bg-white hover:bg-slate-100 text-slate-850 border border-slate-200/60 shadow-2xs';
-                        if (isStart) bgClass = 'bg-indigo-600 text-white font-black ring-2 ring-indigo-300';
-                        else if (isEnd) bgClass = 'bg-emerald-600 text-white font-black ring-2 ring-emerald-300';
-                        else if (isInRange) bgClass = 'bg-indigo-50 border border-indigo-200 text-indigo-900 font-bold';
-
-                        return (
-                          <button
-                            key={`m2-${d}`}
-                            type="button"
-                            onClick={() => handleCalendarDayClick(d, month2)}
-                            className={`p-1.5 rounded-xl text-[10px] font-bold transition-all cursor-pointer ${bgClass}`}
-                          >
-                            {d}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+            {/* Scrollable Content Body */}
+            <div className="p-3.5 sm:p-6 overflow-y-auto flex-1 space-y-4">
+              {/* Month & Year Selection Bar */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-slate-400 font-bold">سال هجری شمسی</label>
+                  <select
+                    value={tempYear}
+                    onChange={(e) => setTempYear(parseInt(e.target.value) || 1405)}
+                    className="p-2 border border-slate-200 rounded-xl bg-slate-50 text-xs font-black"
+                  >
+                    {YEARS_1400_TO_1430.map(y => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
                 </div>
-              );
-            })()}
 
-            {/* Selection display */}
-            <div className="grid grid-cols-2 gap-3 p-3.5 bg-slate-100 rounded-2xl mb-6 text-xs font-black text-slate-700 text-center">
-              <div>اول هفته (شروع): {tempStartDay && tempStartMonth ? `${tempStartDay} ${tempStartMonth}` : '---'}</div>
-              <div>آخر هفته (پایان): {tempEndDay && tempEndMonth ? `${tempEndDay} ${tempEndMonth}` : '---'}</div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-slate-400 font-bold">ماه شمسی (شروع بازه)</label>
+                  <select
+                    value={tempMonth}
+                    onChange={(e) => {
+                      setTempMonth(e.target.value);
+                      setTempStartDay(null);
+                      setTempStartMonth(null);
+                      setTempEndDay(null);
+                      setTempEndMonth(null);
+                    }}
+                    className="p-2 border border-slate-200 rounded-xl bg-slate-50 text-xs font-black"
+                  >
+                    {['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'].map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Instruction alert */}
+              <div className="p-2.5 sm:p-3 bg-indigo-50 border border-indigo-100 text-indigo-900 rounded-xl text-[11px] sm:text-xs font-bold leading-relaxed">
+                👉 بر روی <span className="text-indigo-600">اولین روز هفته</span> و سپس بر روی <span className="text-indigo-600">آخرین روز هفته</span> کلیک کنید تا بازه هفته انتخاب شود (می‌توانید روزهایی از دو ماه متوالی را کنار هم انتخاب کنید).
+              </div>
+
+              {/* Days Grids for Two Consecutive Months */}
+              {(() => {
+                const month1Idx = JALALI_MONTHS.indexOf(tempMonth);
+                const month1FirstWeekday = month1Idx >= 0 ? getJalaliWeekday(tempYear, month1Idx + 1, 1).index : 0;
+
+                const month2Name = getNextMonth(tempMonth);
+                const month2Idx = JALALI_MONTHS.indexOf(month2Name);
+                const month2Year = tempMonth === 'اسفند' ? tempYear + 1 : tempYear;
+                const month2FirstWeekday = month2Idx >= 0 ? getJalaliWeekday(month2Year, month2Idx + 1, 1).index : 0;
+
+                return (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                    {/* Month 1: tempMonth */}
+                    <div className="border border-slate-150 rounded-2xl p-3 sm:p-4 bg-slate-50/30">
+                      <h4 className="text-center font-black text-xs text-indigo-800 mb-2.5 pb-2 border-b border-slate-200/60 flex items-center justify-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
+                        {tempMonth} {tempYear}
+                      </h4>
+
+                      {/* Weekday Header Row */}
+                      <div className="grid grid-cols-7 gap-1 text-center mb-1.5">
+                        {JALALI_WEEKDAYS.map((w) => (
+                          <div key={`m1-w-${w.key}`} className="p-1 text-[9px] font-black text-indigo-600 bg-indigo-50/70 rounded-lg text-center flex items-center justify-center">
+                            {lang === 'fa' ? w.fa : w.en.slice(0, 3)}
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="grid grid-cols-7 gap-1 sm:gap-1.5 text-center">
+                        {/* Empty padding slots before Day 1 */}
+                        {Array.from({ length: month1FirstWeekday }).map((_, idx) => (
+                          <div key={`m1-pad-${idx}`} className="p-1.5" />
+                        ))}
+
+                        {Array.from({ length: getDaysInMonth(tempMonth) }, (_, i) => i + 1).map((d) => {
+                          const month1 = tempMonth;
+                          const daysInMonth1 = getDaysInMonth(tempMonth);
+                          const absVal = d;
+                          
+                          const startAbs = (tempStartDay !== null && tempStartMonth)
+                            ? (tempStartMonth === tempMonth ? tempStartDay : (daysInMonth1 + tempStartDay))
+                            : null;
+                            
+                          const endAbs = (tempEndDay !== null && tempEndMonth)
+                            ? (tempEndMonth === tempMonth ? tempEndDay : (daysInMonth1 + tempEndDay))
+                            : null;
+                            
+                          const isStart = tempStartDay === d && tempStartMonth === month1;
+                          const isEnd = tempEndDay === d && tempEndMonth === month1;
+                          const isInRange = startAbs !== null && endAbs !== null && absVal > startAbs && absVal < endAbs;
+                          
+                          let bgClass = 'bg-white hover:bg-slate-100 text-slate-850 border border-slate-200/60 shadow-2xs';
+                          if (isStart) bgClass = 'bg-indigo-600 text-white font-black ring-2 ring-indigo-300';
+                          else if (isEnd) bgClass = 'bg-emerald-600 text-white font-black ring-2 ring-emerald-300';
+                          else if (isInRange) bgClass = 'bg-indigo-50 border border-indigo-200 text-indigo-900 font-bold';
+
+                          return (
+                            <button
+                              key={`m1-${d}`}
+                              type="button"
+                              onClick={() => handleCalendarDayClick(d, month1)}
+                              className={`p-1.5 sm:p-2 rounded-xl text-[10px] sm:text-xs font-bold transition-all cursor-pointer ${bgClass}`}
+                            >
+                              {d}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Month 2: getNextMonth(tempMonth) */}
+                    <div className="border border-slate-150 rounded-2xl p-3 sm:p-4 bg-slate-50/30">
+                      <h4 className="text-center font-black text-xs text-emerald-850 mb-2.5 pb-2 border-b border-slate-200/60 flex items-center justify-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                        {getNextMonth(tempMonth)} {month2Year}
+                      </h4>
+
+                      {/* Weekday Header Row */}
+                      <div className="grid grid-cols-7 gap-1 text-center mb-1.5">
+                        {JALALI_WEEKDAYS.map((w) => (
+                          <div key={`m2-w-${w.key}`} className="p-1 text-[9px] font-black text-emerald-600 bg-emerald-50/70 rounded-lg text-center flex items-center justify-center">
+                            {lang === 'fa' ? w.fa : w.en.slice(0, 3)}
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="grid grid-cols-7 gap-1 sm:gap-1.5 text-center">
+                        {/* Empty padding slots before Day 1 */}
+                        {Array.from({ length: month2FirstWeekday }).map((_, idx) => (
+                          <div key={`m2-pad-${idx}`} className="p-1.5" />
+                        ))}
+
+                        {Array.from({ length: getDaysInMonth(getNextMonth(tempMonth)) }, (_, i) => i + 1).map((d) => {
+                          const month2 = getNextMonth(tempMonth);
+                          const daysInMonth1 = getDaysInMonth(tempMonth);
+                          const absVal = daysInMonth1 + d;
+                          
+                          const startAbs = (tempStartDay !== null && tempStartMonth)
+                            ? (tempStartMonth === tempMonth ? tempStartDay : (daysInMonth1 + tempStartDay))
+                            : null;
+                            
+                          const endAbs = (tempEndDay !== null && tempEndMonth)
+                            ? (tempEndMonth === tempMonth ? tempEndDay : (daysInMonth1 + tempEndDay))
+                            : null;
+                            
+                          const isStart = tempStartDay === d && tempStartMonth === month2;
+                          const isEnd = tempEndDay === d && tempEndMonth === month2;
+                          const isInRange = startAbs !== null && endAbs !== null && absVal > startAbs && absVal < endAbs;
+                          
+                          let bgClass = 'bg-white hover:bg-slate-100 text-slate-850 border border-slate-200/60 shadow-2xs';
+                          if (isStart) bgClass = 'bg-indigo-600 text-white font-black ring-2 ring-indigo-300';
+                          else if (isEnd) bgClass = 'bg-emerald-600 text-white font-black ring-2 ring-emerald-300';
+                          else if (isInRange) bgClass = 'bg-indigo-50 border border-indigo-200 text-indigo-900 font-bold';
+
+                          return (
+                            <button
+                              key={`m2-${d}`}
+                              type="button"
+                              onClick={() => handleCalendarDayClick(d, month2)}
+                              className={`p-1.5 sm:p-2 rounded-xl text-[10px] sm:text-xs font-bold transition-all cursor-pointer ${bgClass}`}
+                            >
+                              {d}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Selection display */}
+              <div className="grid grid-cols-2 gap-2 p-3 bg-slate-100/90 rounded-2xl text-xs font-black text-slate-700 text-center border border-slate-200/60">
+                <div>اول هفته (شروع): <span className="text-indigo-600">{tempStartDay && tempStartMonth ? `${tempStartDay} ${tempStartMonth}` : '---'}</span></div>
+                <div>آخر هفته (پایان): <span className="text-emerald-600">{tempEndDay && tempEndMonth ? `${tempEndDay} ${tempEndMonth}` : '---'}</span></div>
+              </div>
             </div>
 
-            {/* Buttons */}
-            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
+            {/* Modal Sticky Footer */}
+            <div className="flex items-center justify-between sm:justify-end gap-2 p-3 sm:p-4 border-t border-slate-100 bg-slate-50/90 shrink-0">
               <button
                 type="button"
                 onClick={() => setIsCalendarRangeOpen(false)}
-                className="text-xs text-slate-500 hover:bg-slate-100 px-4 py-2.5 rounded-xl font-bold transition-all cursor-pointer"
+                className="text-xs text-slate-600 hover:bg-slate-200/60 px-4 py-2.5 rounded-xl font-bold transition-all cursor-pointer"
               >
                 انصراف
               </button>
               <button
                 type="button"
                 onClick={submitCalendarRange}
-                className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-black shadow-lg shadow-indigo-100 transition-all cursor-pointer"
+                className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-black shadow-md shadow-indigo-200 transition-all cursor-pointer"
               >
                 تایید و ثبت بازه تقویم
               </button>
