@@ -1,0 +1,54 @@
+name: Build and Release App (Android & Windows Web)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Linter / Type Check
+        run: npm run lint
+
+      - name: Build Web Production App (Windows/Web Bundle)
+        run: npm run build
+
+      - name: Upload Web Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-windows-dist
+          path: dist/
+
+      - name: Set up Java JDK for Android Build (Optional Capacitor Integration)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      # اگر از Capacitor برای ساخت مستقیم APK استفاده می‌کنید:
+      # - name: Sync Android with Capacitor
+      #   run: |
+      #     npx cap add android || true
+      #     npx cap copy android
+      #
+      # - name: Build Android APK
+      #   run: |
+      #     cd android
+      #     chmod +x gradlew
+      #     ./gradlew assembleDebug
