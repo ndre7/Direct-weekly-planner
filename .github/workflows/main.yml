@@ -1,4 +1,4 @@
-name: Build Android APK and Web/Windows Export
+name: Build & Release (Android APK & Windows/Web)
 
 on:
   push:
@@ -12,58 +12,49 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ۱. دریافت آخرین نسخه کدها از گیت‌هاب
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # ۲. تنظیم نسخه نود ۱۰/۲۲ به جای ۲۰ برای جلوگیری از خطای Deprecation
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: 22
 
-      # ۳. تنظیم Java 17 برای بیلد پروژه اندروید
-      - name: Set up JDK 17
+      - name: Setup Java 17 (Required for Android Gradle)
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: 'zulu'
           java-version: '17'
 
-      # ۴. نصب پکیج‌های پروژه (بدون نیاز اجباری به package-lock.json)
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Install Dependencies
-        run: npm install
+        run: npm install --no-audit --no-fund
 
-      # ۵. کامپایل و ساخت نسخه وب و ویندوز (Vite Static Build)
-      - name: Build Web / Windows Dist
-        run: npm run build
+      - name: Build Web Dist
+        run: npx vite build
 
-      # ۶. مقداردهی و افزودن پلتفرم اندروید در صورت عدم وجود فولدور android
-      - name: Add Capacitor Android Platform (if missing)
+      - name: Install & Setup Capacitor
         run: |
-          npx cap init "Direct Planner" "com.direct.planner" --web-dir dist || true
-          npm install @capacitor/core @capacitor/cli @capacitor/android
+          npm install @capacitor/core @capacitor/cli @capacitor/android --no-audit --no-fund
           npx cap add android || true
           npx cap sync android
 
-      # ۷. بیلد فایل APK اندروید (سازگار با اندروید ۹ به بالا)
-      - name: Build Android APK
+      - name: Build Android APK (Universal - Android 9+)
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleDebug
 
-      # ۸. ذخیره فایل خروجی وب / ویندوز به عنوان Artifact
-      - name: Upload Web/Windows Build Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-windows-build
-          path: dist/
-          retention-days: 7
-
-      # ۹. ذخیره فایل APK اندروید به عنوان Artifact قابل دانلود
       - name: Upload Android APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: direct-planner-android-apk
+          name: Direct-Planner-Android-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 7
+
+      - name: Upload Windows & Web Bundle Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Direct-Planner-Web-Windows-Dist
+          path: dist/
