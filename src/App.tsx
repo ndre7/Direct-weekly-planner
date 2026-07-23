@@ -28,7 +28,11 @@ import {
   CheckSquare,
   Link2,
   ArrowUpDown,
-  BarChart3
+  BarChart3,
+  GraduationCap,
+  Mail,
+  Bell,
+  Send
 } from 'lucide-react';
 
 import { PlannerData, ClassSlot, DailyTask, Category, SecondaryTask, ReminderItem, NoteItem, DetailsColumn, DetailsItem, CoreTask, PostponedEvent, User } from './types';
@@ -36,7 +40,8 @@ import { INITIAL_PLANNER_DATA } from './initialData';
 import { TRANSLATIONS, DAYS_OF_WEEK } from './translations';
 import { getIdToken } from 'firebase/auth';
 import { auth } from './lib/firebase.ts';
-import { safeParseJson } from './lib/auth.ts';
+import { safeParseJson, getCachedGmailToken, connectGmail } from './lib/auth.ts';
+import { sendGmailEmail, buildReminderEmailHtml, parseItemDeadlineMs, getOffsetMs, getOffsetLabelFa, REMINDER_OFFSET_OPTIONS, ReminderOffset } from './lib/gmailReminders';
 
 // Modular Sub-components
 import Header from './components/Header';
@@ -45,7 +50,6 @@ import ClassSlotModal from './components/ClassSlotModal';
 import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
 import DailyTaskModal from './components/DailyTaskModal';
-import CategoriesManager from './components/CategoriesManager';
 import AnalyticsTab from './components/AnalyticsTab';
 import GoalsTab from './components/GoalsTab';
 import UserProfileModal from './components/UserProfileModal';
@@ -285,6 +289,25 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const [isExportingPDF, setIsExportingPDF] = useState<boolean>(false);
   const [detailsSortOrder, setDetailsSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [examSortOrder, setExamSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  const [newExamItem, setNewExamItem] = useState<{
+    columnId: string;
+    text: string;
+    date: string;
+    type: string;
+    description: string;
+    emailReminder: boolean;
+    reminderOffset: ReminderOffset;
+  }>({
+    columnId: '',
+    text: '',
+    date: '',
+    type: 'امتحان',
+    description: '',
+    emailReminder: true,
+    reminderOffset: '1day',
+  });
 
   const [newEvent, setNewEvent] = useState({
     title: '',
@@ -306,7 +329,7 @@ export default function App() {
     }
     
     const created: PostponedEvent = {
-      id: `pe_${Date.now()}`,
+      id: `pe_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       title: newEvent.title.trim(),
       type: newEvent.type,
       action: newEvent.action,
@@ -499,6 +522,114 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [data, currentUser]);
+
+  // Automated Gmail Reminder Checker Loop
+  useEffect(() => {
+    if (data.emailRemindersGlobalEnabled === false) return;
+    const token = getCachedGmailToken();
+    if (!token || !currentUser?.email) return;
+
+    const checkAndSendReminders = async () => {
+      const now = Date.now();
+      let hasUpdates = false;
+      const updatedData = { ...data };
+
+      // 1. Check Exam Columns
+      const updatedExamCols = (updatedData.examColumns || []).map((col) => {
+        let colChanged = false;
+        const updatedItems = col.items.map((item) => {
+          if (item.emailReminder && !item.reminderSent && !item.completed) {
+            const deadlineMs = parseItemDeadlineMs(item, data.weekYear || 1405);
+            if (deadlineMs) {
+              const offsetMs = getOffsetMs(item.reminderOffset || data.emailReminderDefaultOffset || '1day');
+              const reminderTime = deadlineMs - offsetMs;
+              
+              if (now >= reminderTime && now <= deadlineMs + 24 * 60 * 60 * 1000) {
+                const deadlineDisplay = item.date || 'سررسید قریب‌الوقوع';
+                const html = buildReminderEmailHtml(
+                  item.text,
+                  `امتحانات و ارائه‌ها (${col.titleFa})`,
+                  deadlineDisplay,
+                  item.description
+                );
+
+                sendGmailEmail(
+                  token,
+                  currentUser.email!,
+                  `⏰ یادآوری امتحان / ارائه: ${item.text}`,
+                  html
+                ).then(() => {
+                  showToast(`ایمیل یادآوری برای "${item.text}" ارسال شد`, 'success');
+                }).catch((err) => {
+                  console.warn('Reminder email failed:', err);
+                });
+
+                colChanged = true;
+                hasUpdates = true;
+                return { ...item, reminderSent: true };
+              }
+            }
+          }
+          return item;
+        });
+
+        return colChanged ? { ...col, items: updatedItems } : col;
+      });
+
+      // 2. Check Details Columns
+      const updatedDetailsCols = (updatedData.detailsColumns || []).map((col) => {
+        let colChanged = false;
+        const updatedItems = col.items.map((item) => {
+          if (item.emailReminder && !item.reminderSent && !item.completed) {
+            const deadlineMs = parseItemDeadlineMs(item, data.weekYear || 1405);
+            if (deadlineMs) {
+              const offsetMs = getOffsetMs(item.reminderOffset || data.emailReminderDefaultOffset || '1day');
+              const reminderTime = deadlineMs - offsetMs;
+              
+              if (now >= reminderTime && now <= deadlineMs + 24 * 60 * 60 * 1000) {
+                const deadlineDisplay = item.date || 'سررسید ددلاین';
+                const html = buildReminderEmailHtml(
+                  item.text,
+                  `ددلاین‌ها (${col.titleFa})`,
+                  deadlineDisplay
+                );
+
+                sendGmailEmail(
+                  token,
+                  currentUser.email!,
+                  `⏰ یادآوری ددلاین: ${item.text}`,
+                  html
+                ).then(() => {
+                  showToast(`ایمیل یادآوری ددلاین برای "${item.text}" ارسال شد`, 'success');
+                }).catch((err) => {
+                  console.warn('Reminder email failed:', err);
+                });
+
+                colChanged = true;
+                hasUpdates = true;
+                return { ...item, reminderSent: true };
+              }
+            }
+          }
+          return item;
+        });
+
+        return colChanged ? { ...col, items: updatedItems } : col;
+      });
+
+      if (hasUpdates) {
+        setData(prev => ({
+          ...prev,
+          examColumns: updatedExamCols,
+          detailsColumns: updatedDetailsCols
+        }));
+      }
+    };
+
+    checkAndSendReminders();
+    const interval = setInterval(checkAndSendReminders, 60000);
+    return () => clearInterval(interval);
+  }, [data.emailRemindersGlobalEnabled, currentUser, data.examColumns, data.detailsColumns]);
 
   const [past, setPast] = useState<PlannerData[]>([]);
   const [future, setFuture] = useState<PlannerData[]>([]);
@@ -955,7 +1086,7 @@ export default function App() {
   const handleAddTodo = (text: string) => {
     if (!text.trim()) return;
     const newTodo = {
-      id: `todo_${Date.now()}`,
+      id: `todo_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       text: text.trim(),
       completed: false,
     };
@@ -1162,6 +1293,7 @@ export default function App() {
       { id: 2, name: 'ددلاین‌ها' },
       { id: 4, name: 'یادآوری‌ها' },
       { id: 7, name: 'کارهای انجام شده و نشده' },
+      { id: 11, name: 'امتحانات و ارائه‌ها' },
       { id: 8, name: 'لغو و تعویق‌ها' },
       { id: 5, name: 'یادداشت‌ها' },
       { id: 9, name: 'تحلیل عملکرد' }
@@ -1331,9 +1463,9 @@ export default function App() {
         const element = document.getElementById('pdf-capture-area');
         if (!element) continue;
 
-        // Capture with html2canvas (scaled to 2 for excellent printable density)
+        // Capture with html2canvas (scaled to 1.5 for optimal balance between resolution and file size)
         const canvas = await html2canvas(element, {
-          scale: 2,
+          scale: 1.5,
           useCORS: true,
           logging: false,
           backgroundColor: '#f8fafc',
@@ -1388,7 +1520,8 @@ export default function App() {
             ctx.drawImage(canvas, 0, currentY, canvas.width, chunkHeight, 0, 0, canvas.width, chunkHeight);
           }
 
-          const imgData = slice.toDataURL('image/png');
+          // Convert slice to compressed JPEG to reduce file size from ~140MB to ~2MB
+          const imgData = slice.toDataURL('image/jpeg', 0.82);
 
           if (!isFirstPage) {
             pdf.addPage();
@@ -1397,7 +1530,7 @@ export default function App() {
           }
 
           const renderedHeightMm = chunkHeight * scale;
-          pdf.addImage(imgData, 'PNG', marginMm, marginMm, imgWidth, renderedHeightMm);
+          pdf.addImage(imgData, 'JPEG', marginMm, marginMm, imgWidth, renderedHeightMm, undefined, 'FAST');
 
           currentY += chunkHeight;
         }
@@ -1646,7 +1779,7 @@ export default function App() {
         nextRow++;
       }
       setEditingSlot({
-        id: `slot_${Date.now()}`,
+        id: `slot_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
         row: nextRow,
         dayKey,
         textFa: '',
@@ -1715,7 +1848,7 @@ export default function App() {
   // Add Empty Daily Task inline
   const handleAddEmptyDailyTask = (dayKey: string) => {
     const newTask: DailyTask = {
-      id: `task_${Date.now()}`,
+      id: `task_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       textFa: 'کار جدید دانشگاه یا زبان',
       textEn: 'New task',
       categoryId: 'university',
@@ -1896,7 +2029,7 @@ export default function App() {
   };
 
   const handleAddDetailsColumn = () => {
-    const newColId = `dc_${Date.now()}`;
+    const newColId = `dc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const newCol = {
       id: newColId,
       titleFa: 'ستون ددلاین جدید',
@@ -1910,6 +2043,107 @@ export default function App() {
     showToast('ستون ددلاین جدید اضافه شد');
   };
 
+  // Exams & Presentations (Tab 11) Handlers
+  const handleDeleteExamColumn = (columnId: string) => {
+    setData((prev) => ({
+      ...prev,
+      examColumns: (prev.examColumns || []).filter((col) => col.id !== columnId),
+    }));
+    showToast('ستون امتحانات با موفقیت حذف شد');
+  };
+
+  const handleAddExamColumn = () => {
+    const newColId = `ec_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const newCol = {
+      id: newColId,
+      titleFa: 'دسته‌بندی جدید امتحانات و ارائه‌ها',
+      titleEn: 'New Exams Category',
+      items: [],
+    };
+    setData((prev) => ({
+      ...prev,
+      examColumns: [...(prev.examColumns || []), newCol],
+    }));
+    showToast('ستون امتحانات جدید اضافه شد');
+  };
+
+  const handleEditExamHeader = (colId: string, value: string) => {
+    setData((prev) => {
+      const columns = (prev.examColumns || []).map((col) => {
+        if (col.id === colId) {
+          return {
+            ...col,
+            titleFa: value,
+          };
+        }
+        return col;
+      });
+      return { ...prev, examColumns: columns };
+    });
+  };
+
+  const handleAddExamItem = (columnId: string, itemData: { text: string; date?: string; type?: string; description?: string; emailReminder?: boolean; reminderOffset?: ReminderOffset }) => {
+    if (!itemData.text.trim()) return;
+    const newItem = {
+      id: `ex_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      text: itemData.text.trim(),
+      date: itemData.date || `${data.weekYear || 1405}/03/15 10:00`,
+      type: itemData.type || 'امتحان',
+      description: itemData.description,
+      completed: false,
+      emailReminder: itemData.emailReminder !== false,
+      reminderOffset: itemData.reminderOffset || data.emailReminderDefaultOffset || '1day',
+    };
+
+    setData((prev) => {
+      const cols = (prev.examColumns || []).map((col) => {
+        if (col.id === columnId) {
+          return {
+            ...col,
+            items: [...col.items, newItem],
+          };
+        }
+        return col;
+      });
+      return { ...prev, examColumns: cols };
+    });
+    showToast('امتحان / ارائه جدید ثبت شد');
+  };
+
+  const handleToggleExamItem = (columnId: string, itemId: string) => {
+    setData((prev) => {
+      const cols = (prev.examColumns || []).map((col) => {
+        if (col.id === columnId) {
+          const items = col.items.map((item) => {
+            if (item.id === itemId) {
+              return { ...item, completed: !item.completed };
+            }
+            return item;
+          });
+          return { ...col, items };
+        }
+        return col;
+      });
+      return { ...prev, examColumns: cols };
+    });
+  };
+
+  const handleDeleteExamItem = (columnId: string, itemId: string) => {
+    setData((prev) => {
+      const cols = (prev.examColumns || []).map((col) => {
+        if (col.id === columnId) {
+          return {
+            ...col,
+            items: col.items.filter((item) => item.id !== itemId),
+          };
+        }
+        return col;
+      });
+      return { ...prev, examColumns: cols };
+    });
+    showToast('مورد با موفقیت حذف شد');
+  };
+
   // Secondary Task Columns (Tab 3)
   const handleDeleteSecondaryColumn = (columnId: string) => {
     setData((prev) => ({
@@ -1921,7 +2155,7 @@ export default function App() {
   };
 
   const handleAddSecondaryColumn = () => {
-    const newColId = `sc_${Date.now()}`;
+    const newColId = `sc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const newCol = {
       id: newColId,
       titleFa: 'دسته‌بندی جدید کارهای فرعی',
@@ -1988,17 +2222,36 @@ export default function App() {
   };
 
   const handleDeleteCategory = (catId: string) => {
-    setData((prev) => ({
-      ...prev,
-      categories: prev.categories.filter((c) => c.id !== catId),
-    }));
-    showToast('دسته‌بندی حذف شد');
+    setData((prev) => {
+      const remainingCats = prev.categories.filter((c) => c.id !== catId);
+      const updatedClasses = prev.classesSchedule.map(s => s.categoryId === catId ? { ...s, categoryId: undefined } : s);
+      const updatedCore = (prev.coreTasks || []).map(t => t.categoryId === catId ? { ...t, categoryId: '' } : t);
+      const updatedSecondary = prev.secondaryTasks.map(t => t.categoryId === catId ? { ...t, categoryId: undefined } : t);
+      const updatedPostponed = (prev.postponedEvents || []).map(p => p.categoryId === catId ? { ...p, categoryId: undefined } : p);
+      
+      const updatedDailyTasks: Record<string, DailyTask[]> = {};
+      Object.entries(prev.dailyTasks || {}).forEach(([dayKey, tasks]) => {
+        const taskArray = (tasks || []) as DailyTask[];
+        updatedDailyTasks[dayKey] = taskArray.map(t => t.categoryId === catId ? { ...t, categoryId: undefined } : t);
+      });
+
+      return {
+        ...prev,
+        categories: remainingCats,
+        classesSchedule: updatedClasses,
+        coreTasks: updatedCore,
+        secondaryTasks: updatedSecondary,
+        postponedEvents: updatedPostponed,
+        dailyTasks: updatedDailyTasks
+      };
+    });
+    showToast('دسته‌بندی با موفقیت حذف شد و ارجاعات پاکسازی شدند');
   };
 
   // Details Columns (Page 2) Actions
   const handleAddDeadlineItem = (colId: string) => {
     const newItem: DetailsItem = {
-      id: `det_${Date.now()}`,
+      id: `det_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       text: 'مورد ددلاین جدید',
       date: undefined
     };
@@ -2150,7 +2403,7 @@ export default function App() {
   // Secondary Tasks (Page 5) Actions
   const handleAddSecondaryTask = (columnId: string) => {
     const newTask: SecondaryTask = {
-      id: `st_${Date.now()}`,
+      id: `st_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       columnId,
       textFa: 'کار فکری جدید',
       textEn: 'New task',
@@ -2255,7 +2508,7 @@ export default function App() {
 
   const handleAddCoreTask = (categoryId: string) => {
     const newTask = {
-      id: `ct_${Date.now()}`,
+      id: `ct_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       categoryId,
       title: 'کار اصلی جدید',
       description: 'توضیحات کار اصلی را اینجا بنویسید...',
@@ -2493,7 +2746,7 @@ export default function App() {
   // Habits (Page 8) Actions
   const handleAddHabit = () => {
     const newHabit: ReminderItem = {
-      id: `rem_${Date.now()}`,
+      id: `rem_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       textFa: 'عادت یا یادآوری جدید',
       textEn: 'New habit',
       checkedDays: [],
@@ -4602,6 +4855,345 @@ export default function App() {
                       ))}
                     </tbody>
                   </table>
+                </div>
+
+              </div>
+
+            </div>
+          )}
+
+          {/* Tab 11: Exams & Presentations (امتحانات و ارائه‌ها) */}
+          {activeTab === 11 && (
+            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-3 duration-200">
+              
+              {/* Header Box */}
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-5">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-6 bg-rose-600 rounded-full"></div>
+                    {editMode ? (
+                      <input
+                        type="text"
+                        value={data.examsAndPresentationsTitle || "برنامه امتحانات و ارائه‌های نیم‌سال"}
+                        onChange={(e) => setData({ ...data, examsAndPresentationsTitle: e.target.value })}
+                        className="text-xs font-black text-slate-800 bg-amber-50 border border-amber-200 rounded-lg p-1.5 focus:outline-none w-80"
+                      />
+                    ) : (
+                      <h2 className="text-sm font-black text-slate-900">
+                        {data.examsAndPresentationsTitle || "برنامه امتحانات و ارائه‌های نیم‌سال"}
+                      </h2>
+                    )}
+                  </div>
+                  
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <p className="text-xs text-slate-400 font-bold hidden md:block">مدیریت و یادآوری ایمیلی امتحانات، ارائه‌ها و کوییزها</p>
+                    <div className="h-4 w-[1px] bg-slate-200 hidden md:block"></div>
+                    <button
+                      onClick={() => setExamSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 hover:text-slate-900 rounded-xl text-[10px] font-black border border-slate-200 transition-all cursor-pointer shadow-2xs"
+                    >
+                      <ArrowUpDown className="w-3.5 h-3.5 text-slate-500" />
+                      <span>مرتب‌سازی بر اساس تاریخ:</span>
+                      <span className="text-rose-600 font-bold">
+                        {examSortOrder === 'asc' ? 'نزدیک‌ترین به دورترین' : 'دورترین به نزدیک‌ترین'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Main Content Workspace with Add Form & Column Grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
+                
+                {/* Form to add new Exam / Presentation */}
+                <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-5 space-y-4 lg:col-span-1">
+                  <h3 className="font-black text-slate-800 text-xs border-b border-slate-100 pb-3 flex items-center gap-2">
+                    <PlusCircle className="w-5 h-5 text-rose-600 shrink-0" />
+                    <span>ثبت امتحان یا ارائه جدید</span>
+                  </h3>
+
+                  <div className="space-y-3">
+                    {/* Category Column Selection */}
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-500 mb-1">انتخاب دسته‌بندی</label>
+                      <select
+                        value={newExamItem.columnId || (data.examColumns?.[0]?.id || '')}
+                        onChange={(e) => setNewExamItem({ ...newExamItem, columnId: e.target.value })}
+                        className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition-all font-semibold text-slate-800"
+                      >
+                        {(data.examColumns || []).map((col) => (
+                          <option key={col.id} value={col.id}>
+                            {col.titleFa}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Title */}
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-500 mb-1">عنوان امتحان / ارائه / درس</label>
+                      <input
+                        type="text"
+                        placeholder="مثال: میان‌ترم هوش مصنوعی، ارائه مقاله فیزیک"
+                        value={newExamItem.text}
+                        onChange={(e) => setNewExamItem({ ...newExamItem, text: e.target.value })}
+                        className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition-all font-semibold text-slate-800"
+                      />
+                    </div>
+
+                    {/* Type & Date */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-500 mb-1">نوع</label>
+                        <select
+                          value={newExamItem.type}
+                          onChange={(e) => setNewExamItem({ ...newExamItem, type: e.target.value })}
+                          className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition-all font-semibold text-slate-800"
+                        >
+                          <option value="امتحان">امتحان</option>
+                          <option value="ارائه">ارائه</option>
+                          <option value="کوییز">کوییز</option>
+                          <option value="ددلاین">ددلاین تکالیف</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-500 mb-1">تاریخ و ساعت (جلالی)</label>
+                        <input
+                          type="text"
+                          placeholder="1405/03/20 10:00"
+                          value={newExamItem.date}
+                          onChange={(e) => setNewExamItem({ ...newExamItem, date: e.target.value })}
+                          className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition-all font-semibold text-slate-800 text-center"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Email Reminder Options */}
+                    <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black text-slate-700 flex items-center gap-1">
+                          <Bell className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>ارسال یادآوری ایمیلی:</span>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={newExamItem.emailReminder}
+                          onChange={(e) => setNewExamItem({ ...newExamItem, emailReminder: e.target.checked })}
+                          className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                        />
+                      </div>
+
+                      {newExamItem.emailReminder && (
+                        <div className="pt-1 border-t border-slate-200/60">
+                          <label className="block text-[9px] font-bold text-slate-500 mb-1">زمان ارسال یادآوری:</label>
+                          <select
+                            value={newExamItem.reminderOffset}
+                            onChange={(e) => setNewExamItem({ ...newExamItem, reminderOffset: e.target.value as ReminderOffset })}
+                            className="w-full text-[10px] bg-white border border-slate-200 rounded-lg p-1.5 font-bold text-slate-800 focus:outline-none"
+                          >
+                            {REMINDER_OFFSET_OPTIONS.map(opt => (
+                              <option key={opt.id} value={opt.id}>
+                                {opt.labelFa}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Description */}
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-500 mb-1">توضیحات / منابع امتحان</label>
+                      <textarea
+                        rows={2}
+                        placeholder="فصل‌های ۱ تا ۴، اسلایدهای جلسه ۶..."
+                        value={newExamItem.description}
+                        onChange={(e) => setNewExamItem({ ...newExamItem, description: e.target.value })}
+                        className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition-all font-semibold text-slate-800 resize-none"
+                      />
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        const targetColId = newExamItem.columnId || (data.examColumns?.[0]?.id || '');
+                        if (!targetColId) {
+                          showToast('لطفاً ابتدا یک دسته‌بندی بسازید', 'error');
+                          return;
+                        }
+                        handleAddExamItem(targetColId, newExamItem);
+                        setNewExamItem(prev => ({ ...prev, text: '', description: '' }));
+                      }}
+                      className="w-full py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-xs flex items-center justify-center gap-2"
+                    >
+                      <Plus className="w-4 h-4 shrink-0" />
+                      <span>ثبت در جدول امتحانات و ارائه‌ها</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Exam Columns Display Grid */}
+                <div className="lg:col-span-3 space-y-4">
+                  {editMode && (
+                    <div className="flex justify-end bg-white border border-slate-200 p-3 rounded-2xl shadow-xs">
+                      <button
+                        onClick={handleAddExamColumn}
+                        className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-xs"
+                      >
+                        <Plus className="w-4 h-4 ml-1" />
+                        <span>افزودن دسته‌بندی/ستون جدید امتحانات</span>
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {(data.examColumns || []).map((col) => {
+                      let colHeaderColor = 'border-t-rose-500 bg-rose-50/10';
+                      if (col.id === 'presentations') colHeaderColor = 'border-t-blue-500 bg-blue-50/10';
+                      else if (col.id === 'quizzes') colHeaderColor = 'border-t-purple-500 bg-purple-50/10';
+
+                      const sortedItems = [...col.items].sort((a, b) => {
+                        if (a.completed && !b.completed) return 1;
+                        if (!a.completed && b.completed) return -1;
+                        if (a.date && b.date) {
+                          return examSortOrder === 'asc'
+                            ? a.date.localeCompare(b.date)
+                            : b.date.localeCompare(a.date);
+                        }
+                        return 0;
+                      });
+
+                      return (
+                        <div
+                          key={col.id}
+                          className={`bg-white border border-slate-200 border-t-4 rounded-2xl p-4 shadow-xs flex flex-col justify-between min-h-[320px] ${colHeaderColor}`}
+                        >
+                          <div>
+                            <div className="border-b border-slate-200/80 pb-2 mb-3 flex items-center justify-between">
+                              {editMode ? (
+                                <div className="flex items-center gap-1.5 w-full">
+                                  <input
+                                    type="text"
+                                    value={col.titleFa}
+                                    onChange={(e) => handleEditExamHeader(col.id, e.target.value)}
+                                    className="w-full text-xs font-bold bg-amber-50 border border-amber-300 rounded p-1"
+                                  />
+                                  <button
+                                    onClick={() => handleDeleteExamColumn(col.id)}
+                                    className="text-rose-500 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 p-1.5 rounded text-xs cursor-pointer transition-all"
+                                    title="حذف این ستون"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ) : (
+                                <h3 className="font-black text-slate-800 text-xs flex items-center gap-2">
+                                  <GraduationCap className="w-4 h-4 text-rose-600" />
+                                  <span>{col.titleFa}</span>
+                                </h3>
+                              )}
+                              <span className="text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded-md shrink-0">
+                                {col.items.length} مورد
+                              </span>
+                            </div>
+
+                            <div className="space-y-3">
+                              {sortedItems.length === 0 ? (
+                                <p className="text-center text-slate-400 text-xs italic py-8">
+                                  هیچ موردی ثبت نشده است.
+                                </p>
+                              ) : (
+                                sortedItems.map((item) => {
+                                  const isDone = item.completed;
+                                  return (
+                                    <div
+                                      key={item.id}
+                                      className={`p-3.5 rounded-xl border text-xs flex flex-col gap-2 shadow-2xs transition-all ${
+                                        isDone
+                                          ? 'bg-slate-50 border-slate-200 opacity-60'
+                                          : 'bg-white border-slate-200 hover:border-slate-300'
+                                      }`}
+                                    >
+                                      {/* Top Row: Type & Actions */}
+                                      <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                                        <div className="flex items-center gap-1.5">
+                                          <button
+                                            onClick={() => handleToggleExamItem(col.id, item.id)}
+                                            className={`w-4.5 h-4.5 rounded-md border flex items-center justify-center transition-all cursor-pointer ${
+                                              isDone
+                                                ? 'bg-emerald-500 border-emerald-500 text-white'
+                                                : 'border-slate-300 hover:border-emerald-500'
+                                            }`}
+                                          >
+                                            {isDone && <Check className="w-3 h-3 stroke-[3px]" />}
+                                          </button>
+                                          <span className={`text-[9px] font-black px-2 py-0.5 rounded-md ${
+                                            item.type === 'امتحان'
+                                              ? 'bg-rose-100 text-rose-800'
+                                              : item.type === 'ارائه'
+                                              ? 'bg-blue-100 text-blue-800'
+                                              : item.type === 'کوییز'
+                                              ? 'bg-purple-100 text-purple-800'
+                                              : 'bg-amber-100 text-amber-800'
+                                          }`}>
+                                            {item.type || 'امتحان'}
+                                          </span>
+                                        </div>
+
+                                        <button
+                                          onClick={() => handleDeleteExamItem(col.id, item.id)}
+                                          className="text-slate-400 hover:text-rose-600 transition-colors cursor-pointer p-1"
+                                          title="حذف"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+
+                                      {/* Title & Date */}
+                                      <div>
+                                        <p className={`font-black text-slate-800 text-xs leading-snug ${isDone ? 'line-through text-slate-500' : ''}`}>
+                                          {item.text}
+                                        </p>
+                                        {item.date && (
+                                          <div className="flex items-center gap-1 text-[10px] text-slate-500 font-bold mt-1">
+                                            <Calendar className="w-3 h-3 text-slate-400 shrink-0" />
+                                            <span>{item.date}</span>
+                                          </div>
+                                        )}
+                                      </div>
+
+                                      {/* Description */}
+                                      {item.description && (
+                                        <p className="text-[10px] text-slate-600 bg-slate-50 border border-slate-100 p-2 rounded-lg font-medium leading-relaxed">
+                                          {item.description}
+                                        </p>
+                                      )}
+
+                                      {/* Email Reminder Badge */}
+                                      {item.emailReminder && (
+                                        <div className="flex items-center justify-between text-[9px] font-bold text-indigo-600 bg-indigo-50/70 border border-indigo-100 px-2 py-1 rounded-md mt-0.5">
+                                          <div className="flex items-center gap-1">
+                                            <Bell className="w-3 h-3 text-indigo-500" />
+                                            <span>یادآوری: {getOffsetLabelFa(item.reminderOffset || '1day')}</span>
+                                          </div>
+                                          {item.reminderSent ? (
+                                            <span className="text-emerald-600 font-black">✓ ارسال شد</span>
+                                          ) : (
+                                            <span className="text-indigo-400 font-medium">در صف</span>
+                                          )}
+                                        </div>
+                                      )}
+
+                                    </div>
+                                  );
+                                })
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
 
               </div>

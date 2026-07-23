@@ -68,6 +68,7 @@ export interface DetailsColumn {
   id: string;
   titleFa: string;
   titleEn: string;
+  color?: string;
   items: DetailsItem[]; // List of custom objects instead of strings
 }
 
@@ -81,6 +82,7 @@ export interface SecondaryTaskColumn {
 export interface SecondaryTask {
   id: string;
   columnId: string; // e.g. 'daily', 'learn', 'english', 'skill', 'reading', 'migration', 'leisure'
+  categoryId?: string;
   textFa: string;
   textEn: string;
   status: 'pending' | 'completed' | 'failed'; // failed means past due / could not be rescheduled

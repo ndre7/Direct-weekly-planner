@@ -37,6 +37,7 @@ export default function Header({
     2: { fa: 'ددلاین ها', en: 'Deadlines' },
     4: { fa: 'یادآوری ها', en: 'Reminders' },
     7: { fa: 'کار های انجام شده / نشده', en: 'Completed / Expired' },
+    11: { fa: 'امتحانات و ارائه‌ها', en: 'Exams & Presentations' },
     8: { fa: 'لغو/تعویق ها', en: 'Cancelled / Postponed' },
     5: { fa: 'یادداشت ها', en: 'Notes' },
     9: { fa: 'تحلیل (Analytics)', en: 'Analytics Dashboard' },

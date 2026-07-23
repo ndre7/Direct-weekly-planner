@@ -309,6 +309,49 @@ export const INITIAL_PLANNER_DATA: PlannerData = {
   weekYear: 1405,
   weekMonth: 'خرداد',
   dailyTaskRows: 3,
+  examsAndPresentationsTitle: 'برنامه امتحانات و ارائه‌ها',
+  examColumns: [
+    {
+      id: 'exams',
+      titleFa: 'امتحانات و آزمون‌ها',
+      titleEn: 'Exams & Quizzes',
+      color: 'rose',
+      items: [
+        {
+          id: 'ex1',
+          text: 'امتحان میان‌ترم سیستم‌های عامل',
+          date: '1405/03/18 10:00',
+          completed: false,
+          type: 'امتحان',
+          description: 'فصل‌های ۱ تا ۴ کتاب تننباوم. ساعت ۱۰ صبح در کلاس ۳۰۲',
+          emailReminder: true,
+          reminderOffset: '1day',
+          deadline: { day: 18, month: 'خرداد', weekday: 'یکشنبه', time: '10:00' }
+        }
+      ]
+    },
+    {
+      id: 'presentations',
+      titleFa: 'ارائه‌ها و دفاع‌ها',
+      titleEn: 'Presentations & Defenses',
+      color: 'amber',
+      items: [
+        {
+          id: 'pr1',
+          text: 'ارائه پروژه پایانی هوش مصنوعی',
+          date: '1405/03/22 14:00',
+          completed: false,
+          type: 'ارائه',
+          description: 'آماده‌سازی اسلایدهای پاورپوینت و اجرای دمو پروژه در ۱۰ دقیقه',
+          emailReminder: true,
+          reminderOffset: '3days',
+          deadline: { day: 22, month: 'خرداد', weekday: 'پنج‌شنبه', time: '14:00' }
+        }
+      ]
+    }
+  ],
+  emailRemindersGlobalEnabled: true,
+  emailReminderDefaultOffset: '1day',
   postponedEvents: [
     {
       id: 'pe1',

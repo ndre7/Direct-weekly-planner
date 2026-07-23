@@ -3,7 +3,8 @@ import {
   createUserWithEmailAndPassword, 
   signOut,
   getIdToken,
-  signInWithPopup
+  signInWithPopup,
+  GoogleAuthProvider
 } from 'firebase/auth';
 import { auth, googleAuthProvider } from './firebase.ts';
 

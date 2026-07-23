@@ -10,7 +10,9 @@ import {
   Clock, 
   ArrowRight,
   ClipboardList,
-  Flame
+  Flame,
+  GraduationCap,
+  Activity
 } from 'lucide-react';
 
 interface DayInspectorModalProps {
@@ -224,6 +226,34 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
         task.deadline.month === selectedMonth;
     });
   }, [data.coreTasks, selectedDay, selectedMonth]);
+
+  // 4.5 Gather Exams & Presentations on this day
+  const todayExams = useMemo(() => {
+    const list: Array<{ id: string; text: string; columnTitle?: string; date?: string; type?: string; description?: string; completed?: boolean; time?: string }> = [];
+    (data.examColumns || []).forEach(col => {
+      col.items.forEach(item => {
+        if (item.deadline && item.deadline.day === selectedDay && item.deadline.month === selectedMonth) {
+          list.push({ ...item, columnTitle: col.titleFa });
+        } else if (item.date && item.date.includes(`${selectedYear}/${(JALALI_MONTHS.indexOf(selectedMonth)+1).toString().padStart(2, '0')}/${selectedDay.toString().padStart(2, '0')}`)) {
+          list.push({ ...item, columnTitle: col.titleFa });
+        }
+      });
+    });
+    return list;
+  }, [data.examColumns, selectedDay, selectedMonth, selectedYear]);
+
+  // 4.6 Gather Deadlines on this day from Details tab
+  const todayDeadlines = useMemo(() => {
+    const list: Array<{ id: string; text: string; columnTitle?: string; completed?: boolean }> = [];
+    (data.detailsColumns || []).forEach(col => {
+      col.items.forEach(item => {
+        if (item.deadline && item.deadline.day === selectedDay && item.deadline.month === selectedMonth) {
+          list.push({ ...item, columnTitle: col.titleFa });
+        }
+      });
+    });
+    return list;
+  }, [data.detailsColumns, selectedDay, selectedMonth]);
 
   // 5. Gather Habits active on this weekday
   const todayHabits = useMemo(() => {
@@ -472,7 +502,65 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
               </div>
             </div>
 
-            {/* 3. Core Task Deadlines */}
+            {/* 3.5 Exams & Presentations */}
+            <div className="border border-slate-200/80 p-5 rounded-2xl space-y-3 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center gap-2 border-b border-slate-100 pb-2 mb-2">
+                  <GraduationCap className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span className="font-black text-xs text-slate-700">{isRtl ? 'امتحانات و ارائه‌ها' : 'Exams & Presentations'}</span>
+                </div>
+                {todayExams.length > 0 ? (
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {todayExams.map(ex => (
+                      <div key={ex.id} className="p-2.5 bg-rose-50/50 border border-rose-100 rounded-xl space-y-1">
+                        <div className="flex items-center justify-between text-xs font-bold text-slate-800">
+                          <span className="text-rose-900">{ex.text}</span>
+                          {ex.type && (
+                            <span className="text-[9px] bg-rose-100 text-rose-800 font-black px-2 py-0.5 rounded-md">
+                              {ex.type}
+                            </span>
+                          )}
+                        </div>
+                        {ex.description && (
+                          <p className="text-[9px] text-slate-500 font-medium leading-relaxed">{ex.description}</p>
+                        )}
+                        {ex.columnTitle && (
+                          <span className="inline-block text-[8px] text-rose-500 font-bold">{ex.columnTitle}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-slate-400 font-bold py-3">{isRtl ? 'هیچ امتحان یا ارائه‌ای در این روز ثبت نشده است' : 'No exams or presentations on this date'}</p>
+                )}
+              </div>
+            </div>
+
+            {/* 3.6 Deadlines */}
+            <div className="border border-slate-200/80 p-5 rounded-2xl space-y-3 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center gap-2 border-b border-slate-100 pb-2 mb-2">
+                  <Activity className="w-4 h-4 text-blue-600 shrink-0" />
+                  <span className="font-black text-xs text-slate-700">{isRtl ? 'ددلاین‌های ثبت شده' : 'Registered Deadlines'}</span>
+                </div>
+                {todayDeadlines.length > 0 ? (
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {todayDeadlines.map(d => (
+                      <div key={d.id} className="p-2.5 bg-blue-50/50 border border-blue-100 rounded-xl flex items-center justify-between text-xs font-bold text-slate-800">
+                        <span>{d.text}</span>
+                        {d.columnTitle && (
+                          <span className="text-[9px] bg-blue-100 text-blue-800 font-black px-2 py-0.5 rounded-md">
+                            {d.columnTitle}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-slate-400 font-bold py-3">{isRtl ? 'هیچ ددلاینی برای این روز ثبت نشده است' : 'No deadlines on this date'}</p>
+                )}
+              </div>
+            </div>
             <div className="border border-slate-200/80 p-5 rounded-2xl space-y-3 flex flex-col justify-between">
               <div>
                 <div className="flex items-center gap-2 border-b border-slate-100 pb-2 mb-2">

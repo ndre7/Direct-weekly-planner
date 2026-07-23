@@ -195,6 +195,7 @@ export default function Sidebar({
     { id: 2, name: isRtl ? "ددلاین ها" : "Deadlines", icon: Activity },
     { id: 4, name: isRtl ? "یادآوری ها" : "Reminders", icon: TrendingUp },
     { id: 7, name: isRtl ? "کار های انجام شده / نشده" : "Completed / Expired", icon: CheckCircle2 },
+    { id: 11, name: isRtl ? "امتحانات و ارائه‌ها" : "Exams & Presentations", icon: BookOpen },
     { id: 8, name: isRtl ? "لغو/تعویق ها" : "Cancelled / Postponed", icon: XCircle },
     { id: 5, name: isRtl ? "یادداشت ها" : "Notes", icon: FileText },
     { id: 9, name: isRtl ? "تحلیل (Analytics)" : "Analytics Dashboard", icon: BarChart3 },

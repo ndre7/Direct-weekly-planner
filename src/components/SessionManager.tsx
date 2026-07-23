@@ -49,9 +49,10 @@ export function verifyAndRepairPlannerData(rawData: any): { repairedData: any; r
     'coreTasks',
     'secondaryTasks',
     'categories',
-    'timebox',
-    'habitTracking',
-    'postponedEvents'
+    'postponedEvents',
+    'detailsColumns',
+    'secondaryTaskColumns',
+    'classesSchedule'
   ];
   
   expectedArrays.forEach(key => {
@@ -63,16 +64,6 @@ export function verifyAndRepairPlannerData(rawData: any): { repairedData: any; r
   
   if (!repaired.dailyTasks || typeof repaired.dailyTasks !== 'object') {
     repaired.dailyTasks = {};
-    repairedCount++;
-  }
-  
-  if (!repaired.pomodoro || typeof repaired.pomodoro !== 'object') {
-    repaired.pomodoro = { totalCompleted: 0, totalFocusTime: 0, todayCompleted: 0, history: [] };
-    repairedCount++;
-  }
-  
-  if (!repaired.waterTracker || typeof repaired.waterTracker !== 'object') {
-    repaired.waterTracker = { dailyGoalMl: 2000, currentMl: 0, history: [] };
     repairedCount++;
   }
   

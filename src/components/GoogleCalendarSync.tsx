@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { PlannerData, User } from '../types';
+import { jalaliToGregorian as jalaliToGregorianShared } from '../utils/jalali.ts';
 import { 
   connectGoogleCalendar, 
   getCachedGoogleCalendarToken, 
@@ -103,7 +104,7 @@ const toEnglishDigits = (str: string): string => {
     .replace(/[٠-٩]/g, (w) => String.fromCharCode(w.charCodeAt(0) - 1632));
 };
 
-// Jalali to Gregorian converter (Jalaali algorithm)
+// Jalali to Gregorian converter (using shared utils/jalali.ts implementation)
 function jalaliToGregorian(jyInput: any, jmInput: any, jdInput: any): Date {
   const jy = parseInt(toEnglishDigits(String(jyInput)), 10);
   const jm = parseInt(toEnglishDigits(String(jmInput)), 10);
@@ -111,39 +112,7 @@ function jalaliToGregorian(jyInput: any, jmInput: any, jdInput: any): Date {
   if (isNaN(jy) || isNaN(jm) || isNaN(jd)) {
     return new Date(NaN);
   }
-
-  let gy: number;
-  let jyTemp = jy;
-  if (jyTemp > 979) {
-    gy = 1600;
-    jyTemp -= 979;
-  } else {
-    gy = 621;
-  }
-  let days = (365 * jyTemp) + Math.floor(jyTemp / 33) * 8 + Math.floor(((jyTemp % 33) + 3) / 4) + 78 + jd + ((jm < 7) ? (jm - 1) * 31 : ((jm - 7) * 30) + 186);
-  gy += 400 * Math.floor(days / 146097);
-  days %= 146097;
-  if (days > 36524) {
-    gy += Math.floor((days - 1) / 36524);
-    days %= 36524;
-    if (days >= 365) days++;
-  }
-  gy += 4 * Math.floor(days / 1461);
-  days %= 1461;
-  if (days > 365) {
-    gy += Math.floor((days - 1) / 365);
-    days = (days - 1) % 365;
-  }
-  const gd = days + 1;
-  const sal_a = [0, 31, ((gy % 4 === 0 && gy % 100 !== 0) || (gy % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  let gm = 0;
-  let d = gd;
-  for (let i = 0; i < sal_a.length; i++) {
-    gm = i;
-    if (d <= sal_a[i]) break;
-    d -= sal_a[i];
-  }
-  return new Date(gy, gm - 1, d);
+  return jalaliToGregorianShared(jy, jm, jd);
 }
 
 // Convert Date object to local ISO string (YYYY-MM-DDTHH:mm:ss±HH:MM) to be fully RFC3339 compliant and offset-safe for Google Calendar
@@ -353,6 +322,8 @@ export default function GoogleCalendarSync({
   const [syncCoreTasks, setSyncCoreTasks] = useState<boolean>(true);
   const [syncSecondaryTasks, setSyncSecondaryTasks] = useState<boolean>(true);
   const [syncDetailsDeadlines, setSyncDetailsDeadlines] = useState<boolean>(true);
+  const [syncExams, setSyncExams] = useState<boolean>(true);
+  const [syncHabits, setSyncHabits] = useState<boolean>(false);
   const [syncTodoList, setSyncTodoList] = useState<boolean>(false);
   const [syncPostponed, setSyncPostponed] = useState<boolean>(true);
   const [syncDailyTasks, setSyncDailyTasks] = useState<boolean>(false);
@@ -672,6 +643,85 @@ export default function GoogleCalendarSync({
       });
     }
 
+    // H. Exams and Presentations
+    if (syncExams && data.examColumns && data.examColumns.length > 0) {
+      data.examColumns.forEach((col) => {
+        const colTitle = isRtl ? col.titleFa : col.titleEn || col.titleFa;
+        col.items.forEach((item, itemIdx) => {
+          if (!item.text) return;
+          const eventDate = resolveAnyPersianDate(item.date || item.deadline, weekDates, currentYear);
+          if (eventDate) {
+            const startDateTime = new Date(eventDate);
+            startDateTime.setHours(9, 0, 0);
+
+            const endDateTime = new Date(eventDate);
+            endDateTime.setHours(11, 0, 0);
+
+            events.push({
+              id: `exam-${col.id}-${item.id || itemIdx}`,
+              sourceType: isRtl ? 'امتحان / ارائه' : 'Exam / Presentation',
+              sourceTitle: `${colTitle}: ${item.text}`,
+              persianDateStr: formatDeadlineLabel(item.date || item.deadline),
+              gregorianDateStr: startDateTime.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }),
+              payload: {
+                summary: `🎓 [${item.type || 'امتحان'}] ${colTitle}: ${item.text}`,
+                description: item.description || (isRtl ? 'امتحان / ارائه ثبت شده در برنامه هفتگی' : 'Weekly Planner Exam/Presentation'),
+                start: {
+                  dateTime: formatLocalISO(startDateTime),
+                  timeZone: timezone
+                },
+                end: {
+                  dateTime: formatLocalISO(endDateTime),
+                  timeZone: timezone
+                }
+              },
+              status: 'idle'
+            });
+          }
+        });
+      });
+    }
+
+    // I. Habits & Reminders
+    if (syncHabits && data.reminders && data.reminders.length > 0) {
+      data.reminders.forEach((rem, remIdx) => {
+        const remTitle = isRtl ? rem.textFa : rem.textEn || rem.textFa;
+        if (!remTitle) return;
+        (rem.checkedDays || []).forEach(dayIdx => {
+          if (weekDates[dayIdx]) {
+            const eventDate = resolveAnyPersianDate(weekDates[dayIdx], weekDates, currentYear);
+            if (eventDate) {
+              const startDateTime = new Date(eventDate);
+              startDateTime.setHours(20, 0, 0);
+              const endDateTime = new Date(eventDate);
+              endDateTime.setHours(20, 30, 0);
+
+              events.push({
+                id: `habit-${rem.id || remIdx}-${dayIdx}`,
+                sourceType: isRtl ? 'عادت / یادآوری' : 'Habit / Reminder',
+                sourceTitle: remTitle,
+                persianDateStr: weekDates[dayIdx],
+                gregorianDateStr: startDateTime.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }),
+                payload: {
+                  summary: `🌱 ${remTitle}`,
+                  description: isRtl ? 'عادت و پیگیری هفتگی' : 'Weekly Habit Tracking',
+                  start: {
+                    dateTime: formatLocalISO(startDateTime),
+                    timeZone: timezone
+                  },
+                  end: {
+                    dateTime: formatLocalISO(endDateTime),
+                    timeZone: timezone
+                  }
+                },
+                status: 'idle'
+              });
+            }
+          }
+        });
+      });
+    }
+
     setPreparedEvents(events);
   }, [
     data,
@@ -683,6 +733,8 @@ export default function GoogleCalendarSync({
     syncTodoList,
     syncPostponed,
     syncDailyTasks,
+    syncExams,
+    syncHabits,
     isRtl
   ]);
 
@@ -1011,6 +1063,28 @@ export default function GoogleCalendarSync({
                 />
                 <Clock className="w-4 h-4 text-rose-500" />
                 <span>{isRtl ? 'ددلاین‌های ستون‌ها (جزئیات)' : 'Column Tasks (Deadlines)'}</span>
+              </label>
+
+              <label className="flex items-center gap-2.5 p-2 bg-white rounded-xl border border-slate-150 text-xs font-bold text-slate-700 cursor-pointer select-none">
+                <input 
+                  type="checkbox" 
+                  checked={syncExams} 
+                  onChange={(e) => setSyncExams(e.target.checked)}
+                  className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                />
+                <BookOpen className="w-4 h-4 text-red-500" />
+                <span>{isRtl ? 'امتحانات و ارائه‌ها' : 'Exams & Presentations'}</span>
+              </label>
+
+              <label className="flex items-center gap-2.5 p-2 bg-white rounded-xl border border-slate-150 text-xs font-bold text-slate-700 cursor-pointer select-none">
+                <input 
+                  type="checkbox" 
+                  checked={syncHabits} 
+                  onChange={(e) => setSyncHabits(e.target.checked)}
+                  className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                />
+                <CheckCircle className="w-4 h-4 text-emerald-500" />
+                <span>{isRtl ? 'عادت‌ها و پیگیری‌ها' : 'Habits & Reminders'}</span>
               </label>
 
               <label className="flex items-center gap-2.5 p-2 bg-white rounded-xl border border-slate-150 text-xs font-bold text-slate-700 cursor-pointer select-none">

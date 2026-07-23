@@ -337,7 +337,7 @@ export default function CategoriesManagementPage({
 
               <div className="space-y-1.5">
                 <label className="text-[10px] text-slate-400 font-black block">{labels.colorLabel}</label>
-                <div className="flex flex-wrap gap-1.5 p-1.5 bg-white border border-slate-150 rounded-xl">
+                <div className="flex flex-wrap gap-1.5 p-1.5 bg-white border border-slate-150 rounded-xl max-h-32 overflow-y-auto">
                   {COLORS.map((col) => (
                     <button
                       key={`edit-${col.value}`}
@@ -349,6 +349,23 @@ export default function CategoriesManagementPage({
                       title={col.label}
                     />
                   ))}
+                </div>
+                {/* Custom Color Picker input */}
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="text-[10px] font-bold text-slate-500">یا انتخاب رنگ دلخواه (Hex/RGB):</span>
+                  <input
+                    type="color"
+                    value={editColor.startsWith('#') ? editColor : '#3b82f6'}
+                    onChange={(e) => setEditColor(e.target.value)}
+                    className="w-7 h-7 rounded-lg border border-slate-200 cursor-pointer p-0.5 bg-white"
+                  />
+                  <input
+                    type="text"
+                    value={editColor}
+                    onChange={(e) => setEditColor(e.target.value)}
+                    placeholder="#3b82f6 یا کد دلخواه"
+                    className="text-xs p-1.5 border border-slate-200 rounded-lg w-36 font-mono text-slate-700 bg-white"
+                  />
                 </div>
               </div>
 
@@ -405,7 +422,7 @@ export default function CategoriesManagementPage({
 
               <div className="space-y-1.5">
                 <label className="text-[10px] text-slate-400 font-black block">{labels.colorLabel}</label>
-                <div className="flex flex-wrap gap-1.5 p-1.5 bg-white border border-slate-150 rounded-xl">
+                <div className="flex flex-wrap gap-1.5 p-1.5 bg-white border border-slate-150 rounded-xl max-h-32 overflow-y-auto">
                   {COLORS.map((col) => (
                     <button
                       key={col.value}
@@ -417,6 +434,23 @@ export default function CategoriesManagementPage({
                       title={col.label}
                     />
                   ))}
+                </div>
+                {/* Custom Color Picker input */}
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="text-[10px] font-bold text-slate-500">یا انتخاب رنگ دلخواه (Hex/RGB):</span>
+                  <input
+                    type="color"
+                    value={newColor.startsWith('#') ? newColor : '#3b82f6'}
+                    onChange={(e) => setNewColor(e.target.value)}
+                    className="w-7 h-7 rounded-lg border border-slate-200 cursor-pointer p-0.5 bg-white"
+                  />
+                  <input
+                    type="text"
+                    value={newColor}
+                    onChange={(e) => setNewColor(e.target.value)}
+                    placeholder="#3b82f6 یا کد دلخواه"
+                    className="text-xs p-1.5 border border-slate-200 rounded-lg w-36 font-mono text-slate-700 bg-white"
+                  />
                 </div>
               </div>
 

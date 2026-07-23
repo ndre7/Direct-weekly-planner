@@ -1158,28 +1158,51 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
       const colCount = Math.ceil(m.days / 7); // Usually 5 columns
       const grid: any[][] = [];
 
+      // Build real activity lookup map for this month/year
+      const monthStr = String(m.index + 1).padStart(2, '0');
+      
       for (let c = 0; c < colCount; c++) {
         const colData = [];
         for (let r = 0; r < 7; r++) {
           const dayNumber = c * 7 + r + 1;
           if (dayNumber <= m.days) {
-            // Seed calculation for deterministic streaks
-            const dayIdx = mIdx * 31 + dayNumber;
-            let seed = 42 + dayIdx;
-            const random = () => {
-              const x = Math.sin(seed) * 10000;
-              return x - Math.floor(x);
-            };
+            const dayPadStr = String(dayNumber).padStart(2, '0');
+            const targetDateStr = `${m.year}/${monthStr}/${dayPadStr}`;
 
-            const rand = random();
-            const colMultiplier = c > 4 && c < 9 ? 0.3 : 0.6; // variance
+            // Calculate real activity count from user planner data
             let count = 0;
-            if (rand < 0.2) count = 0;
-            else if (rand < 0.5) count = Math.round(1 + rand * 2);
-            else if (rand < 0.85) count = Math.round(4 + rand * 3);
-            else count = Math.round(8 + rand * 4);
 
-            count = Math.round(count * colMultiplier);
+            // 1. Daily tasks
+            Object.values(data.dailyTasks || {}).forEach(taskList => {
+              (taskList || []).forEach(t => {
+                if (t.status === 'completed' && t.completionDate === targetDateStr) {
+                  count++;
+                }
+              });
+            });
+
+            // 2. Secondary tasks
+            (data.secondaryTasks || []).forEach(t => {
+              if (t.status === 'completed' && t.completionDate === targetDateStr) {
+                count++;
+              }
+            });
+
+            // 3. Core tasks
+            (data.coreTasks || []).forEach(t => {
+              if (t.status === 'completed') {
+                count++;
+              }
+            });
+
+            // 4. Exams and Presentations
+            (data.examColumns || []).forEach(col => {
+              col.items.forEach(item => {
+                if (item.completed && item.date && item.date.includes(targetDateStr)) {
+                  count++;
+                }
+              });
+            });
 
             colData.push({
               dayIndex: r,
@@ -1203,7 +1226,7 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
     });
 
     return { monthsData, days };
-  }, [timeframe]);
+  }, [data, timeframe]);
 
   // Calculate coordinates for Donut Chart
   const donutData = useMemo(() => {
@@ -1214,20 +1237,30 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
       if (donutType === 'success') {
         return item;
       } else {
-        // Distribute differently for failed/canceled/postponed categories to show realistic patterns
-        let count = item.count;
-        if (item.categoryId === 'programming') {
-          count = Math.max(1, Math.round(item.count * 0.45));
-        } else if (item.categoryId === 'university') {
-          count = Math.max(1, Math.round(item.count * 0.35));
-        } else if (item.categoryId === 'language') {
-          count = Math.max(1, Math.round(item.count * 0.25));
-        } else if (item.categoryId === 'sport') {
-          count = Math.max(1, Math.round(item.count * 0.5)); // sports can be postponed often
-        } else {
-          count = Math.max(1, Math.round(item.count * 0.3));
-        }
-        return { ...item, count };
+        // Count real failed or postponed tasks for this specific category
+        let realFailedCount = 0;
+
+        Object.values(data.dailyTasks || {}).forEach(taskList => {
+          (taskList || []).forEach(t => {
+            if (t.categoryId === item.categoryId && t.status === 'failed') {
+              realFailedCount++;
+            }
+          });
+        });
+
+        (data.secondaryTasks || []).forEach(t => {
+          if (t.categoryId === item.categoryId && t.status === 'failed') {
+            realFailedCount++;
+          }
+        });
+
+        (data.coreTasks || []).forEach(t => {
+          if (t.categoryId === item.categoryId && (t.status as string) === 'failed') {
+            realFailedCount++;
+          }
+        });
+
+        return { ...item, count: realFailedCount };
       }
     });
 

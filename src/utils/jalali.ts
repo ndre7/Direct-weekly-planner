@@ -103,18 +103,21 @@ export function getTodayJalali(date: Date = new Date()) {
       day: 'numeric'
     });
     const parts = formatter.formatToParts(date);
-    const yearStr = parts.find(p => p.type === 'year')?.value || '1405';
-    const monthStr = parts.find(p => p.type === 'month')?.value || '1';
-    const dayStr = parts.find(p => p.type === 'day')?.value || '1';
+    const yearStr = parts.find(p => p.type === 'year')?.value || '';
+    const monthStr = parts.find(p => p.type === 'month')?.value || '';
+    const dayStr = parts.find(p => p.type === 'day')?.value || '';
 
-    const toEng = (s: string) => s.replace(/[۰-۹]/g, d => (d.charCodeAt(0) - 1776).toString()).replace(/[0-9]/g, d => (d.charCodeAt(0) - 1632).toString());
-    const year = parseInt(toEng(yearStr), 10) || 1405;
+    const toEng = (s: string) => 
+      s.replace(/[۰-۹]/g, d => (d.charCodeAt(0) - 1776).toString())
+       .replace(/[٠-٩]/g, d => (d.charCodeAt(0) - 1632).toString());
+
+    const year = parseInt(toEng(yearStr), 10) || new Date().getFullYear() - 621;
     const month = parseInt(toEng(monthStr), 10) || 1;
     const day = parseInt(toEng(dayStr), 10) || 1;
     const monthName = JALALI_MONTHS[month - 1] || 'فروردین';
     return { year, monthIdx: month - 1, monthName, day };
   } catch (e) {
-    return { year: 1405, monthIdx: 2, monthName: 'خرداد', day: 1 };
+    return { year: 1403, monthIdx: 0, monthName: 'فروردین', day: 1 };
   }
 }
 

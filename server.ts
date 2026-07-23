@@ -14,10 +14,21 @@ import {
 } from "./src/db/helpers.ts";
 import { db } from "./src/db/index.ts";
 import { users } from "./src/db/schema.ts";
-import { eq } from "drizzle-orm";
+import { eq, and, ne } from "drizzle-orm";
 
 const app = express();
 const PORT = 3000;
+
+const GEMINI_MODEL = "gemini-2.5-flash";
+
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "nimadarai05@gmail.com")
+  .split(",")
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
+
+function isAdmin(email?: string | null) {
+  return !!email && ADMIN_EMAILS.includes(email.toLowerCase());
+}
 
 app.use(express.json({ limit: "50mb" }));
 
@@ -27,6 +38,18 @@ app.post("/api/auth/firebase-sync", requireAuth, async (req: AuthRequest, res) =
   try {
     const userToken = req.user!;
     const { username } = req.body;
+
+    if (username && typeof username === 'string' && username.trim()) {
+      const existingUserWithUsername = await db
+        .select()
+        .from(users)
+        .where(and(eq(users.username, username.trim()), ne(users.uid, userToken.uid)));
+
+      if (existingUserWithUsername.length > 0) {
+        return res.status(400).json({ error: "این نام کاربری قبلاً توسط کاربر دیگری ثبت شده است" });
+      }
+    }
+
     const user = await getOrCreateUser(userToken.uid, userToken.email!, username);
     
     if (user.suspended) {
@@ -168,7 +191,7 @@ app.get("/api/planner/load", requireAuth, async (req: AuthRequest, res) => {
 app.get("/api/admin/users", requireAuth, async (req: AuthRequest, res) => {
   try {
     const adminToken = req.user!;
-    if (adminToken.email !== "nimadarai05@gmail.com") {
+    if (!isAdmin(adminToken.email)) {
       return res.status(403).json({ error: "شما دسترسی ادمین به این بخش را ندارید" });
     }
     
@@ -191,7 +214,7 @@ app.get("/api/admin/users", requireAuth, async (req: AuthRequest, res) => {
 app.post("/api/admin/users/suspend", requireAuth, async (req: AuthRequest, res) => {
   try {
     const adminToken = req.user!;
-    if (adminToken.email !== "nimadarai05@gmail.com") {
+    if (!isAdmin(adminToken.email)) {
       return res.status(403).json({ error: "شما دسترسی ادمین به این بخش را ندارید" });
     }
     
@@ -214,7 +237,7 @@ app.post("/api/admin/users/suspend", requireAuth, async (req: AuthRequest, res) 
 app.post("/api/admin/users/delete", requireAuth, async (req: AuthRequest, res) => {
   try {
     const adminToken = req.user!;
-    if (adminToken.email !== "nimadarai05@gmail.com") {
+    if (!isAdmin(adminToken.email)) {
       return res.status(403).json({ error: "شما دسترسی ادمین به این بخش را ندارید" });
     }
     
@@ -289,7 +312,7 @@ interface Insight {
 Return ONLY the raw JSON array. Do NOT wrap it in markdown code blocks like \`\`\`json. Your output must be directly parseable with JSON.parse().`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: GEMINI_MODEL,
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -392,11 +415,11 @@ app.post("/api/gemini/analyze-goal", async (req, res) => {
       const prompt = `You are an elite academic productivity coach and cognitive psychologist. The user is pursuing a long-term goal. 
 Goal Title: ${title}
 Total Weeks: ${totalWeeks}
-Current Active Week Index (0-based): ${currentWeekIndex} (Next Week Index: ${currentWeekIndex + 1})
+Current Active Week Index (1-based, completed week): ${currentWeekIndex}
 Milestones defined initially: ${JSON.stringify(milestones, null, 2)}
 Completion history and feedback of previous weeks: ${JSON.stringify(completedWeeksHistory || [], null, 2)}
 
-Your task is to generate the concrete plan (week tasks) for the NEXT week (Week ${Number(currentWeekIndex) + 2}) to ensure dynamic journey continuity and steady progress towards the goal. Provide highly specific, actionable, and scientifically-grounded tasks.
+Your task is to generate the concrete plan (week tasks) for the NEXT week (Week ${Number(currentWeekIndex) + 1}) to ensure dynamic journey continuity and steady progress towards the goal. Provide highly specific, actionable, and scientifically-grounded tasks.
 
 You must return a JSON object matching this schema:
 {
@@ -413,7 +436,7 @@ Return EXACTLY 3-6 tasks. Types can be:
 Return ONLY valid JSON. Do not wrap in markdown code blocks.`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: GEMINI_MODEL,
         contents: prompt,
         config: {
           responseMimeType: "application/json",
@@ -454,28 +477,28 @@ Target Duration: ${totalWeeks} weeks
 User's Average Task Completion Rate (TCR) in previous weeks: ${averageTcr || 70}%
 User's University/Class load hours per week: ${universityHours || 0} hours
 
-Your task is to:
+Your task is to provide an EXTREMELY DETAILED, HIGHLY ACTIONABLE, COMPREHENSIVE ROADMAP for achieving this goal:
 1. Calculate a realistic Feasibility Success Score (0-100) based on their TCR, university hours, and the complexity of the goal.
-2. Provide a short, constructive, scientifically-backed Persian justification explaining the score, potential risks, and recommendations.
-3. Formulate 3 to 5 key milestones spaced across the ${totalWeeks} weeks to track progress.
-4. Provide the first week's actionable tasks (3 to 6 tasks, categorized as 'core', 'secondary', or 'habit') to get them started immediately with momentum.
+2. Provide a thorough, rich, multi-paragraph Persian justification explaining the score, psychological/academic strategy, potential bottleneck risks, and concrete actionable guidelines for success.
+3. Formulate 4 to 7 precise, key milestones spaced evenly across the ${totalWeeks} weeks to track step-by-step progress. Each milestone must have a clear title in Persian.
+4. Provide a rich set of first week's actionable tasks (4 to 7 detailed, specific tasks categorized as 'core', 'secondary', or 'habit') to get them started with immediate momentum.
 
 You must return a JSON object matching this schema:
 {
   "feasibility_score": number (0-100),
-  "justification": "Persian explanation",
+  "justification": "Detailed, thorough Persian explanation and roadmap guide",
   "milestones": [
-    { "week_number": number, "title": "Milestone title in Persian", "completed": false }
+    { "week_number": number, "title": "Detailed milestone title in Persian", "completed": false }
   ],
   "week_tasks": [
-    { "title": "Persian task title", "type": "core" | "secondary" | "habit" }
+    { "title": "Specific detailed Persian task title", "type": "core" | "secondary" | "habit" }
   ]
 }
 
 Return ONLY valid JSON. Do not wrap in markdown code blocks.`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: GEMINI_MODEL,
         contents: prompt,
         config: {
           responseMimeType: "application/json",

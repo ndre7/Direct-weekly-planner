@@ -20,12 +20,18 @@ import {
   FileDown,
   Wrench,
   AlertTriangle,
-  HeartPulse
+  HeartPulse,
+  Mail,
+  Bell,
+  Send,
+  CheckCircle
 } from 'lucide-react';
 import CategoriesManagementPage from './CategoriesManagementPage';
 import UserManagementView from './UserManagementView';
 import { verifyAndRepairPlannerData } from './SessionManager';
 import GoogleCalendarSync from './GoogleCalendarSync';
+import { connectGmail, getCachedGmailToken } from '../lib/auth';
+import { sendGmailEmail, buildReminderEmailHtml, REMINDER_OFFSET_OPTIONS, ReminderOffset } from '../lib/gmailReminders';
 
 interface SettingsPageProps {
   data: PlannerData;
@@ -79,8 +85,52 @@ export default function SettingsPage({
   });
 
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
+  const [isConnectingGmail, setIsConnectingGmail] = useState(false);
+  const [isSendingTestEmail, setIsSendingTestEmail] = useState(false);
 
   const isRtl = lang === 'fa';
+
+  const handleConnectGmail = async () => {
+    try {
+      setIsConnectingGmail(true);
+      const token = await connectGmail();
+      showToast(isRtl ? 'اتصال به جیمیل با موفقیت انجام شد' : 'Connected to Gmail successfully!', 'success');
+    } catch (e: any) {
+      showToast(isRtl ? `خطا در اتصال به جیمیل: ${e.message || e}` : `Gmail connection failed: ${e.message || e}`, 'error');
+    } finally {
+      setIsConnectingGmail(false);
+    }
+  };
+
+  const handleSendTestEmail = async () => {
+    const userEmail = currentUser?.email;
+    if (!userEmail) {
+      showToast(isRtl ? 'شما با حساب کاربری وارد نشده‌اید!' : 'You are not logged in with a user account!', 'error');
+      return;
+    }
+
+    try {
+      setIsSendingTestEmail(true);
+      let token = getCachedGmailToken();
+      if (!token) {
+        token = await connectGmail();
+      }
+
+      const html = buildReminderEmailHtml(
+        isRtl ? 'آزمایش ارسال ایمیل یادآوری' : 'Test Reminder Notification',
+        isRtl ? 'تنظیمات سیستم' : 'System Settings',
+        isRtl ? 'هم‌اکنون (آزمایشی)' : 'Now (Test)',
+        isRtl ? 'این یک ایمیل آزمایشی برای اطمینان از صحت عملکرد ارسال یادآوری‌های امتحانات، ارائه‌ها و ددلاین‌ها از طریق جیمیل است.' : 'This is a test email verifying Gmail notification delivery.'
+      );
+
+      await sendGmailEmail(token, userEmail, isRtl ? '⏰ آزمایش ارسال ایمیل سیستم برنامه‌ریزی' : '⏰ Test Reminder Email', html);
+      showToast(isRtl ? `ایمیل آزمایشی با موفقیت به ${userEmail} ارسال شد` : `Test email successfully sent to ${userEmail}!`, 'success');
+    } catch (e: any) {
+      showToast(isRtl ? `خطا در ارسال ایمیل آزمایشی: ${e.message || e}` : `Test email failed: ${e.message || e}`, 'error');
+    } finally {
+      setIsSendingTestEmail(false);
+    }
+  };
 
   const handleToggleAutoLoad = () => {
     const nextVal = !autoLoad;
@@ -424,6 +474,104 @@ export default function SettingsPage({
                       <span>{t.themeDark}</span>
                     </button>
                   </div>
+                </div>
+
+              </div>
+            </div>
+
+            {/* Card: Email Reminders (Gmail) Settings */}
+            <div className={cardClass}>
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <Mail className="w-5 h-5 text-indigo-600" />
+                  <h3 className="font-black text-sm text-slate-800">
+                    {isRtl ? 'تنظیمات یادآوری ایمیلی (ددلاین‌ها، امتحانات و ارائه‌ها)' : 'Email Reminders (Deadlines, Exams & Presentations)'}
+                  </h3>
+                </div>
+                {currentUser?.email && (
+                  <span className="text-[10px] bg-emerald-50 text-emerald-700 font-bold px-2.5 py-1 rounded-lg border border-emerald-200/60 flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3 text-emerald-600" />
+                    {currentUser.email}
+                  </span>
+                )}
+              </div>
+
+              <div className="space-y-4">
+                
+                {/* Global Email Reminder Toggle */}
+                <div className="flex items-center justify-between p-3 rounded-2xl hover:bg-slate-50/50 transition-colors">
+                  <div className={`flex flex-col ${isRtl ? 'text-right' : 'text-left'}`}>
+                    <span className="font-black text-xs text-slate-800">
+                      {isRtl ? 'فعال‌سازی کلی ارسال ایمیل یادآوری' : 'Enable Global Email Reminders'}
+                    </span>
+                    <p className="text-[10px] text-slate-400 font-bold mt-0.5">
+                      {isRtl 
+                        ? 'ارسال خودکار ایمیل یادآوری به حساب کاربر قبل از زمان ددلاین، امتحان یا ارائه' 
+                        : 'Automatically send email alerts before deadlines, exams or presentations'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    dir="ltr"
+                    onClick={() => {
+                      const next = !(data.emailRemindersGlobalEnabled !== false);
+                      setData(prev => ({ ...prev, emailRemindersGlobalEnabled: next }));
+                    }}
+                    className={`w-12 h-7 rounded-full transition-colors duration-200 focus:outline-none cursor-pointer shrink-0 relative flex items-center p-1 ${ (data.emailRemindersGlobalEnabled !== false) ? 'bg-indigo-600 justify-end' : 'bg-slate-300 justify-start'}`}
+                  >
+                    <div className="w-5 h-5 rounded-full bg-white shadow-md pointer-events-none" />
+                  </button>
+                </div>
+
+                {/* Default Reminder Offset Selection */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-2xl hover:bg-slate-50/50 transition-colors gap-2">
+                  <div className={`flex flex-col ${isRtl ? 'text-right' : 'text-left'}`}>
+                    <span className="font-black text-xs text-slate-800">
+                      {isRtl ? 'زمان پیش‌فرض ارسال ایمیل یادآوری' : 'Default Email Lead Time'}
+                    </span>
+                    <p className="text-[10px] text-slate-400 font-bold mt-0.5">
+                      {isRtl 
+                        ? 'انتخاب یکی از زمان‌های یادآوری جهت تنظیم پیش‌فرض برای موارد جدید' 
+                        : 'Choose one default lead time option for new items'}
+                    </p>
+                  </div>
+                  <select
+                    value={data.emailReminderDefaultOffset || '1day'}
+                    onChange={(e) => {
+                      const val = e.target.value as ReminderOffset;
+                      setData(prev => ({ ...prev, emailReminderDefaultOffset: val }));
+                    }}
+                    className="bg-white border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 shrink-0"
+                  >
+                    {REMINDER_OFFSET_OPTIONS.map(opt => (
+                      <option key={opt.id} value={opt.id}>
+                        {isRtl ? opt.labelFa : opt.labelEn}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Connect Gmail and Test Email Buttons */}
+                <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={handleConnectGmail}
+                    disabled={isConnectingGmail}
+                    className="w-full sm:w-auto px-4 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-3xs flex items-center justify-center gap-2 border border-slate-700"
+                  >
+                    <Mail className="w-4 h-4 text-indigo-400" />
+                    <span>{isConnectingGmail ? (isRtl ? 'در حال اتصال...' : 'Connecting...') : (isRtl ? 'اتصال یا تایید دسترسی جیمیل' : 'Connect / Authorize Gmail')}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleSendTestEmail}
+                    disabled={isSendingTestEmail}
+                    className="w-full sm:w-auto px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-3xs flex items-center justify-center gap-2"
+                  >
+                    <Send className="w-4 h-4 text-white" />
+                    <span>{isSendingTestEmail ? (isRtl ? 'در حال ارسال...' : 'Sending...') : (isRtl ? 'ارسال ایمیل آزمایشی' : 'Send Test Email')}</span>
+                  </button>
                 </div>
 
               </div>
