@@ -38,7 +38,12 @@ jobs:
       - name: Install & Setup Capacitor
         run: |
           npm install @capacitor/core @capacitor/cli @capacitor/android --no-audit --no-fund
-          npx cap add android || true
+          if [ ! -f capacitor.config.json ] && [ ! -f capacitor.config.ts ]; then
+            echo '{"appId":"com.direct.planner","appName":"Direct Planner","webDir":"dist","server":{"androidScheme":"https"}}' > capacitor.config.json
+          fi
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
           npx cap sync android
 
       - name: Build Android APK (Universal - Android 9+)

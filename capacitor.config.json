@@ -1,0 +1,8 @@
+{
+  "appId": "com.direct.planner",
+  "appName": "Direct Planner",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}

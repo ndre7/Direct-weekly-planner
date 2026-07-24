@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import "dotenv/config";
 import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
 import { 
@@ -425,20 +425,22 @@ You must return a JSON object matching this schema:
 {
   "justification": "Persian short coaching feedback and justification of changes/emphasis for this upcoming week.",
   "week_tasks": [
-    { "title": "Specific Persian task title", "type": "core" | "secondary" | "habit" }
+    { 
+      "title": "Specific Persian task title", 
+      "description": "Detailed Persian task execution instructions", 
+      "type": "core" | "secondary" | "habit",
+      "suggested_weekday": "saturday" | "sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday"
+    }
   ]
 }
-Return EXACTLY 3-6 tasks. Types can be:
-- 'core' (the most critical priority for this week)
-- 'secondary' (supporting tasks)
-- 'habit' (routines that should be repeated)
-
+Return EXACTLY 3-6 tasks. Types can be 'core', 'secondary', or 'habit'.
 Return ONLY valid JSON. Do not wrap in markdown code blocks.`;
 
       const response = await ai.models.generateContent({
-        model: GEMINI_MODEL,
+        model: "gemini-3.1-pro-preview",
         contents: prompt,
         config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -453,10 +455,12 @@ Return ONLY valid JSON. Do not wrap in markdown code blocks.`;
                 items: {
                   type: Type.OBJECT,
                   properties: {
-                    title: { type: Type.STRING, description: "عنوان تسک به فارسی" },
-                    type: { type: Type.STRING, enum: ["core", "secondary", "habit"], description: "نوع تسک" }
+                    title: { type: Type.STRING, description: "عنوان مشخص و دقیق تسک به فارسی" },
+                    description: { type: Type.STRING, description: "توضیحات کامل و عملیاتی تسک" },
+                    type: { type: Type.STRING, enum: ["core", "secondary", "habit"], description: "نوع تسک" },
+                    suggested_weekday: { type: Type.STRING, description: "روز پیشنهادی هفته" }
                   },
-                  required: ["title", "type"]
+                  required: ["title", "description", "type"]
                 }
               }
             },
@@ -470,37 +474,60 @@ Return ONLY valid JSON. Do not wrap in markdown code blocks.`;
       return res.json({ success: true, ...parsed });
 
     } else {
-      // Action: analyze (initial goal analysis)
-      const prompt = `You are an elite academic productivity coach and cognitive psychologist. A user is registering a new long-term goal.
-Goal Title: ${title}
-Target Duration: ${totalWeeks} weeks
-User's Average Task Completion Rate (TCR) in previous weeks: ${averageTcr || 70}%
-User's University/Class load hours per week: ${universityHours || 0} hours
+      // Action: analyze (initial goal analysis - GENERATE FULL ROADMAP AT ONCE)
+      const prompt = `شما یک مشاور ارشد بهره‌وری علمی و سیستم مدیریت هوشمند اهداف هستید. کاربر در حال ثبت یک هدف جدید است:
+عنوان هدف: ${title}
+مدت زمان پیشنهادی کاربر برای اتمام هدف: ${totalWeeks} هفته
+نرخ متوسط تکمیل کارهای قبلی کاربر (TCR): ${averageTcr || 70}%
+ساعات درگیر کلاس‌های دانشگاهی/آموزشی: ${universityHours || 0} ساعت در هفته
 
-Your task is to provide an EXTREMELY DETAILED, HIGHLY ACTIONABLE, COMPREHENSIVE ROADMAP for achieving this goal:
-1. Calculate a realistic Feasibility Success Score (0-100) based on their TCR, university hours, and the complexity of the goal.
-2. Provide a thorough, rich, multi-paragraph Persian justification explaining the score, psychological/academic strategy, potential bottleneck risks, and concrete actionable guidelines for success.
-3. Formulate 4 to 7 precise, key milestones spaced evenly across the ${totalWeeks} weeks to track step-by-step progress. Each milestone must have a clear title in Persian.
-4. Provide a rich set of first week's actionable tasks (4 to 7 detailed, specific tasks categorized as 'core', 'secondary', or 'habit') to get them started with immediate momentum.
+وظیفه شما:
+۱. بر اساس سختی هدف و نرخ توانمندی کاربر، مدت زمان واقعی مورد نیاز برای تکمیل کامل این هدف را تخمین بزنید (ai_estimated_weeks). توجه داشته باشید که نقشه راه باید بر اساس مدت زمان پیشنهادی کاربر (${totalWeeks} هفته) طراحی شود، اما تخمین هوشمندانه خود را هم اعلام کنید.
+۲. یک نمره احتمال موفقیت (Feasibility Score) بین 0 تا 100 محاسبه کنید.
+۳. یک تحلیل جامع، مشاوره‌ای و انگیزشی به زبان فارسی روان شامل ارزیابی پایداری زمان، استراتژی گام‌به‌گام و نکات جلوگیری از فرسودگی ارائه دهید.
+۴. کل نقشه راه (Roadmap) را به طور کامل و یک‌جا به صورت فاز به فاز (Phases) برای کل دوره (${totalWeeks} هفته) تولید کنید.
+   برای هر فاز:
+   - شماره فاز (phase_number)
+   - عنوان فاز به فارسی (title)
+   - توضیحات مفصل و اهداف این فاز به فارسی (description)
+   - بازه زمانی/هفته‌های مربوط به این فاز (estimated_weeks)
+   - لیست کامل تسک‌های عملیاتی و ریز این فاز (tasks):
+     هر تسک باید دارای:
+     - title: عنوان هوشمند، کوتاه و کاملا مشخص تسک به فارسی (مثلا: "خلاصه برداری فصل ۱ کتاب مرجع") - به هیچ وجه عنوان نباید خالی یا پرامپت کاربر باشد!
+     - description: توضیحات کامل و گام‌به‌گام نحوه اجرای تسک به فارسی (مثلا: "خواندن ۳۰ صفحه اول، نت برداری نکات اصلی و حل ۵ مسئله نمونه")
+     - type: یکی از 'core' (کار اصلی) یا 'secondary' (کار فرعی) یا 'habit' (عادت روزانه/پیگیری)
+     - suggested_weekday: روز پیشنهادی هفته (saturday, sunday, monday, tuesday, wednesday, thursday, friday)
+     - deadline_note: مهلت یا زمان پیشنهادی
 
-You must return a JSON object matching this schema:
+پاسخ را دقیقا در ساختار JSON زیر ارسال کنید:
 {
-  "feasibility_score": number (0-100),
-  "justification": "Detailed, thorough Persian explanation and roadmap guide",
-  "milestones": [
-    { "week_number": number, "title": "Detailed milestone title in Persian", "completed": false }
-  ],
-  "week_tasks": [
-    { "title": "Specific detailed Persian task title", "type": "core" | "secondary" | "habit" }
+  "feasibility_score": 85,
+  "ai_estimated_weeks": 8,
+  "justification": "تحلیل کامل و مفصل به زبان فارسی روان...",
+  "phases": [
+    {
+      "phase_number": 1,
+      "title": "عنوان فاز اول",
+      "description": "توضیحات و اهداف کامل فاز اول...",
+      "estimated_weeks": "هفته ۱ تا ۲",
+      "tasks": [
+        {
+          "title": "عنوان دقیق تسک ۱",
+          "description": "توضیحات کامل و عملیاتی تسک ۱...",
+          "type": "core",
+          "suggested_weekday": "saturday",
+          "deadline_note": "تا انتهای هفته اول"
+        }
+      ]
+    }
   ]
-}
-
-Return ONLY valid JSON. Do not wrap in markdown code blocks.`;
+}`;
 
       const response = await ai.models.generateContent({
-        model: GEMINI_MODEL,
+        model: "gemini-3.1-pro-preview",
         contents: prompt,
         config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -509,37 +536,45 @@ Return ONLY valid JSON. Do not wrap in markdown code blocks.`;
                 type: Type.INTEGER,
                 description: "نمره احتمال موفقیت واقعی بین 0 تا 100"
               },
+              ai_estimated_weeks: {
+                type: Type.INTEGER,
+                description: "تخمین هوش مصنوعی از هفته‌های مورد نیاز"
+              },
               justification: {
                 type: Type.STRING,
                 description: "توجیه کوتاه نمره و تحلیل اولیه به فارسی روان"
               },
-              milestones: {
+              phases: {
                 type: Type.ARRAY,
-                description: "فازهای اصلی یا نقاط عطف مسیر",
+                description: "تمام فازهای نقشه راه کل مسیر یک‌جا",
                 items: {
                   type: Type.OBJECT,
                   properties: {
-                    week_number: { type: Type.INTEGER, description: "شماره هفته مربوطه" },
-                    title: { type: Type.STRING, description: "عنوان نقطه عطف به فارسی" },
-                    completed: { type: Type.BOOLEAN, description: "وضعیت تکمیل (پیش‌فرض false)" }
+                    phase_number: { type: Type.INTEGER, description: "شماره فاز" },
+                    title: { type: Type.STRING, description: "عنوان فاز به فارسی" },
+                    description: { type: Type.STRING, description: "توضیحات و اهداف فاز" },
+                    estimated_weeks: { type: Type.STRING, description: "بازه‌های زمانی فاز" },
+                    tasks: {
+                      type: Type.ARRAY,
+                      description: "لیست تسک‌های ریز و دقیق فاز",
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          title: { type: Type.STRING, description: "عنوان مشخص تسک به فارسی" },
+                          description: { type: Type.STRING, description: "توضیحات کامل و عملیاتی تسک به فارسی" },
+                          type: { type: Type.STRING, enum: ["core", "secondary", "habit"], description: "نوع تسک" },
+                          suggested_weekday: { type: Type.STRING, description: "روز پیشنهادی هفته" },
+                          deadline_note: { type: Type.STRING, description: "مهلت یا ددلاین پیشنهادی" }
+                        },
+                        required: ["title", "description", "type"]
+                      }
+                    }
                   },
-                  required: ["week_number", "title", "completed"]
-                }
-              },
-              week_tasks: {
-                type: Type.ARRAY,
-                description: "لیست تسک‌های پیشنهادی برای شروع در هفته اول",
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    title: { type: Type.STRING, description: "عنوان تسک به فارسی" },
-                    type: { type: Type.STRING, enum: ["core", "secondary", "habit"], description: "نوع تسک" }
-                  },
-                  required: ["title", "type"]
+                  required: ["phase_number", "title", "description", "tasks"]
                 }
               }
             },
-            required: ["feasibility_score", "justification", "milestones", "week_tasks"]
+            required: ["feasibility_score", "ai_estimated_weeks", "justification", "phases"]
           }
         }
       });

@@ -35,7 +35,7 @@ import {
   Send
 } from 'lucide-react';
 
-import { PlannerData, ClassSlot, DailyTask, Category, SecondaryTask, ReminderItem, NoteItem, DetailsColumn, DetailsItem, CoreTask, PostponedEvent, User } from './types';
+import { PlannerData, ClassSlot, DailyTask, Category, SecondaryTask, ReminderItem, ReminderFrequency, NoteItem, DetailsColumn, DetailsItem, CoreTask, PostponedEvent, User } from './types';
 import { INITIAL_PLANNER_DATA } from './initialData';
 import { TRANSLATIONS, DAYS_OF_WEEK } from './translations';
 import { getIdToken } from 'firebase/auth';
@@ -534,6 +534,12 @@ export default function App() {
       let hasUpdates = false;
       const updatedData = { ...data };
 
+      const targetEmail = (updatedData.reminderEmailTargetType === 'custom' && updatedData.reminderCustomEmail && updatedData.reminderCustomEmail.trim())
+        ? updatedData.reminderCustomEmail.trim()
+        : currentUser.email;
+
+      if (!targetEmail) return;
+
       // 1. Check Exam Columns
       const updatedExamCols = (updatedData.examColumns || []).map((col) => {
         let colChanged = false;
@@ -555,11 +561,11 @@ export default function App() {
 
                 sendGmailEmail(
                   token,
-                  currentUser.email!,
+                  targetEmail,
                   `⏰ یادآوری امتحان / ارائه: ${item.text}`,
                   html
                 ).then(() => {
-                  showToast(`ایمیل یادآوری برای "${item.text}" ارسال شد`, 'success');
+                  showToast(`ایمیل یادآوری برای "${item.text}" به ${targetEmail} ارسال شد`, 'success');
                 }).catch((err) => {
                   console.warn('Reminder email failed:', err);
                 });
@@ -596,11 +602,11 @@ export default function App() {
 
                 sendGmailEmail(
                   token,
-                  currentUser.email!,
+                  targetEmail,
                   `⏰ یادآوری ددلاین: ${item.text}`,
                   html
                 ).then(() => {
-                  showToast(`ایمیل یادآوری ددلاین برای "${item.text}" ارسال شد`, 'success');
+                  showToast(`ایمیل یادآوری ددلاین برای "${item.text}" به ${targetEmail} ارسال شد`, 'success');
                 }).catch((err) => {
                   console.warn('Reminder email failed:', err);
                 });
@@ -617,11 +623,49 @@ export default function App() {
         return colChanged ? { ...col, items: updatedItems } : col;
       });
 
+      // 3. Check Reminders (Habits / Everyday Reminders)
+      let remindersChanged = false;
+      const updatedReminders = (updatedData.reminders || []).map((item) => {
+        if (item.emailReminder && !item.reminderSent) {
+          const deadlineMs = parseItemDeadlineMs(item, data.weekYear || 1405);
+          if (deadlineMs) {
+            const offsetMs = getOffsetMs(item.reminderOffset || data.emailReminderDefaultOffset || '1day');
+            const reminderTime = deadlineMs - offsetMs;
+
+            if (now >= reminderTime && now <= deadlineMs + 24 * 60 * 60 * 1000) {
+              const deadlineDisplay = item.time ? `ساعت ${item.time}` : (item.date || 'امروز');
+              const html = buildReminderEmailHtml(
+                item.textFa,
+                `تب یادآوری‌ها (${data.remindersTitle || 'پیگیری عادت‌ها و یادآوری‌ها'})`,
+                deadlineDisplay
+              );
+
+              sendGmailEmail(
+                token,
+                targetEmail,
+                `⏰ یادآوری کار / عادت: ${item.textFa}`,
+                html
+              ).then(() => {
+                showToast(`ایمیل یادآوری برای "${item.textFa}" به ${targetEmail} ارسال شد`, 'success');
+              }).catch((err) => {
+                console.warn('Reminder email failed:', err);
+              });
+
+              remindersChanged = true;
+              hasUpdates = true;
+              return { ...item, reminderSent: true };
+            }
+          }
+        }
+        return item;
+      });
+
       if (hasUpdates) {
         setData(prev => ({
           ...prev,
           examColumns: updatedExamCols,
-          detailsColumns: updatedDetailsCols
+          detailsColumns: updatedDetailsCols,
+          reminders: remindersChanged ? updatedReminders : prev.reminders
         }));
       }
     };
@@ -629,7 +673,7 @@ export default function App() {
     checkAndSendReminders();
     const interval = setInterval(checkAndSendReminders, 60000);
     return () => clearInterval(interval);
-  }, [data.emailRemindersGlobalEnabled, currentUser, data.examColumns, data.detailsColumns]);
+  }, [data.emailRemindersGlobalEnabled, currentUser, data.examColumns, data.detailsColumns, data.reminders, data.reminderEmailTargetType, data.reminderCustomEmail]);
 
   const [past, setPast] = useState<PlannerData[]>([]);
   const [future, setFuture] = useState<PlannerData[]>([]);
@@ -2780,6 +2824,8 @@ export default function App() {
       textFa: 'عادت یا یادآوری جدید',
       textEn: 'New habit',
       checkedDays: [],
+      frequency: 'every_day',
+      targetCount: 1
     };
     setData((prev) => ({
       ...prev,
@@ -2801,6 +2847,23 @@ export default function App() {
       const list = prev.reminders.map((r) => {
         if (r.id === id) {
           return { ...r, textFa: value };
+        }
+        return r;
+      });
+      return { ...prev, reminders: list };
+    });
+  };
+
+  const handleEditHabitFrequency = (id: string, frequency: ReminderFrequency) => {
+    setData((prev) => {
+      const list = prev.reminders.map((r) => {
+        if (r.id === id) {
+          const hasTarget = ['every_day', 'every_other_day', 'even_days', 'odd_days'].includes(frequency);
+          return {
+            ...r,
+            frequency,
+            targetCount: hasTarget ? (r.targetCount || 1) : 1
+          };
         }
         return r;
       });
@@ -4814,23 +4877,99 @@ export default function App() {
                               )}
 
                               {editMode ? (
-                                <div className="flex flex-col gap-1 w-full text-right">
+                                <div className="flex flex-col gap-1.5 w-full text-right">
                                   <input
                                     type="text"
                                     value={reminder.textFa}
                                     onChange={(e) => handleEditHabitText(reminder.id, e.target.value)}
                                     className="w-full text-xs bg-amber-50 border border-amber-200 rounded p-1 px-2 font-bold"
                                   />
-                                  <div className="flex items-center gap-1 mt-1">
-                                    <span className="text-[10px] text-slate-400 font-bold">هدف (دفعات):</span>
-                                    <input
-                                      type="number"
-                                      min={1}
-                                      max={10}
-                                      value={reminder.targetCount || 1}
-                                      onChange={(e) => handleEditHabitTarget(reminder.id, parseInt(e.target.value) || 1)}
-                                      className="w-12 text-[10px] bg-amber-50 border border-amber-200 rounded p-0.5 text-center font-bold"
-                                    />
+                                  <div className="flex items-center gap-2 flex-wrap text-[10px]">
+                                    <select
+                                      value={reminder.frequency || 'every_day'}
+                                      onChange={(e) => handleEditHabitFrequency(reminder.id, e.target.value as ReminderFrequency)}
+                                      className="bg-amber-50 border border-amber-200 rounded p-1 font-bold text-slate-700 cursor-pointer"
+                                    >
+                                      <option value="every_day">هر روز</option>
+                                      <option value="times_per_week">چند بار در هفته</option>
+                                      <option value="times_per_month">چند بار در ماه</option>
+                                      <option value="every_other_day">یک روز در میان</option>
+                                      <option value="even_days">روزهای زوج</option>
+                                      <option value="odd_days">روزهای فرد</option>
+                                      <option value="weekly">هر هفته (یک بار)</option>
+                                      <option value="every_10_days">هر ۱۰ روز</option>
+                                      <option value="every_2_weeks">هر دو هفته</option>
+                                      <option value="every_15_days">هر ۱۵ روز</option>
+                                      <option value="every_20_days">هر ۲۰ روز</option>
+                                      <option value="monthly">هر یک ماه (یک بار)</option>
+                                    </select>
+
+                                    {(reminder.frequency === 'every_day' || reminder.frequency === 'times_per_week' || reminder.frequency === 'times_per_month') && (
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-slate-500 font-bold">هدف (تعداد):</span>
+                                        <input
+                                          type="number"
+                                          min={1}
+                                          max={31}
+                                          value={reminder.targetCount || 1}
+                                          onChange={(e) => handleEditHabitTarget(reminder.id, parseInt(e.target.value) || 1)}
+                                          className="w-12 text-[10px] bg-amber-50 border border-amber-200 rounded p-0.5 text-center font-bold"
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* Email Reminder Config in Edit Mode */}
+                                  <div className="flex items-center gap-1.5 mt-1 pt-1 border-t border-amber-200/50 flex-wrap">
+                                    <label className="flex items-center gap-1 cursor-pointer text-[10px] font-black text-indigo-900 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                                      <input
+                                        type="checkbox"
+                                        checked={!!reminder.emailReminder}
+                                        onChange={(e) => {
+                                          const val = e.target.checked;
+                                          setData((prev) => ({
+                                            ...prev,
+                                            reminders: prev.reminders.map(r => r.id === reminder.id ? { ...r, emailReminder: val, reminderSent: false } : r)
+                                          }));
+                                        }}
+                                        className="rounded text-indigo-600 focus:ring-0"
+                                      />
+                                      <Mail className="w-3 h-3 text-indigo-600" />
+                                      <span>ایمیل یادآوری</span>
+                                    </label>
+
+                                    {reminder.emailReminder && (
+                                      <>
+                                        <input
+                                          type="time"
+                                          value={reminder.time || '09:00'}
+                                          onChange={(e) => {
+                                            const timeVal = e.target.value;
+                                            setData((prev) => ({
+                                              ...prev,
+                                              reminders: prev.reminders.map(r => r.id === reminder.id ? { ...r, time: timeVal, reminderSent: false } : r)
+                                            }));
+                                          }}
+                                          className="text-[10px] font-black bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 text-slate-800 focus:outline-none"
+                                        />
+
+                                        <select
+                                          value={reminder.reminderOffset || '1day'}
+                                          onChange={(e) => {
+                                            const offsetVal = e.target.value as ReminderOffset;
+                                            setData((prev) => ({
+                                              ...prev,
+                                              reminders: prev.reminders.map(r => r.id === reminder.id ? { ...r, reminderOffset: offsetVal } : r)
+                                            }));
+                                          }}
+                                          className="text-[10px] font-black bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 text-slate-800 focus:outline-none cursor-pointer"
+                                        >
+                                          {REMINDER_OFFSET_OPTIONS.map(opt => (
+                                            <option key={opt.id} value={opt.id}>{opt.labelFa}</option>
+                                          ))}
+                                        </select>
+                                      </>
+                                    )}
                                   </div>
                                 </div>
                               ) : (
@@ -4838,11 +4977,41 @@ export default function App() {
                                   <span className="text-slate-800 leading-snug">
                                     {reminder.textFa}
                                   </span>
-                                  {reminder.targetCount && reminder.targetCount > 1 && (
-                                    <span className="text-[10px] text-indigo-500 font-black mt-0.5">
-                                      (هدف: {toPersianDigits(reminder.targetCount)} بار در روز)
-                                    </span>
-                                  )}
+                                  <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                                    {reminder.frequency === 'times_per_week' && (
+                                      <span className="text-[9px] bg-indigo-50 text-indigo-700 border border-indigo-200 font-black px-1.5 py-0.5 rounded-md">
+                                        {toPersianDigits(reminder.targetCount || 1)} بار در هفته
+                                      </span>
+                                    )}
+                                    {reminder.frequency === 'times_per_month' && (
+                                      <span className="text-[9px] bg-purple-50 text-purple-700 border border-purple-200 font-black px-1.5 py-0.5 rounded-md">
+                                        {toPersianDigits(reminder.targetCount || 1)} بار در ماه
+                                      </span>
+                                    )}
+                                    {reminder.frequency === 'every_day' && reminder.targetCount && reminder.targetCount > 1 && (
+                                      <span className="text-[9px] text-indigo-500 font-black">
+                                        ({toPersianDigits(reminder.targetCount)} بار در روز)
+                                      </span>
+                                    )}
+                                    {reminder.frequency && reminder.frequency !== 'every_day' && reminder.frequency !== 'times_per_week' && reminder.frequency !== 'times_per_month' && (
+                                      <span className="text-[9px] bg-slate-100 text-slate-600 font-bold px-1.5 py-0.5 rounded-md">
+                                        {reminder.frequency === 'every_other_day' ? 'یک روز در میان' :
+                                         reminder.frequency === 'even_days' ? 'روزهای زوج' :
+                                         reminder.frequency === 'odd_days' ? 'روزهای فرد' :
+                                         reminder.frequency === 'weekly' ? 'هر هفته' :
+                                         reminder.frequency === 'every_10_days' ? 'هر ۱۰ روز' :
+                                         reminder.frequency === 'every_2_weeks' ? 'هر دو هفته' :
+                                         reminder.frequency === 'every_15_days' ? 'هر ۱۵ روز' :
+                                         reminder.frequency === 'every_20_days' ? 'هر ۲۰ روز' : 'هر یک ماه'}
+                                      </span>
+                                    )}
+                                    {reminder.emailReminder && (
+                                      <span className="text-[9px] bg-blue-50 text-blue-700 border border-blue-200/80 font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                                        <Mail className="w-2.5 h-2.5 text-blue-600" />
+                                        <span>ساعت {toPersianDigits(reminder.time || '09:00')}</span>
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               )}
                             </div>

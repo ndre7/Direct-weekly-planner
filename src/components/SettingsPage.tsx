@@ -103,9 +103,12 @@ export default function SettingsPage({
   };
 
   const handleSendTestEmail = async () => {
-    const userEmail = currentUser?.email;
-    if (!userEmail) {
-      showToast(isRtl ? 'شما با حساب کاربری وارد نشده‌اید!' : 'You are not logged in with a user account!', 'error');
+    const targetEmail = (data.reminderEmailTargetType === 'custom' && data.reminderCustomEmail && data.reminderCustomEmail.trim())
+      ? data.reminderCustomEmail.trim()
+      : currentUser?.email;
+
+    if (!targetEmail) {
+      showToast(isRtl ? 'آدرس ایمیلی برای دریافت یادآوری مشخص نشده است!' : 'No target email specified!', 'error');
       return;
     }
 
@@ -120,16 +123,93 @@ export default function SettingsPage({
         isRtl ? 'آزمایش ارسال ایمیل یادآوری' : 'Test Reminder Notification',
         isRtl ? 'تنظیمات سیستم' : 'System Settings',
         isRtl ? 'هم‌اکنون (آزمایشی)' : 'Now (Test)',
-        isRtl ? 'این یک ایمیل آزمایشی برای اطمینان از صحت عملکرد ارسال یادآوری‌های امتحانات، ارائه‌ها و ددلاین‌ها از طریق جیمیل است.' : 'This is a test email verifying Gmail notification delivery.'
+        isRtl ? 'این یک ایمیل آزمایشی برای اطمینان از صحت عملکرد ارسال یادآوری‌های امتحانات، ارائه‌ها، ددلاین‌ها و تب یادآوری‌ها از طریق جیمیل است.' : 'This is a test email verifying Gmail notification delivery.'
       );
 
-      await sendGmailEmail(token, userEmail, isRtl ? '⏰ آزمایش ارسال ایمیل سیستم برنامه‌ریزی' : '⏰ Test Reminder Email', html);
-      showToast(isRtl ? `ایمیل آزمایشی با موفقیت به ${userEmail} ارسال شد` : `Test email successfully sent to ${userEmail}!`, 'success');
+      await sendGmailEmail(token, targetEmail, isRtl ? '⏰ آزمایش ارسال ایمیل سیستم برنامه‌ریزی' : '⏰ Test Reminder Email', html);
+      showToast(isRtl ? `ایمیل آزمایشی با موفقیت به ${targetEmail} ارسال شد` : `Test email successfully sent to ${targetEmail}!`, 'success');
     } catch (e: any) {
       showToast(isRtl ? `خطا در ارسال ایمیل آزمایشی: ${e.message || e}` : `Test email failed: ${e.message || e}`, 'error');
     } finally {
       setIsSendingTestEmail(false);
     }
+  };
+
+  // Helper to collect active email reminders from all categories
+  const activeRemindersList = React.useMemo(() => {
+    const list: { id: string; text: string; type: 'exam' | 'details' | 'reminder'; sourceFa: string; dateDisplay: string; sent: boolean }[] = [];
+
+    (data.examColumns || []).forEach(col => {
+      col.items.forEach(item => {
+        if (item.emailReminder) {
+          list.push({
+            id: item.id,
+            text: item.text,
+            type: 'exam',
+            sourceFa: `امتحان / ارائه (${col.titleFa})`,
+            dateDisplay: item.date || 'تنظیم شده',
+            sent: !!item.reminderSent
+          });
+        }
+      });
+    });
+
+    (data.detailsColumns || []).forEach(col => {
+      col.items.forEach(item => {
+        if (item.emailReminder) {
+          list.push({
+            id: item.id,
+            text: item.text,
+            type: 'details',
+            sourceFa: `ددلاین (${col.titleFa})`,
+            dateDisplay: item.date || 'تنظیم شده',
+            sent: !!item.reminderSent
+          });
+        }
+      });
+    });
+
+    (data.reminders || []).forEach(item => {
+      if (item.emailReminder) {
+        list.push({
+          id: item.id,
+          text: item.textFa,
+          type: 'reminder',
+          sourceFa: `یادآوری‌ها و عادت‌ها`,
+          dateDisplay: item.time ? `ساعت ${item.time}` : 'روزانه',
+          sent: !!item.reminderSent
+        });
+      }
+    });
+
+    return list;
+  }, [data]);
+
+  const handleToggleReminderFromSettings = (id: string, type: 'exam' | 'details' | 'reminder') => {
+    setData(prev => {
+      if (type === 'exam') {
+        return {
+          ...prev,
+          examColumns: (prev.examColumns || []).map(col => ({
+            ...col,
+            items: col.items.map(it => it.id === id ? { ...it, emailReminder: !it.emailReminder } : it)
+          }))
+        };
+      } else if (type === 'details') {
+        return {
+          ...prev,
+          detailsColumns: (prev.detailsColumns || []).map(col => ({
+            ...col,
+            items: col.items.map(it => it.id === id ? { ...it, emailReminder: !it.emailReminder } : it)
+          }))
+        };
+      } else {
+        return {
+          ...prev,
+          reminders: (prev.reminders || []).map(it => it.id === id ? { ...it, emailReminder: !it.emailReminder } : it)
+        };
+      }
+    });
   };
 
   const handleToggleAutoLoad = () => {
@@ -485,7 +565,7 @@ export default function SettingsPage({
                 <div className="flex items-center gap-2">
                   <Mail className="w-5 h-5 text-indigo-600" />
                   <h3 className="font-black text-sm text-slate-800">
-                    {isRtl ? 'تنظیمات یادآوری ایمیلی (ددلاین‌ها، امتحانات و ارائه‌ها)' : 'Email Reminders (Deadlines, Exams & Presentations)'}
+                    {isRtl ? 'تنظیمات یادآوری ایمیلی (امتحانات، ددلاین‌ها و یادآوری‌ها)' : 'Email Reminders (Exams, Deadlines & Reminders)'}
                   </h3>
                 </div>
                 {currentUser?.email && (
@@ -506,8 +586,8 @@ export default function SettingsPage({
                     </span>
                     <p className="text-[10px] text-slate-400 font-bold mt-0.5">
                       {isRtl 
-                        ? 'ارسال خودکار ایمیل یادآوری به حساب کاربر قبل از زمان ددلاین، امتحان یا ارائه' 
-                        : 'Automatically send email alerts before deadlines, exams or presentations'}
+                        ? 'ارسال خودکار ایمیل یادآوری قبل از زمان ددلاین، امتحان، ارائه یا کار یادآوری‌شده' 
+                        : 'Automatically send email alerts before deadlines, exams, presentations, or habit reminders'}
                     </p>
                   </div>
                   <button
@@ -521,6 +601,53 @@ export default function SettingsPage({
                   >
                     <div className="w-5 h-5 rounded-full bg-white shadow-md pointer-events-none" />
                   </button>
+                </div>
+
+                {/* Recipient Email Address Configuration */}
+                <div className="p-3 bg-slate-50/80 rounded-2xl border border-slate-100 flex flex-col gap-2.5">
+                  <span className="font-black text-xs text-slate-800">
+                    {isRtl ? 'ایمیل مقصد برای دریافت یادآوری‌ها' : 'Target Email Address for Notifications'}
+                  </span>
+                  
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer bg-white p-2 rounded-xl border border-slate-200 flex-1">
+                      <input
+                        type="radio"
+                        name="emailTargetType"
+                        checked={(data.reminderEmailTargetType || 'account') === 'account'}
+                        onChange={() => setData(prev => ({ ...prev, reminderEmailTargetType: 'account' }))}
+                        className="text-indigo-600 focus:ring-0"
+                      />
+                      <span>ایمیل حساب کاربری ({currentUser?.email || 'حساب فعلی'})</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer bg-white p-2 rounded-xl border border-slate-200 flex-1">
+                      <input
+                        type="radio"
+                        name="emailTargetType"
+                        checked={data.reminderEmailTargetType === 'custom'}
+                        onChange={() => setData(prev => ({ ...prev, reminderEmailTargetType: 'custom' }))}
+                        className="text-indigo-600 focus:ring-0"
+                      />
+                      <span>ایمیل سفارشی دیگر</span>
+                    </label>
+                  </div>
+
+                  {data.reminderEmailTargetType === 'custom' && (
+                    <div className="flex flex-col gap-1 mt-1">
+                      <input
+                        type="email"
+                        placeholder="مثلاً: user@example.com"
+                        value={data.reminderCustomEmail || ''}
+                        onChange={(e) => setData(prev => ({ ...prev, reminderCustomEmail: e.target.value }))}
+                        className="w-full text-xs font-bold p-2.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-500 text-left"
+                        dir="ltr"
+                      />
+                      <span className="text-[10px] text-slate-400 font-bold">
+                        {isRtl ? 'یادآوری‌های ایمیلی به این آدرس ارسال خواهند شد.' : 'Reminder notifications will be sent to this email address.'}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Default Reminder Offset Selection */}
@@ -549,6 +676,46 @@ export default function SettingsPage({
                       </option>
                     ))}
                   </select>
+                </div>
+
+                {/* Active Scheduled Email Reminders List Manager */}
+                <div className="p-3 bg-indigo-50/40 rounded-2xl border border-indigo-100 flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-black text-xs text-indigo-950 flex items-center gap-1.5">
+                      <Bell className="w-3.5 h-3.5 text-indigo-600" />
+                      {isRtl ? 'لیست یادآوری‌های ایمیلی فعال در تمام بخش‌ها' : 'Active Scheduled Email Reminders'}
+                    </span>
+                    <span className="text-[10px] bg-indigo-100 text-indigo-800 font-black px-2 py-0.5 rounded-full">
+                      {activeRemindersList.length} مورد
+                    </span>
+                  </div>
+
+                  {activeRemindersList.length === 0 ? (
+                    <p className="text-[11px] text-slate-400 font-bold py-2 text-center">
+                      {isRtl ? 'هیچ یادآوری ایمیلی سریعی فعال نشده است.' : 'No active email reminders configured.'}
+                    </p>
+                  ) : (
+                    <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                      {activeRemindersList.map((item) => (
+                        <div key={item.id} className="flex items-center justify-between p-2 bg-white rounded-xl border border-slate-100 shadow-3xs text-xs">
+                          <div className="flex flex-col text-right">
+                            <span className="font-bold text-slate-800">{item.text}</span>
+                            <span className="text-[10px] text-slate-400 font-bold">
+                              {item.sourceFa} • {item.dateDisplay}
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleToggleReminderFromSettings(item.id, item.type)}
+                            className="text-[10px] bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold px-2 py-1 rounded-lg border border-rose-200/80 transition-colors cursor-pointer"
+                          >
+                            {isRtl ? 'غیرفعال‌سازی' : 'Disable'}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Connect Gmail and Test Email Buttons */}

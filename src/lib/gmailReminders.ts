@@ -66,6 +66,15 @@ export function parseItemDeadlineMs(item: any, defaultYear: number = 1405): numb
         }
       }
     }
+
+    if (item.time && typeof item.time === 'string' && item.time.includes(':')) {
+      const parts = item.time.split(':');
+      const hour = parseInt(parts[0], 10) || 9;
+      const min = parseInt(parts[1], 10) || 0;
+      const nowD = new Date();
+      nowD.setHours(hour, min, 0, 0);
+      return nowD.getTime();
+    }
   } catch (e) {
     console.warn('Error parsing item deadline:', e);
   }

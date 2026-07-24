@@ -52,7 +52,13 @@ export function verifyAndRepairPlannerData(rawData: any): { repairedData: any; r
     'postponedEvents',
     'detailsColumns',
     'secondaryTaskColumns',
-    'classesSchedule'
+    'classesSchedule',
+    'reminders',
+    'todoList',
+    'weeklyEvents',
+    'dailyThoughts',
+    'examColumns',
+    'goals'
   ];
   
   expectedArrays.forEach(key => {

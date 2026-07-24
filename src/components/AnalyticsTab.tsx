@@ -651,8 +651,37 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
         if (r.id === 'language' && isLanguageInactive) return;
 
         const checkedCount = r.checkedDays ? r.checkedDays.length : 0;
-        totalHabitDays += 7; // out of 7 days in week
-        completedHabitDays += checkedCount; // checkedDays acts as completed days in this slot
+        const freq = r.frequency || 'every_day';
+
+        if (freq === 'every_day') {
+          totalHabitDays += 7;
+          completedHabitDays += Math.min(7, checkedCount);
+        } else if (freq === 'times_per_week') {
+          const target = r.targetCount || 3;
+          totalHabitDays += target;
+          completedHabitDays += Math.min(target, checkedCount);
+        } else if (freq === 'times_per_month') {
+          const target = r.targetCount || 1;
+          const weeklyTarget = Math.max(1, Math.round(target / 4));
+          totalHabitDays += weeklyTarget;
+          completedHabitDays += Math.min(weeklyTarget, checkedCount);
+        } else if (freq === 'every_other_day') {
+          totalHabitDays += 4;
+          completedHabitDays += Math.min(4, checkedCount);
+        } else if (freq === 'even_days' || freq === 'odd_days') {
+          totalHabitDays += 3;
+          completedHabitDays += Math.min(3, checkedCount);
+        } else if (freq === 'weekly') {
+          totalHabitDays += 1;
+          completedHabitDays += checkedCount >= 1 ? 1 : 0;
+        } else {
+          // Multi-week or monthly options: 'every_10_days', 'every_2_weeks', 'every_15_days', 'every_20_days', 'monthly'
+          if (checkedCount >= 1) {
+            totalHabitDays += 1;
+            completedHabitDays += 1;
+          }
+          // If 0 checked in this week for monthly/periodic habits, do not penalize weekly consistency
+        }
       });
     }
 

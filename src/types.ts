@@ -101,6 +101,20 @@ export interface SecondaryTask {
   };
 }
 
+export type ReminderFrequency =
+  | 'every_day'       // هر روز
+  | 'every_other_day' // یک روز در میان
+  | 'even_days'       // روزهای زوج
+  | 'odd_days'        // روزهای فرد
+  | 'times_per_week'  // چند بار در هفته
+  | 'times_per_month' // چند بار در ماه
+  | 'weekly'          // هر هفته
+  | 'every_10_days'   // هر ۱۰ روز
+  | 'every_2_weeks'   // هر دو هفته
+  | 'every_15_days'   // هر ۱۵ روز
+  | 'every_20_days'   // هر ۲۰ روز
+  | 'monthly';        // هر یک ماه
+
 export interface ReminderItem {
   id: string;
   textFa: string;
@@ -108,6 +122,12 @@ export interface ReminderItem {
   checkedDays: string[]; // ['saturday', 'sunday', ...]
   targetCount?: number;
   dayProgress?: { [dayKey: string]: number };
+  frequency?: ReminderFrequency;
+  time?: string;
+  date?: string;
+  emailReminder?: boolean;
+  reminderOffset?: '1week' | '3days' | '1day' | '6hours' | '1hour';
+  reminderSent?: boolean;
 }
 
 export interface CoreTask {
@@ -183,6 +203,8 @@ export interface PlannerData {
   examColumns?: DetailsColumn[];
   emailRemindersGlobalEnabled?: boolean;
   emailReminderDefaultOffset?: '1week' | '3days' | '1day' | '6hours' | '1hour';
+  reminderEmailTargetType?: 'user' | 'custom';
+  reminderCustomEmail?: string;
   activeDayKeys?: string[];
   postponedEvents?: PostponedEvent[];
   goals?: Goal[];
@@ -197,17 +219,42 @@ export interface GoalMilestone {
 export interface GoalTask {
   id: string;
   title: string;
+  description?: string;
   type: 'core' | 'secondary' | 'habit';
   completed: boolean;
   goal_id?: string;
+}
+
+export interface GoalPhaseTask {
+  id?: string;
+  title: string;
+  description?: string;
+  type: 'core' | 'secondary' | 'habit';
+  suggested_weekday?: string;
+  deadline_note?: string;
+  completed?: boolean;
+}
+
+export interface GoalPhase {
+  phase_number: number;
+  title: string;
+  description: string;
+  estimated_weeks?: string;
+  tasks: GoalPhaseTask[];
+  completed?: boolean;
 }
 
 export interface Goal {
   goal_id: string;
   title: string;
   total_weeks: number;
+  ai_estimated_weeks?: number;
   current_week_index: number;
+  categoryId?: string; // Links to Category.id for custom category & color
+  categoryName?: string;
+  categoryColor?: string;
   milestones: GoalMilestone[];
+  phases?: GoalPhase[]; // Entire AI generated roadmap saved in memory
   active_week_tasks: GoalTask[];
   completed_tasks_count?: number;
   feasibility_score?: number;
