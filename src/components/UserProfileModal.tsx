@@ -2,12 +2,15 @@ import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User as UserIcon, Camera, Check, X, Sparkles, Upload, Trash2, Mail, Lock } from 'lucide-react';
 import { User } from '../types';
+import { safeParseJson } from '../lib/auth';
 
 interface UserProfileModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: User | null;
   onUpdateProfile: (updatedUser: User) => void;
+  onLogout: () => void;
+  onDeleteAccount: () => void;
   showToast: (msg: string) => void;
   lang: 'fa' | 'en';
 }
@@ -25,6 +28,8 @@ export default function UserProfileModal({
   onClose,
   currentUser,
   onUpdateProfile,
+  onLogout,
+  onDeleteAccount,
   showToast,
   lang,
 }: UserProfileModalProps) {
@@ -34,6 +39,7 @@ export default function UserProfileModal({
   const [username, setUsername] = useState(currentUser?.username || (isRtl ? 'کاربر برنامه‌ریز' : 'Planner User'));
   const [avatar, setAvatar] = useState<string | undefined>(currentUser?.avatar);
   const [isSaving, setIsSaving] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   if (!isOpen) return null;
 
@@ -53,30 +59,76 @@ export default function UserProfileModal({
     reader.readAsDataURL(file);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!username.trim()) {
       showToast(isRtl ? 'لطفاً نام کاربری را وارد کنید.' : 'Please enter a username.');
       return;
     }
 
+    const trimmed = username.trim();
     setIsSaving(true);
 
-    const baseUser: User = currentUser || {
-      id: `user_${Date.now()}`,
-      email: 'user@local.app',
-      username: username.trim(),
-    };
+    try {
+      // Validate and update username on backend if token exists
+      if (currentUser?.token) {
+        const response = await fetch('/api/auth/update-username', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${currentUser.token}`
+          },
+          body: JSON.stringify({ username: trimmed })
+        });
 
-    const updatedUser: User = {
-      ...baseUser,
-      username: username.trim(),
-      avatar: avatar,
-    };
+        if (!response.ok) {
+          const errData = await safeParseJson(response);
+          throw new Error(errData.error || (isRtl ? 'خطا در ثبت نام کاربری' : 'Failed to update username'));
+        }
+      }
 
-    onUpdateProfile(updatedUser);
-    setIsSaving(false);
-    showToast(isRtl ? 'اطلاعات حساب کاربری با موفقیت بروزرسانی شد.' : 'Profile updated successfully.');
-    onClose();
+      // Update in Firestore users collection & usernames collection
+      if (currentUser?.id) {
+        try {
+          const { doc, setDoc } = await import('firebase/firestore');
+          const { db } = await import('../lib/firebase.ts');
+          
+          await setDoc(doc(db, 'users', currentUser.id), {
+            username: trimmed,
+            email: currentUser.email,
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
+
+          await setDoc(doc(db, 'usernames', trimmed.toLowerCase()), {
+            username: trimmed,
+            uid: currentUser.id,
+            email: currentUser.email,
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
+        } catch (fsErr) {
+          console.warn("Firestore profile save warning:", fsErr);
+        }
+      }
+
+      const baseUser: User = currentUser || {
+        id: `user_${Date.now()}`,
+        email: 'user@local.app',
+        username: trimmed,
+      };
+
+      const updatedUser: User = {
+        ...baseUser,
+        username: trimmed,
+        avatar: avatar,
+      };
+
+      onUpdateProfile(updatedUser);
+      showToast(isRtl ? 'اطلاعات حساب کاربری و نام کاربری با موفقیت بروزرسانی شد.' : 'Profile and username updated successfully.');
+      onClose();
+    } catch (err: any) {
+      showToast(err.message || (isRtl ? 'خطا در بروزرسانی پروفایل' : 'Failed to update profile'));
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -208,6 +260,67 @@ export default function UserProfileModal({
                   <Mail className={`w-4 h-4 text-slate-400 absolute ${isRtl ? 'left-3' : 'right-3'}`} />
                 </div>
               </div>
+            </div>
+
+            {/* Danger Zone & Account Management */}
+            <div className="pt-4 border-t border-slate-100 space-y-2.5">
+              <label className="block text-xs font-bold text-slate-700">
+                {isRtl ? 'مدیریت حساب کاربری' : 'Account Management'}
+              </label>
+              
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onLogout();
+                  }}
+                  className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>{isRtl ? 'خروج از حساب' : 'Log Out'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="px-3.5 py-2 bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                  <span>{isRtl ? 'حذف کامل حساب' : 'Delete Account'}</span>
+                </button>
+              </div>
+
+              {/* Account deletion confirmation box */}
+              {showDeleteConfirm && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-2xl space-y-2.5 text-right">
+                  <p className="text-xs font-bold text-red-800 leading-relaxed">
+                    {isRtl 
+                      ? 'آیا از حذف کامل حساب کاربری و تمامی داده‌های ابری خود اطمینان دارید؟ این عمل غیرقابل بازگشت است!' 
+                      : 'Are you sure you want to delete your account and all cloud data? This cannot be undone!'}
+                  </p>
+                  <div className="flex items-center gap-2 justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setShowDeleteConfirm(false)}
+                      className="px-3 py-1.5 bg-white text-slate-700 text-xs font-bold rounded-lg border border-slate-200 cursor-pointer"
+                    >
+                      {isRtl ? 'انصراف' : 'Cancel'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowDeleteConfirm(false);
+                        onClose();
+                        onDeleteAccount();
+                      }}
+                      className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-black rounded-lg shadow-sm cursor-pointer"
+                    >
+                      {isRtl ? 'بله، حذف کن' : 'Yes, Delete'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Actions */}

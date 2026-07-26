@@ -2,11 +2,14 @@ import {
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   signOut,
+  onAuthStateChanged,
   getIdToken,
   signInWithPopup,
   GoogleAuthProvider
 } from 'firebase/auth';
 import { auth, googleAuthProvider } from './firebase.ts';
+
+export { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged };
 
 export function getAuthErrorMessage(error: any, isRtl: boolean = true): string {
   const code = error?.code || error?.message || '';
@@ -166,6 +169,41 @@ export async function clientSignOut() {
   await signOut(auth);
   setCachedGoogleCalendarToken(null);
   setCachedGmailToken(null);
+}
+
+export async function clientDeleteAccount() {
+  const firebaseUser = auth.currentUser;
+  if (firebaseUser) {
+    try {
+      const token = await getIdToken(firebaseUser);
+      await fetch('/api/auth/delete-account', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+    } catch (e) {
+      console.warn('Backend delete error:', e);
+    }
+
+    try {
+      const { deleteDoc, doc } = await import('firebase/firestore');
+      const { db } = await import('./firebase.ts');
+      await deleteDoc(doc(db, 'users', firebaseUser.uid)).catch(() => {});
+      await deleteDoc(doc(db, 'planners', firebaseUser.uid)).catch(() => {});
+    } catch (e) {
+      console.warn('Firestore delete error:', e);
+    }
+
+    try {
+      const { deleteUser } = await import('firebase/auth');
+      await deleteUser(firebaseUser);
+    } catch (e) {
+      console.warn('Firebase Auth user delete error:', e);
+    }
+  }
+
+  await clientSignOut();
 }
 
 // In-memory cache for Google OAuth access tokens

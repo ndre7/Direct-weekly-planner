@@ -419,18 +419,116 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
             );
           })()}
 
-          {/* Weekday Banner Summary */}
+          {/* Weekday Banner & Productivity Stats Summary */}
           {currentWeekdayNames && (
-            <div className="flex items-center justify-between p-4 bg-indigo-600 text-white rounded-2xl shadow-3xs">
-              <div className="flex items-center gap-2">
-                <Clock className="w-5 h-5 text-indigo-200 shrink-0" />
-                <span className="font-black text-xs">
-                  {t.weekdayLabel} {isRtl ? currentWeekdayNames.fa : currentWeekdayNames.en}
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-gradient-to-r from-indigo-600 via-indigo-700 to-blue-700 text-white rounded-2xl shadow-sm">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-indigo-200 shrink-0" />
+                  <span className="font-black text-xs sm:text-sm">
+                    {t.weekdayLabel} {isRtl ? currentWeekdayNames.fa : currentWeekdayNames.en}
+                  </span>
+                </div>
+
+                {/* Yesterday / Today / Tomorrow Quick Jump */}
+                <div className="flex items-center gap-1.5 bg-black/20 p-1 rounded-xl backdrop-blur-xs">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const maxD = getDaysInMonth(selectedMonth, selectedYear);
+                      if (selectedDay > 1) {
+                        setSelectedDay(prev => prev - 1);
+                      } else {
+                        const mIdx = JALALI_MONTHS.indexOf(selectedMonth);
+                        if (mIdx > 0) {
+                          const prevMonth = JALALI_MONTHS[mIdx - 1];
+                          setSelectedMonth(prevMonth);
+                          setSelectedDay(getDaysInMonth(prevMonth, selectedYear));
+                        }
+                      }
+                    }}
+                    className="px-2.5 py-1 hover:bg-white/20 text-[10px] font-bold rounded-lg transition-all cursor-pointer"
+                  >
+                    {isRtl ? '← روز قبل' : '← Prev Day'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedYear(defaultYear);
+                      setSelectedMonth(defaultMonthName);
+                      setSelectedDay(data.weekStartDay || 15);
+                    }}
+                    className="px-2.5 py-1 bg-white text-indigo-700 hover:bg-indigo-50 text-[10px] font-black rounded-lg transition-all cursor-pointer shadow-2xs"
+                  >
+                    {isRtl ? 'امروز هفته' : 'Week Today'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const maxD = getDaysInMonth(selectedMonth, selectedYear);
+                      if (selectedDay < maxD) {
+                        setSelectedDay(prev => prev + 1);
+                      } else {
+                        const mIdx = JALALI_MONTHS.indexOf(selectedMonth);
+                        if (mIdx < JALALI_MONTHS.length - 1) {
+                          const nextMonth = JALALI_MONTHS[mIdx + 1];
+                          setSelectedMonth(nextMonth);
+                          setSelectedDay(1);
+                        }
+                      }
+                    }}
+                    className="px-2.5 py-1 hover:bg-white/20 text-[10px] font-bold rounded-lg transition-all cursor-pointer"
+                  >
+                    {isRtl ? 'روز بعد →' : 'Next Day →'}
+                  </button>
+                </div>
+
+                <span className="font-mono font-bold text-xs bg-indigo-900/60 border border-indigo-400/35 px-3 py-1 rounded-lg">
+                  {dateString}
                 </span>
               </div>
-              <span className="font-mono font-bold text-xs bg-indigo-700/60 border border-indigo-400/35 px-3 py-1 rounded-lg">
-                {dateString}
-              </span>
+
+              {/* Productivity Overview Cards */}
+              {(() => {
+                const totalItems = todayClasses.length + todayTasks.length + todayExams.length + todayDeadlines.length + todayCoreTasks.length + todayHabits.length + todaySecondaryTasks.length;
+                const completedTasks = todayTasks.filter(t => t.status === 'completed' && t.completionDate === dateString).length;
+                const completedCore = todayCoreTasks.filter(t => t.status === 'completed').length;
+                const completedSec = todaySecondaryTasks.filter(t => t.status === 'completed').length;
+                const totalCompleted = completedTasks + completedCore + completedSec;
+
+                const completionPercentage = totalItems > 0 ? Math.round((totalCompleted / Math.max(1, (todayTasks.length + todayCoreTasks.length + todaySecondaryTasks.length))) * 100) : 0;
+
+                return (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="bg-indigo-50/60 border border-indigo-100 p-3 rounded-2xl flex flex-col justify-between">
+                      <span className="text-[10px] font-black text-indigo-700">{isRtl ? 'مجموع رویدادها و کارها:' : 'Total Items:'}</span>
+                      <span className="text-lg font-black text-indigo-900">{totalItems}</span>
+                    </div>
+
+                    <div className="bg-emerald-50/60 border border-emerald-100 p-3 rounded-2xl flex flex-col justify-between">
+                      <span className="text-[10px] font-black text-emerald-700">{isRtl ? 'کارهای تکمیل شده:' : 'Completed Tasks:'}</span>
+                      <span className="text-lg font-black text-emerald-900">{totalCompleted}</span>
+                    </div>
+
+                    <div className="bg-amber-50/60 border border-amber-100 p-3 rounded-2xl flex flex-col justify-between">
+                      <span className="text-[10px] font-black text-amber-700">{isRtl ? 'کلاس‌ها و امتحانات:' : 'Classes & Exams:'}</span>
+                      <span className="text-lg font-black text-amber-900">{todayClasses.length + todayExams.length}</span>
+                    </div>
+
+                    <div className="bg-blue-50/60 border border-blue-100 p-3 rounded-2xl flex flex-col justify-between">
+                      <span className="text-[10px] font-black text-blue-700">{isRtl ? 'نرخ موفقیت روز:' : 'Success Rate:'}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-lg font-black text-blue-900">{completionPercentage}%</span>
+                        <div className="flex-1 h-1.5 bg-blue-200 rounded-full overflow-hidden">
+                          <div className="h-full bg-blue-600 rounded-full transition-all duration-300" style={{ width: `${Math.min(100, completionPercentage)}%` }} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
 

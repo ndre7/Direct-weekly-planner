@@ -39,8 +39,17 @@ import { PlannerData, ClassSlot, DailyTask, Category, SecondaryTask, ReminderIte
 import { INITIAL_PLANNER_DATA } from './initialData';
 import { TRANSLATIONS, DAYS_OF_WEEK } from './translations';
 import { getIdToken } from 'firebase/auth';
-import { auth } from './lib/firebase.ts';
-import { safeParseJson, getCachedGmailToken, connectGmail } from './lib/auth.ts';
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { auth, db } from './lib/firebase.ts';
+import { safeParseJson, getCachedGmailToken, connectGmail, clientSignOut, clientDeleteAccount, onAuthStateChanged } from './lib/auth.ts';
+import { 
+  subscribeToUserData, 
+  updateMainDoc, 
+  addCoreTask, 
+  addSecondaryTask, 
+  addTodo, 
+  addDailyThought 
+} from './lib/firestoreSync.ts';
 import { sendGmailEmail, buildReminderEmailHtml, parseItemDeadlineMs, getOffsetMs, getOffsetLabelFa, REMINDER_OFFSET_OPTIONS, ReminderOffset } from './lib/gmailReminders';
 
 // Modular Sub-components
@@ -445,35 +454,209 @@ export default function App() {
     }
   }, []);
 
+  // Core & Secondary Task deadlines sync to Tab 2 (Details & Deadlines)
+  const syncAllTasksToDetails = useCallback((prev: PlannerData): PlannerData => {
+    // Create a copy of detailsColumns
+    const updatedColumns = (prev.detailsColumns || []).map((col) => {
+      return { ...col, items: [...(col.items || [])] };
+    });
+
+    // Find the 'deadlines' column, or default to the first column
+    let targetCol = updatedColumns.find(c => c.id === 'deadlines');
+    if (!targetCol && updatedColumns.length > 0) {
+      targetCol = updatedColumns[0];
+    }
+
+    if (!targetCol) return prev;
+
+    const year = prev.weekYear || 1405;
+
+    // Set of active synced item IDs
+    const activeSyncedIds = new Set<string>();
+
+    // Helper to get formatted date string for any task deadline
+    const getFormattedDeadlineDate = (deadline: any): string | undefined => {
+      if (!deadline) return undefined;
+      const { day, month, weekday } = deadline;
+      
+      // If we have day and month
+      if (day && month) {
+        const monthNum = MONTHS_MAP[month] || '01';
+        return `${year}/${monthNum}/${String(day).padStart(2, '0')}`;
+      }
+      
+      // If we only have weekday
+      if (weekday) {
+        const norm = normalizeWeekday(weekday);
+        const idx = NORMALIZED_WEEKDAYS.indexOf(norm);
+        if (idx !== -1) {
+          const weekDates = getWeekDatesForData(prev);
+          const dateStr = weekDates[idx];
+          const parsed = parsePersianDate(dateStr);
+          if (parsed) {
+            const monthNum = MONTHS_MAP[parsed.month] || '01';
+            return `${year}/${monthNum}/${String(parsed.day).padStart(2, '0')}`;
+          }
+        }
+      }
+      return undefined;
+    };
+
+    // 1. Process Core Tasks
+    (prev.coreTasks || []).forEach((task) => {
+      const hasDeadline = task.deadline && (task.deadline.day || task.deadline.month || task.deadline.weekday);
+      if (hasDeadline) {
+        const synId = `task_core_${task.id}`;
+        activeSyncedIds.add(synId);
+
+        const formattedDate = getFormattedDeadlineDate(task.deadline);
+        const descPart = task.description ? ` - ${task.description}` : '';
+        const synText = `${task.title}${descPart}`;
+
+        const existingIdx = targetCol!.items.findIndex(item => item.id === synId || item.id === `task_${task.id}`);
+        if (existingIdx >= 0) {
+          targetCol!.items[existingIdx] = {
+            ...targetCol!.items[existingIdx],
+            id: synId,
+            text: synText,
+            date: formattedDate || targetCol!.items[existingIdx].date
+          };
+        } else {
+          targetCol!.items.push({
+            id: synId,
+            text: synText,
+            date: formattedDate
+          });
+        }
+      }
+    });
+
+    // 2. Process Secondary Tasks
+    (prev.secondaryTasks || []).forEach((task) => {
+      const hasDeadline = task.deadline && (task.deadline.day || task.deadline.month || task.deadline.weekday);
+      if (hasDeadline) {
+        const synId = `task_sec_${task.id}`;
+        activeSyncedIds.add(synId);
+
+        const formattedDate = getFormattedDeadlineDate(task.deadline);
+        const descPart = task.description ? ` - ${task.description}` : '';
+        const synText = `${task.textFa}${descPart}`;
+
+        const existingIdx = targetCol!.items.findIndex(item => item.id === synId || item.id === `task_${task.id}`);
+        if (existingIdx >= 0) {
+          targetCol!.items[existingIdx] = {
+            ...targetCol!.items[existingIdx],
+            id: synId,
+            text: synText,
+            date: formattedDate || targetCol!.items[existingIdx].date
+          };
+        } else {
+          targetCol!.items.push({
+            id: synId,
+            text: synText,
+            date: formattedDate
+          });
+        }
+      }
+    });
+
+    // 3. Remove any synced details items whose task deadline was cleared or task was deleted
+    updatedColumns.forEach((col) => {
+      col.items = col.items.filter((item) => {
+        if (item.id && (item.id.startsWith('task_') || item.id.startsWith('task_core_') || item.id.startsWith('task_sec_'))) {
+          const legacyIdMatched = item.id.startsWith('task_') && !item.id.startsWith('task_core_') && !item.id.startsWith('task_sec_');
+          if (legacyIdMatched) {
+            const baseId = item.id.replace('task_', '');
+            const isCoreActive = activeSyncedIds.has(`task_core_${baseId}`);
+            const isSecActive = activeSyncedIds.has(`task_sec_${baseId}`);
+            return isCoreActive || isSecActive;
+          }
+          return activeSyncedIds.has(item.id);
+        }
+        return true;
+      });
+    });
+
+    return {
+      ...prev,
+      detailsColumns: updatedColumns
+    };
+  }, []);
+
   const handleSyncData = async (user: User, customData?: PlannerData) => {
     try {
       const dataToSync = customData || data;
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      let activeToken = user.token;
-      if (auth.currentUser) {
+      try {
+        localStorage.setItem('planner_data', JSON.stringify(dataToSync));
+      } catch (lsErr) {
+        console.warn('LocalStorage error:', lsErr);
+      }
+
+      if (user && user.id) {
         try {
-          activeToken = await getIdToken(auth.currentUser);
-        } catch (tokenErr) {
-          console.warn("Could not dynamically refresh token:", tokenErr);
+          // 1. Update Main Document (users/{uid})
+          await updateMainDoc(user.id, dataToSync);
+
+          // 2. Sync Subcollections (coreTasks, secondaryTasks, todos, dailyThoughts)
+          if (dataToSync.coreTasks && dataToSync.coreTasks.length > 0) {
+            for (const task of dataToSync.coreTasks) {
+              await addCoreTask(user.id, task);
+            }
+          }
+          if (dataToSync.secondaryTasks && dataToSync.secondaryTasks.length > 0) {
+            for (const task of dataToSync.secondaryTasks) {
+              await addSecondaryTask(user.id, task);
+            }
+          }
+          if (dataToSync.todoList && dataToSync.todoList.length > 0) {
+            for (const todo of dataToSync.todoList) {
+              await addTodo(user.id, todo);
+            }
+          }
+          if (dataToSync.dailyThoughts && dataToSync.dailyThoughts.length > 0) {
+            for (const thought of dataToSync.dailyThoughts) {
+              await addDailyThought(user.id, thought);
+            }
+          }
+
+          // Legacy collection backup for backward compatibility
+          await setDoc(doc(db, 'planners', user.id), {
+            data: dataToSync,
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
+        } catch (fsErr) {
+          console.warn("Firestore sync warning (will sync automatically when online):", fsErr);
         }
       }
-      if (activeToken) {
-        headers['Authorization'] = `Bearer ${activeToken}`;
-      }
-      const res = await fetch('/api/planner/sync', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          data: dataToSync
-        })
-      });
-      if (!res.ok) {
-        const errData = await safeParseJson(res);
-        if (res.status === 401 || res.status === 403) {
-          setAuthFailureStatus(res.status === 401 ? '401' : '403');
-          setPendingSyncData(dataToSync);
+
+      if (navigator.onLine) {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        let activeToken = user.token;
+        if (auth.currentUser) {
+          try {
+            activeToken = await getIdToken(auth.currentUser);
+          } catch (tokenErr) {
+            console.warn("Could not dynamically refresh token:", tokenErr);
+          }
         }
-        throw new Error(errData.error || 'Sync failed');
+        if (activeToken) {
+          headers['Authorization'] = `Bearer ${activeToken}`;
+        }
+        const res = await fetch('/api/planner/sync', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            data: dataToSync
+          })
+        });
+        if (!res.ok) {
+          const errData = await safeParseJson(res);
+          if (res.status === 401 || res.status === 403) {
+            setAuthFailureStatus(res.status === 401 ? '401' : '403');
+            setPendingSyncData(dataToSync);
+          }
+          throw new Error(errData.error || 'Sync failed');
+        }
       }
     } catch (err) {
       console.error('Failed to sync data with cloud:', err);
@@ -513,15 +696,89 @@ export default function App() {
     }
   };
 
-  // Auto-sync effect on data change
+  // Global Firebase Authentication Listener
   useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          const token = await getIdToken(firebaseUser);
+          const storedProfileStr = localStorage.getItem('user_profile') || localStorage.getItem('planner_user');
+          let username = firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User';
+          if (storedProfileStr) {
+            try {
+              const p = JSON.parse(storedProfileStr);
+              if (p.username) username = p.username;
+            } catch (e) {}
+          }
+          const userObj: User = {
+            id: firebaseUser.uid,
+            email: firebaseUser.email || '',
+            username,
+            token
+          };
+          setCurrentUser(userObj);
+        } catch (err) {
+          console.error("Auth state listener error:", err);
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Auto-save & sync effect on data change
+  useEffect(() => {
+    try {
+      localStorage.setItem('planner_data', JSON.stringify(data));
+    } catch (e) {
+      console.error('LocalStorage write error:', e);
+    }
+
     if (currentUser) {
       const timer = setTimeout(() => {
-        handleSyncData(currentUser, data).catch(err => console.error("Auto sync failed:", err));
-      }, 2000);
+        handleSyncData(currentUser, data).catch(err => console.warn("Auto sync failed:", err));
+      }, 1500);
       return () => clearTimeout(timer);
     }
   }, [data, currentUser]);
+
+  // Network Reconnection Sync Listener
+  useEffect(() => {
+    const handleOnline = () => {
+      showToast(lang === 'fa' ? 'اتصال به اینترنت برقرار شد. داده‌ها همگام شدند.' : 'Reconnected. Data synchronized.');
+      if (currentUser) {
+        handleSyncData(currentUser, data).catch(err => console.warn("Reconnection sync failed:", err));
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [currentUser, data, lang]);
+
+  // Real-time Firestore document & subcollections listener
+  useEffect(() => {
+    if (!currentUser || !currentUser.id) return;
+
+    let isInitial = true;
+    const unsub = subscribeToUserData(currentUser.id, (combinedData) => {
+      if (isInitial) {
+        isInitial = false;
+        setDataRaw((prev) => syncAllTasksToDetails({ ...prev, ...combinedData }));
+      } else {
+        setDataRaw((prev) => {
+          const updated = { ...prev, ...combinedData };
+          if (JSON.stringify(prev) !== JSON.stringify(updated)) {
+            return syncAllTasksToDetails(updated);
+          }
+          return prev;
+        });
+      }
+    }, (err) => {
+      console.warn("Firestore real-time subcollections listener warning:", err);
+    });
+
+    return () => unsub();
+  }, [currentUser, syncAllTasksToDetails]);
 
   // Automated Gmail Reminder Checker Loop
   useEffect(() => {
@@ -681,137 +938,6 @@ export default function App() {
   // Refs for smart history management (keystroke grouping)
   const lastHistoryTimeRef = useRef<number>(0);
   const lastChangeWasTextRef = useRef<boolean>(false);
-
-  // Core & Secondary Task deadlines sync to Tab 2 (Details & Deadlines)
-  const syncAllTasksToDetails = useCallback((prev: PlannerData): PlannerData => {
-    // Create a copy of detailsColumns
-    const updatedColumns = (prev.detailsColumns || []).map((col) => {
-      return { ...col, items: [...(col.items || [])] };
-    });
-
-    // Find the 'deadlines' column, or default to the first column
-    let targetCol = updatedColumns.find(c => c.id === 'deadlines');
-    if (!targetCol && updatedColumns.length > 0) {
-      targetCol = updatedColumns[0];
-    }
-
-    if (!targetCol) return prev;
-
-    const year = prev.weekYear || 1405;
-
-    // Set of active synced item IDs
-    const activeSyncedIds = new Set<string>();
-
-    // Helper to get formatted date string for any task deadline
-    const getFormattedDeadlineDate = (deadline: any): string | undefined => {
-      if (!deadline) return undefined;
-      const { day, month, weekday } = deadline;
-      
-      // If we have day and month
-      if (day && month) {
-        const monthNum = MONTHS_MAP[month] || '01';
-        return `${year}/${monthNum}/${String(day).padStart(2, '0')}`;
-      }
-      
-      // If we only have weekday
-      if (weekday) {
-        const norm = normalizeWeekday(weekday);
-        const idx = NORMALIZED_WEEKDAYS.indexOf(norm);
-        if (idx !== -1) {
-          const weekDates = getWeekDatesForData(prev);
-          const dateStr = weekDates[idx];
-          const parsed = parsePersianDate(dateStr);
-          if (parsed) {
-            const monthNum = MONTHS_MAP[parsed.month] || '01';
-            return `${year}/${monthNum}/${String(parsed.day).padStart(2, '0')}`;
-          }
-        }
-      }
-      return undefined;
-    };
-
-    // 1. Process Core Tasks
-    (prev.coreTasks || []).forEach((task) => {
-      const hasDeadline = task.deadline && (task.deadline.day || task.deadline.month || task.deadline.weekday);
-      if (hasDeadline) {
-        const synId = `task_core_${task.id}`;
-        activeSyncedIds.add(synId);
-
-        const formattedDate = getFormattedDeadlineDate(task.deadline);
-        const descPart = task.description ? ` - ${task.description}` : '';
-        const synText = `${task.title}${descPart}`; // let's store clean title to make it editable!
-
-        const existingIdx = targetCol!.items.findIndex(item => item.id === synId || item.id === `task_${task.id}`);
-        if (existingIdx >= 0) {
-          targetCol!.items[existingIdx] = {
-            ...targetCol!.items[existingIdx],
-            id: synId, // upgrade to core-specific ID
-            text: synText,
-            date: formattedDate || targetCol!.items[existingIdx].date
-          };
-        } else {
-          targetCol!.items.push({
-            id: synId,
-            text: synText,
-            date: formattedDate
-          });
-        }
-      }
-    });
-
-    // 2. Process Secondary Tasks
-    (prev.secondaryTasks || []).forEach((task) => {
-      const hasDeadline = task.deadline && (task.deadline.day || task.deadline.month || task.deadline.weekday);
-      if (hasDeadline) {
-        const synId = `task_sec_${task.id}`;
-        activeSyncedIds.add(synId);
-
-        const formattedDate = getFormattedDeadlineDate(task.deadline);
-        const descPart = task.description ? ` - ${task.description}` : '';
-        const synText = `${task.textFa}${descPart}`; // let's store clean title to make it editable!
-
-        const existingIdx = targetCol!.items.findIndex(item => item.id === synId || item.id === `task_${task.id}`);
-        if (existingIdx >= 0) {
-          targetCol!.items[existingIdx] = {
-            ...targetCol!.items[existingIdx],
-            id: synId, // upgrade to secondary-specific ID
-            text: synText,
-            date: formattedDate || targetCol!.items[existingIdx].date
-          };
-        } else {
-          targetCol!.items.push({
-            id: synId,
-            text: synText,
-            date: formattedDate
-          });
-        }
-      }
-    });
-
-    // 3. Remove any synced details items whose task deadline was cleared or task was deleted
-    updatedColumns.forEach((col) => {
-      col.items = col.items.filter((item) => {
-        if (item.id && (item.id.startsWith('task_') || item.id.startsWith('task_core_') || item.id.startsWith('task_sec_'))) {
-          // If it matches old ID scheme, clean it up or allow it if in active list
-          const legacyIdMatched = item.id.startsWith('task_') && !item.id.startsWith('task_core_') && !item.id.startsWith('task_sec_');
-          if (legacyIdMatched) {
-            // Check if the base task ID is active
-            const baseId = item.id.replace('task_', '');
-            const isCoreActive = activeSyncedIds.has(`task_core_${baseId}`);
-            const isSecActive = activeSyncedIds.has(`task_sec_${baseId}`);
-            return isCoreActive || isSecActive;
-          }
-          return activeSyncedIds.has(item.id);
-        }
-        return true;
-      });
-    });
-
-    return {
-      ...prev,
-      detailsColumns: updatedColumns
-    };
-  }, []);
 
   const isTextOnlyChange = (current: PlannerData, next: PlannerData): boolean => {
     try {
@@ -6603,7 +6729,31 @@ export default function App() {
         onUpdateProfile={(updatedUser) => {
           setCurrentUser(updatedUser);
           localStorage.setItem('user_profile', JSON.stringify(updatedUser));
+          localStorage.setItem('planner_user', JSON.stringify(updatedUser));
           showToast(lang === 'fa' ? 'اطلاعات حساب کاربری با موفقیت بروزرسانی شد' : 'Profile updated successfully');
+        }}
+        onLogout={async () => {
+          try {
+            await clientSignOut();
+          } catch (e) {
+            console.error(e);
+          }
+          setCurrentUser(null);
+          localStorage.removeItem('planner_user');
+          localStorage.removeItem('user_profile');
+          showToast(lang === 'fa' ? 'با موفقیت از حساب کاربری خارج شدید' : 'Signed out successfully');
+        }}
+        onDeleteAccount={async () => {
+          try {
+            await clientDeleteAccount();
+            setCurrentUser(null);
+            localStorage.removeItem('planner_user');
+            localStorage.removeItem('user_profile');
+            showToast(lang === 'fa' ? 'حساب کاربری و تمامی اطلاعات ابری شما با موفقیت به طور کامل حذف گردید.' : 'Account and data deleted successfully.');
+          } catch (e) {
+            console.error('Delete account error:', e);
+            showToast(lang === 'fa' ? 'خطا در حذف حساب کاربری' : 'Failed to delete account');
+          }
         }}
         showToast={showToast}
         lang={lang}

@@ -1,0 +1,54 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User account document",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "User unique identifier matching auth.uid"
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address"
+        },
+        "username": {
+          "type": "string",
+          "description": "Optional user chosen username"
+        }
+      },
+      "required": ["uid", "email"]
+    },
+    "PlannerData": {
+      "title": "PlannerData",
+      "description": "Weekly planner state for user",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner user ID"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Last updated timestamp string"
+        }
+      },
+      "required": ["userId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/User"
+      },
+      "description": "User profiles stored by userId"
+    },
+    "/planners/{userId}": {
+      "schema": {
+        "$ref": "#/entities/PlannerData"
+      },
+      "description": "User weekly planner state stored by userId"
+    }
+  }
+}

@@ -27,7 +27,7 @@ import {
   CheckCircle
 } from 'lucide-react';
 import CategoriesManagementPage from './CategoriesManagementPage';
-import UserManagementView from './UserManagementView';
+import FirebaseCloudBackup from './FirebaseCloudBackup';
 import { verifyAndRepairPlannerData } from './SessionManager';
 import GoogleCalendarSync from './GoogleCalendarSync';
 import { connectGmail, getCachedGmailToken } from '../lib/auth';
@@ -79,7 +79,6 @@ export default function SettingsPage({
   
   const [showDownloadOptions, setShowDownloadOptions] = useState<boolean>(false);
   const [showCategoryManager, setShowCategoryManager] = useState<boolean>(false);
-  const [showUserManagement, setShowUserManagement] = useState<boolean>(false);
   const [isDark, setIsDark] = useState<boolean>(() => {
     return document.documentElement.classList.contains('dark') || localStorage.getItem('theme') === 'dark';
   });
@@ -339,17 +338,6 @@ export default function SettingsPage({
         secondaryTaskColumns={data.secondaryTaskColumns || []}
         onUpdateSecondaryColumns={(updated) => setData(prev => ({ ...prev, secondaryTaskColumns: updated }))}
         onClose={() => setShowCategoryManager(false)}
-      />
-    );
-  }
-
-  // If the admin chooses to manage users, we display the UserManagementView
-  const isAdmin = currentUser?.email?.toLowerCase().trim() === 'nimadarai05@gmail.com';
-  if (showUserManagement && currentUser && isAdmin) {
-    return (
-      <UserManagementView
-        currentUser={currentUser}
-        onClose={() => setShowUserManagement(false)}
       />
     );
   }
@@ -774,35 +762,21 @@ export default function SettingsPage({
               showToast={showToast}
             />
 
-            {/* Card: Admin User Management Access Block */}
-            {isAdmin && (
-              <div className="bg-indigo-50/25 border border-indigo-200/50 rounded-3xl p-6 flex flex-col gap-4">
-                <div className="flex items-center gap-2 border-b border-indigo-100 pb-3">
-                  <Users className="w-5 h-5 text-indigo-600 animate-pulse" />
-                  <h3 className="font-black text-sm text-slate-800">{t.adminTitle}</h3>
-                </div>
-                
-                <p className="text-xs text-slate-500 font-bold leading-relaxed">
-                  {t.adminSub}
-                </p>
-
-                <button
-                  type="button"
-                  onClick={() => setShowUserManagement(true)}
-                  className="w-full flex items-center justify-center gap-2 p-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black text-xs transition-all border border-indigo-700 active:scale-98 cursor-pointer shadow-sm hover:shadow-md hover:scale-[1.01]"
-                >
-                  <Users className="w-4.5 h-4.5 text-white" />
-                  <span>{t.adminBtn}</span>
-                </button>
-              </div>
-            )}
-
           </div>
 
           {/* Column 3: Backup & Danger Zone */}
           <div className="space-y-6">
+
+            {/* Firebase Online Cloud Backup Card */}
+            <FirebaseCloudBackup
+              data={data}
+              setData={setData}
+              currentUser={currentUser || null}
+              lang={lang}
+              showToast={showToast}
+            />
             
-            {/* Card: Backup, Import, Export */}
+            {/* Card: Local Backup, Import, Export */}
             <div className={cardClass}>
               <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
                 <Download className="w-5 h-5 text-indigo-600" />

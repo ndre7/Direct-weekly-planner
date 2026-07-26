@@ -95,29 +95,35 @@ export function getJalaliWeekday(jy: number, jm: number, jd: number) {
   };
 }
 
+export function gregorianToJalali(gy: number, gm: number, gd: number) {
+  const g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+  let jy = (gy <= 1600) ? 0 : 979;
+  gy -= (gy <= 1600) ? 621 : 1600;
+  let gy2 = (gm > 2) ? (gy + 1) : gy;
+  let days = (365 * gy) + Math.floor((gy2 + 3) / 4) - Math.floor((gy2 + 99) / 100) + Math.floor((gy2 + 399) / 400) - 80 + gd + g_d_m[gm - 1];
+  jy += 33 * Math.floor(days / 12053);
+  days %= 12053;
+  jy += 4 * Math.floor(days / 1461);
+  days %= 1461;
+  if (days > 365) {
+    jy += Math.floor((days - 1) / 365);
+    days = (days - 1) % 365;
+  }
+  let jm = (days < 186) ? 1 + Math.floor(days / 31) : 7 + Math.floor((days - 186) / 30);
+  let jd = 1 + ((days < 186) ? (days % 31) : ((days - 186) % 30));
+  return { jy, jm, jd };
+}
+
 export function getTodayJalali(date: Date = new Date()) {
   try {
-    const formatter = new Intl.DateTimeFormat('fa-IR-u-ca-persian-nu-latn', {
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric'
-    });
-    const parts = formatter.formatToParts(date);
-    const yearStr = parts.find(p => p.type === 'year')?.value || '';
-    const monthStr = parts.find(p => p.type === 'month')?.value || '';
-    const dayStr = parts.find(p => p.type === 'day')?.value || '';
-
-    const toEng = (s: string) => 
-      s.replace(/[۰-۹]/g, d => (d.charCodeAt(0) - 1776).toString())
-       .replace(/[٠-٩]/g, d => (d.charCodeAt(0) - 1632).toString());
-
-    const year = parseInt(toEng(yearStr), 10) || new Date().getFullYear() - 621;
-    const month = parseInt(toEng(monthStr), 10) || 1;
-    const day = parseInt(toEng(dayStr), 10) || 1;
-    const monthName = JALALI_MONTHS[month - 1] || 'فروردین';
-    return { year, monthIdx: month - 1, monthName, day };
+    const gy = date.getFullYear();
+    const gm = date.getMonth() + 1;
+    const gd = date.getDate();
+    const { jy, jm, jd } = gregorianToJalali(gy, gm, gd);
+    const monthName = JALALI_MONTHS[jm - 1] || 'فروردین';
+    return { year: jy, monthIdx: jm - 1, monthName, day: jd };
   } catch (e) {
-    return { year: 1403, monthIdx: 0, monthName: 'فروردین', day: 1 };
+    return { year: 1405, monthIdx: 4, monthName: 'مرداد', day: 4 };
   }
 }
 

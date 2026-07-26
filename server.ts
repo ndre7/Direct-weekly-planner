@@ -70,6 +70,41 @@ app.post("/api/auth/firebase-sync", requireAuth, async (req: AuthRequest, res) =
   }
 });
 
+app.post("/api/auth/update-username", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const userToken = req.user!;
+    const { username } = req.body;
+
+    if (!username || typeof username !== 'string' || !username.trim()) {
+      return res.status(400).json({ error: "لطفاً یک نام کاربری معتبر وارد کنید" });
+    }
+
+    const trimmedUsername = username.trim();
+
+    // Check if username is already taken by another user
+    const existingUserWithUsername = await db
+      .select()
+      .from(users)
+      .where(and(eq(users.username, trimmedUsername), ne(users.uid, userToken.uid)));
+
+    if (existingUserWithUsername.length > 0) {
+      return res.status(400).json({ error: "این نام کاربری قبلاً توسط کاربر دیگری ثبت شده است. لطفاً نام کاربری یکتای دیگری انتخاب کنید." });
+    }
+
+    // Update in database
+    await db.update(users).set({ username: trimmedUsername }).where(eq(users.uid, userToken.uid));
+
+    res.json({
+      success: true,
+      username: trimmedUsername,
+      email: userToken.email
+    });
+  } catch (error: any) {
+    console.error("Update username error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get("/api/auth/get-email", async (req, res) => {
   try {
     const { username } = req.query;
@@ -251,6 +286,17 @@ app.post("/api/admin/users/delete", requireAuth, async (req: AuthRequest, res) =
   } catch (error: any) {
     console.error("Admin delete error:", error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/auth/delete-account", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const userToken = req.user!;
+    await deleteUserAndData(userToken.uid);
+    res.json({ success: true, message: "حساب کاربری و اطلاعات شما با موفقیت به طور کامل حذف گردید" });
+  } catch (error: any) {
+    console.error("Delete account error:", error);
+    res.status(500).json({ error: error.message || "حذف حساب کاربری ناموفق بود" });
   }
 });
 
