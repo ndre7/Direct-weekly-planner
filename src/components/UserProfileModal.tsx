@@ -90,20 +90,21 @@ export default function UserProfileModal({
       if (currentUser?.id) {
         try {
           const { doc, setDoc } = await import('firebase/firestore');
-          const { db } = await import('../lib/firebase.ts');
-          
-          await setDoc(doc(db, 'users', currentUser.id), {
-            username: trimmed,
-            email: currentUser.email,
-            updatedAt: new Date().toISOString()
-          }, { merge: true });
+          const { db, auth } = await import('../lib/firebase.ts');
+          if (auth.currentUser && auth.currentUser.uid === currentUser.id) {
+            await setDoc(doc(db, 'users', currentUser.id), {
+              username: trimmed,
+              email: currentUser.email,
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
 
-          await setDoc(doc(db, 'usernames', trimmed.toLowerCase()), {
-            username: trimmed,
-            uid: currentUser.id,
-            email: currentUser.email,
-            updatedAt: new Date().toISOString()
-          }, { merge: true });
+            await setDoc(doc(db, 'usernames', trimmed.toLowerCase()), {
+              username: trimmed,
+              uid: currentUser.id,
+              email: currentUser.email,
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
+          }
         } catch (fsErr) {
           console.warn("Firestore profile save warning:", fsErr);
         }

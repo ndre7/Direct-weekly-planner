@@ -18,7 +18,16 @@ export const requireAuth = async (
 
   const token = authHeader.split('Bearer ')[1];
   try {
-    const decodedToken = await adminAuth.verifyIdToken(token);
+    let decodedToken: DecodedIdToken;
+    try {
+      decodedToken = await adminAuth.verifyIdToken(token, true);
+    } catch (checkRevokedError: any) {
+      if (checkRevokedError?.code === 'auth/id-token-revoked') {
+        throw checkRevokedError;
+      }
+      // Fallback to local token verification if checkRevoked fails due to identitytoolkit API 403 or network errors
+      decodedToken = await adminAuth.verifyIdToken(token, false);
+    }
     req.user = decodedToken;
     next();
   } catch (error: any) {

@@ -43,8 +43,10 @@ import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from './lib/firebase.ts';
 import { safeParseJson, getCachedGmailToken, connectGmail, clientSignOut, clientDeleteAccount, onAuthStateChanged } from './lib/auth.ts';
 import { 
-  subscribeToUserData, 
-  updateMainDoc, 
+  subscribeToPlannerSubcollections,
+  savePlannerSubcollections,
+  migratePlannerDataToSubcollections,
+  flushPendingSyncQueue,
   addCoreTask, 
   addSecondaryTask, 
   addTodo, 
@@ -594,42 +596,14 @@ export default function App() {
 
       if (user && user.id) {
         try {
-          // 1. Update Main Document (users/{uid})
-          await updateMainDoc(user.id, dataToSync);
-
-          // 2. Sync Subcollections (coreTasks, secondaryTasks, todos, dailyThoughts)
-          if (dataToSync.coreTasks && dataToSync.coreTasks.length > 0) {
-            for (const task of dataToSync.coreTasks) {
-              await addCoreTask(user.id, task);
-            }
-          }
-          if (dataToSync.secondaryTasks && dataToSync.secondaryTasks.length > 0) {
-            for (const task of dataToSync.secondaryTasks) {
-              await addSecondaryTask(user.id, task);
-            }
-          }
-          if (dataToSync.todoList && dataToSync.todoList.length > 0) {
-            for (const todo of dataToSync.todoList) {
-              await addTodo(user.id, todo);
-            }
-          }
-          if (dataToSync.dailyThoughts && dataToSync.dailyThoughts.length > 0) {
-            for (const thought of dataToSync.dailyThoughts) {
-              await addDailyThought(user.id, thought);
-            }
-          }
-
-          // Legacy collection backup for backward compatibility
-          await setDoc(doc(db, 'planners', user.id), {
-            data: dataToSync,
-            updatedAt: new Date().toISOString()
-          }, { merge: true });
-        } catch (fsErr) {
-          console.warn("Firestore sync warning (will sync automatically when online):", fsErr);
+          // Save planner data into Firestore subcollections under /planners/{userId}
+          await savePlannerSubcollections(user.id, dataToSync);
+        } catch (_) {
+          // Silently handled by pending sync queue
         }
       }
 
-      if (navigator.onLine) {
+      if (navigator.onLine && auth.currentUser) {
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
         let activeToken = user.token;
         if (auth.currentUser) {
@@ -696,10 +670,17 @@ export default function App() {
     }
   };
 
+  const [firebaseUserUid, setFirebaseUserUid] = useState<string | null>(() => auth.currentUser?.uid || null);
+  const isRemoteUpdateRef = useRef<boolean>(false);
+  const lastSavedDataJsonRef = useRef<string>('');
+  const hasMigratedRef = useRef<Record<string, boolean>>({});
+
   // Global Firebase Authentication Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
+        setFirebaseUserUid(firebaseUser.uid);
+        flushPendingSyncQueue(firebaseUser.uid).catch(() => {});
         try {
           const token = await getIdToken(firebaseUser);
           const storedProfileStr = localStorage.getItem('user_profile') || localStorage.getItem('planner_user');
@@ -720,6 +701,8 @@ export default function App() {
         } catch (err) {
           console.error("Auth state listener error:", err);
         }
+      } else {
+        setFirebaseUserUid(null);
       }
     });
 
@@ -734,51 +717,81 @@ export default function App() {
       console.error('LocalStorage write error:', e);
     }
 
-    if (currentUser) {
-      const timer = setTimeout(() => {
-        handleSyncData(currentUser, data).catch(err => console.warn("Auto sync failed:", err));
-      }, 1500);
-      return () => clearTimeout(timer);
+    if (!currentUser || !currentUser.id) return;
+
+    // Guard 1: Skip auto-sync if change came from Firestore remote listener
+    if (isRemoteUpdateRef.current) {
+      isRemoteUpdateRef.current = false;
+      lastSavedDataJsonRef.current = JSON.stringify(data);
+      return;
     }
-  }, [data, currentUser]);
+
+    // Guard 2: Skip auto-sync if data hasn't actually changed from last saved state
+    const currentDataJson = JSON.stringify(data);
+    if (lastSavedDataJsonRef.current === currentDataJson) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      lastSavedDataJsonRef.current = currentDataJson;
+      handleSyncData(currentUser, data).catch(() => {});
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [data, currentUser?.id]);
 
   // Network Reconnection Sync Listener
   useEffect(() => {
     const handleOnline = () => {
-      showToast(lang === 'fa' ? 'اتصال به اینترنت برقرار شد. داده‌ها همگام شدند.' : 'Reconnected. Data synchronized.');
-      if (currentUser) {
-        handleSyncData(currentUser, data).catch(err => console.warn("Reconnection sync failed:", err));
+      if (currentUser && currentUser.id) {
+        handleSyncData(currentUser, data).catch(() => {});
       }
     };
 
     window.addEventListener('online', handleOnline);
     return () => window.removeEventListener('online', handleOnline);
-  }, [currentUser, data, lang]);
+  }, [currentUser?.id]);
 
   // Real-time Firestore document & subcollections listener
   useEffect(() => {
-    if (!currentUser || !currentUser.id) return;
+    const userId = currentUser?.id;
+    if (!userId) return;
+    if (!firebaseUserUid || firebaseUserUid !== userId) {
+      return;
+    }
+
+    // Trigger one-time idempotent subcollection migration
+    if (!hasMigratedRef.current[userId]) {
+      hasMigratedRef.current[userId] = true;
+      migratePlannerDataToSubcollections(userId).catch(() => {});
+    }
 
     let isInitial = true;
-    const unsub = subscribeToUserData(currentUser.id, (combinedData) => {
+    const unsub = subscribeToPlannerSubcollections(userId, (combinedData) => {
+      isRemoteUpdateRef.current = true;
       if (isInitial) {
         isInitial = false;
-        setDataRaw((prev) => syncAllTasksToDetails({ ...prev, ...combinedData }));
+        setDataRaw((prev) => {
+          const merged = { ...prev, ...combinedData };
+          const updated = syncAllTasksToDetails(merged);
+          lastSavedDataJsonRef.current = JSON.stringify(updated);
+          return updated;
+        });
       } else {
         setDataRaw((prev) => {
-          const updated = { ...prev, ...combinedData };
-          if (JSON.stringify(prev) !== JSON.stringify(updated)) {
-            return syncAllTasksToDetails(updated);
+          const merged = { ...prev, ...combinedData };
+          const updated = syncAllTasksToDetails(merged);
+          const updatedJson = JSON.stringify(updated);
+          if (JSON.stringify(prev) !== updatedJson) {
+            lastSavedDataJsonRef.current = updatedJson;
+            return updated;
           }
           return prev;
         });
       }
-    }, (err) => {
-      console.warn("Firestore real-time subcollections listener warning:", err);
-    });
+    }, () => {});
 
     return () => unsub();
-  }, [currentUser, syncAllTasksToDetails]);
+  }, [currentUser?.id, firebaseUserUid, syncAllTasksToDetails]);
 
   // Automated Gmail Reminder Checker Loop
   useEffect(() => {
@@ -1177,11 +1190,6 @@ export default function App() {
       window.removeEventListener('popstate', handlePopState);
     };
   }, [isCalendarRangeOpen, isDailyTaskModalOpen, isSlotModalOpen, isProfileModalOpen, completionTarget, activeTab]);
-
-  // Sync state to localStorage
-  useEffect(() => {
-    localStorage.setItem('planner_data', JSON.stringify(data));
-  }, [data]);
 
   const showToast = (message: string, type?: 'success' | 'error') => {
     setSuccessMessage(message);

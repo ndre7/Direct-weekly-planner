@@ -125,13 +125,17 @@ const formatLocalISO = (date: Date): string => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${dif}${hours}:${minutes}`;
 };
 
-// Sanitizes standard string or UUID to comply with Google Calendar Event ID format rules: lowercase alphanumeric characters, dots, underscores, or hyphens, between 5 and 1024 characters.
+// Sanitizes standard string or UUID to comply with Google Calendar Event ID format rules: lowercase base32hex (a-v, 0-9), between 5 and 1024 characters.
 const sanitizeGCalEventId = (rawId: string): string => {
+  if (!rawId) rawId = '';
   let cleaned = rawId
     .toLowerCase()
-    .replace(/[^a-z0-9_\-\.]/g, '') // remove any invalid characters
-    .replace(/^[^a-z0-9]/, '0'); // must start with alphanumeric
-  
+    .replace(/w/g, 'a')
+    .replace(/x/g, 'b')
+    .replace(/y/g, 'c')
+    .replace(/z/g, 'd')
+    .replace(/[^a-v0-9]/g, '');
+
   while (cleaned.length < 5) {
     cleaned += '0';
   }

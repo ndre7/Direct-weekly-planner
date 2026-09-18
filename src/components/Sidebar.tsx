@@ -21,6 +21,8 @@ import {
   ChevronLeft,
   CloudLightning,
   Lock,
+  Eye,
+  EyeOff,
   Mail,
   LogIn,
   UserPlus,
@@ -150,6 +152,7 @@ export default function Sidebar({
   const [emailInput, setEmailInput] = useState<string>('');
   const [userInput, setUserInput] = useState<string>(''); // username for register, identifier for login
   const [passwordInput, setPasswordInput] = useState<string>('');
+  const [showPassword, setShowPassword] = useState<boolean>(false);
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
@@ -1244,14 +1247,22 @@ export default function Sidebar({
 
                       <div className="relative flex items-center">
                         <input
-                          type="password"
+                          type={showPassword ? "text" : "password"}
                           placeholder={labels.passwordPlaceholder}
                           value={passwordInput}
                           onChange={(e) => setPasswordInput(e.target.value)}
                           required
-                          className={`w-full text-[10px] p-2 border border-slate-200 bg-white rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold ${ isRtl ? 'pr-7' : 'pl-7'}`}
+                          className={`w-full text-[10px] p-2 border border-slate-200 bg-white rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold ${ isRtl ? 'pr-7 pl-7' : 'pl-7 pr-7'}`}
                         />
                         <Lock className={`w-3.5 h-3.5 text-slate-400 absolute ${isRtl ? 'right-2' : 'left-2'}`} />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className={`absolute ${isRtl ? 'left-2' : 'right-2'} text-slate-400 hover:text-slate-600 focus:outline-none`}
+                          title={showPassword ? (isRtl ? "مخفی کردن رمز" : "Hide password") : (isRtl ? "نمایش رمز" : "Show password")}
+                        >
+                          {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
                       </div>
                     </div>
 

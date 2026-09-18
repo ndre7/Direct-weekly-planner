@@ -5,7 +5,8 @@ export const users = pgTable('users', {
   id: serial('id').primaryKey(),
   uid: text('uid').notNull().unique(), // Firebase Auth UID
   email: text('email').notNull(),
-  username: text('username'),
+  username: text('username').unique(),
+  passwordHash: text('password_hash'),
   suspended: boolean('suspended').default(false).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });

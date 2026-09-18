@@ -14,7 +14,7 @@ import {
   Database
 } from 'lucide-react';
 import { PlannerData, User } from '../types';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { 
   collection, 
   doc, 
@@ -58,7 +58,7 @@ export default function FirebaseCloudBackup({
   const userId = currentUser?.id;
 
   const fetchBackups = async () => {
-    if (!userId) return;
+    if (!userId || !auth.currentUser || auth.currentUser.uid !== userId) return;
     setLoading(true);
     try {
       const backupsRef = collection(db, 'planners', userId, 'backups');

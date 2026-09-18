@@ -1,27 +1,59 @@
 import { db } from './index.ts';
 import { users, planners } from './schema.ts';
-import { eq } from 'drizzle-orm';
+import { eq, and, ne } from 'drizzle-orm';
 
-export async function getOrCreateUser(uid: string, email: string, username?: string) {
+export async function getOrCreateUser(uid: string, email: string, username?: string, passwordHash?: string) {
   try {
+    const normEmail = email.toLowerCase().trim();
+    const normUsername = (username && username.trim()) 
+      ? username.trim().toLowerCase() 
+      : normEmail.split('@')[0];
+
+    // Check if the username is already taken by a DIFFERENT uid
+    const existingUserWithUsername = await db.select()
+      .from(users)
+      .where(and(eq(users.username, normUsername), ne(users.uid, uid)));
+
+    if (existingUserWithUsername.length > 0) {
+      const customErr: any = new Error("این نام کاربری قبلاً توسط کاربر دیگری ثبت شده است");
+      customErr.code = '23505';
+      throw customErr;
+    }
+
+    const valuesToSet: any = {
+      email: normEmail,
+      username: normUsername,
+    };
+    if (passwordHash) {
+      valuesToSet.passwordHash = passwordHash;
+    }
+
     const result = await db.insert(users)
       .values({
         uid,
-        email,
-        username: username || email.split('@')[0],
+        email: normEmail,
+        username: normUsername,
+        passwordHash: passwordHash || null,
       })
       .onConflictDoUpdate({
         target: users.uid,
-        set: {
-          email,
-          username: username || email.split('@')[0],
-        },
+        set: valuesToSet,
       })
       .returning();
 
     return result[0];
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message === "این نام کاربری قبلاً توسط کاربر دیگری ثبت شده است") {
+      throw error;
+    }
     console.error("Error in getOrCreateUser:", error);
+    const errCode = error?.code || error?.cause?.code;
+    const errMsg = String(error?.message || '');
+    if (errCode === '23505' || errMsg.includes('23505') || errMsg.includes('users_username_unique') || errMsg.includes('unique constraint')) {
+      const customErr: any = new Error("این نام کاربری قبلاً توسط کاربر دیگری ثبت شده است");
+      customErr.code = '23505';
+      throw customErr;
+    }
     throw new Error("Failed to register or retrieve user in Cloud SQL.", { cause: error });
   }
 }

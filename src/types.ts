@@ -208,6 +208,10 @@ export interface PlannerData {
   activeDayKeys?: string[];
   postponedEvents?: PostponedEvent[];
   goals?: Goal[];
+  timebox?: any[];
+  pomodoro?: any;
+  waterTracker?: any;
+  habitTracking?: any;
 }
 
 export interface GoalMilestone {
@@ -235,11 +239,30 @@ export interface GoalPhaseTask {
   completed?: boolean;
 }
 
+export interface GoalPracticeExercise {
+  id?: string;
+  title: string;
+  description: string;
+  target_drill: string; // e.g. "حل ۱۰ مسئله فصل ۲" or "پیاده‌سازی پروژه CRUD"
+  type?: 'project' | 'drill' | 'exercise' | 'assignment';
+  completed?: boolean;
+}
+
+export interface GoalWeek {
+  week_number: number;
+  week_title: string;
+  weekly_goal?: string;
+  practice_exercise?: string;
+  tasks: GoalPhaseTask[];
+  completed?: boolean;
+}
+
 export interface GoalPhase {
   phase_number: number;
   title: string;
   description: string;
   estimated_weeks?: string;
+  weeks?: GoalWeek[];
   tasks: GoalPhaseTask[];
   completed?: boolean;
 }
@@ -255,6 +278,7 @@ export interface Goal {
   categoryColor?: string;
   milestones: GoalMilestone[];
   phases?: GoalPhase[]; // Entire AI generated roadmap saved in memory
+  practical_exercises?: GoalPracticeExercise[]; // Dedicated practical exercises & drills for learning/skills goals
   active_week_tasks: GoalTask[];
   completed_tasks_count?: number;
   feasibility_score?: number;

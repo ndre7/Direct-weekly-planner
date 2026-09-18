@@ -13,6 +13,8 @@ import {
   WifiOff, 
   Key, 
   Lock, 
+  Eye,
+  EyeOff,
   Check, 
   Loader2,
   X,
@@ -97,6 +99,7 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
   
   // Form fields for re-auth
   const [password, setPassword] = useState<string>('');
+  const [showPassword, setShowPassword] = useState<boolean>(false);
   const [loadingAction, setLoadingAction] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -532,13 +535,21 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
                     <div className="relative">
                       <Key className={`absolute top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 ${isRtl ? 'right-3' : 'left-3'}`} />
                       <input 
-                        type="password"
+                        type={showPassword ? "text" : "password"}
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         placeholder="••••••••"
-                        className={`w-full py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 font-mono ${ isRtl ? 'pr-10 pl-3 text-right' : 'pl-10 pr-3 text-left'}`}
+                        className={`w-full py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 font-mono ${ isRtl ? 'pr-10 pl-10 text-right' : 'pl-10 pr-10 text-left'}`}
                         disabled={loadingAction}
                       />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className={`absolute top-1/2 -translate-y-1/2 ${isRtl ? 'left-3' : 'right-3'} text-slate-400 hover:text-slate-600 focus:outline-none`}
+                        title={showPassword ? (isRtl ? "مخفی کردن رمز" : "Hide password") : (isRtl ? "نمایش رمز" : "Show password")}
+                      >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
                     </div>
                   </div>
 

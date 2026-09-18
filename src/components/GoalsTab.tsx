@@ -23,9 +23,15 @@ import {
   Palette,
   ChevronDown,
   ChevronUp,
-  ArrowRight
+  ArrowRight,
+  Dumbbell,
+  Code2,
+  BookOpen,
+  FileText,
+  CheckSquare,
+  ListChecks
 } from 'lucide-react';
-import { PlannerData, Goal, GoalMilestone, GoalTask, GoalPhase, GoalPhaseTask, CoreTask, SecondaryTask, ReminderItem, Category } from '../types';
+import { PlannerData, Goal, GoalMilestone, GoalTask, GoalPhase, GoalPhaseTask, GoalWeek, GoalPracticeExercise, CoreTask, SecondaryTask, ReminderItem, Category } from '../types';
 
 interface GoalsTabProps {
   data: PlannerData;
@@ -191,22 +197,60 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
 
       const newGoalId = `goal_${Date.now()}`;
 
-      // Extract phases & initial active week tasks
-      const phases: GoalPhase[] = (resData.phases || []).map((p: any, pIdx: number) => ({
-        phase_number: p.phase_number || (pIdx + 1),
-        title: p.title || `فاز ${pIdx + 1}`,
-        description: p.description || '',
-        estimated_weeks: p.estimated_weeks || `هفته ${pIdx + 1}`,
-        tasks: (p.tasks || []).map((t: any, tIdx: number) => ({
-          id: `gpt_${newGoalId}_${pIdx}_${tIdx}`,
-          title: t.title || 'تسک جدید',
-          description: t.description || '',
-          type: t.type === 'main' ? 'core' : (t.type || 'core'),
-          suggested_weekday: t.suggested_weekday || 'saturday',
-          deadline_note: t.deadline_note || '',
-          completed: false
-        }))
+      // Extract practical exercises
+      const practicalExercises: GoalPracticeExercise[] = (resData.practical_exercises || []).map((pe: any, idx: number) => ({
+        id: `pe_${newGoalId}_${idx}`,
+        title: pe.title || 'تمرین عملی',
+        description: pe.description || '',
+        target_drill: pe.target_drill || pe.description || '',
+        type: pe.type || 'exercise',
+        completed: false
       }));
+
+      // Extract phases & week-by-week granular breakdown
+      const phases: GoalPhase[] = (resData.phases || []).map((p: any, pIdx: number) => {
+        const weeks: GoalWeek[] = (p.weeks || []).map((w: any, wIdx: number) => ({
+          week_number: w.week_number || (wIdx + 1),
+          week_title: w.week_title || `هفته ${w.week_number || (wIdx + 1)}`,
+          weekly_goal: w.weekly_goal || '',
+          practice_exercise: w.practice_exercise || '',
+          tasks: (w.tasks || []).map((t: any, tIdx: number) => ({
+            id: `gpt_${newGoalId}_p${pIdx}_w${wIdx}_t${tIdx}`,
+            title: t.title || 'تسک جدید',
+            description: t.description || '',
+            type: t.type === 'main' ? 'core' : (t.type || 'core'),
+            suggested_weekday: t.suggested_weekday || 'saturday',
+            deadline_note: t.deadline_note || '',
+            completed: false
+          }))
+        }));
+
+        let phaseFlatTasks: GoalPhaseTask[] = [];
+        if (weeks.length > 0) {
+          weeks.forEach(w => {
+            phaseFlatTasks.push(...w.tasks);
+          });
+        } else if (p.tasks && p.tasks.length > 0) {
+          phaseFlatTasks = (p.tasks || []).map((t: any, tIdx: number) => ({
+            id: `gpt_${newGoalId}_${pIdx}_${tIdx}`,
+            title: t.title || 'تسک جدید',
+            description: t.description || '',
+            type: t.type === 'main' ? 'core' : (t.type || 'core'),
+            suggested_weekday: t.suggested_weekday || 'saturday',
+            deadline_note: t.deadline_note || '',
+            completed: false
+          }));
+        }
+
+        return {
+          phase_number: p.phase_number || (pIdx + 1),
+          title: p.title || `فاز ${pIdx + 1}`,
+          description: p.description || '',
+          estimated_weeks: p.estimated_weeks || `هفته ${pIdx + 1}`,
+          weeks: weeks,
+          tasks: phaseFlatTasks
+        };
+      });
 
       // Milestones fallback / generation
       const milestones: GoalMilestone[] = phases.map(p => ({
@@ -215,10 +259,10 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
         completed: false
       }));
 
-      // Week 1 active tasks from phase 1 or returned week_tasks
-      const firstPhaseTasks = phases[0]?.tasks || [];
-      const activeWeekTasks: GoalTask[] = firstPhaseTasks.length > 0 
-        ? firstPhaseTasks.map(t => ({
+      // Week 1 active tasks from week 1 of phase 1 or returned week_tasks
+      const firstWeekTasks = phases[0]?.weeks?.[0]?.tasks || phases[0]?.tasks || [];
+      const activeWeekTasks: GoalTask[] = firstWeekTasks.length > 0 
+        ? firstWeekTasks.map(t => ({
             id: `gt_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
             title: t.title,
             description: t.description,
@@ -245,10 +289,11 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
         categoryName: catName,
         categoryColor: newGoalCatColor,
         feasibility_score: resData.feasibility_score || 80,
-        justification: resData.justification || 'نقشه راه هدف بر اساس توانمندی شما به تفکیک فاز تولید گردید.',
+        justification: resData.justification || 'نقشه راه تخصصی هدف بر اساس توانمندی شما به تفکیک هفته به هفته تولید گردید.',
         colorTheme: selectedTheme,
         milestones: milestones,
         phases: phases,
+        practical_exercises: practicalExercises,
         active_week_tasks: activeWeekTasks,
         completed_tasks_count: 0
       };
@@ -351,6 +396,88 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
     });
 
     showToast(`تسک «${task.title}» با موفقیت به برنامه‌ریز منتقل شد.`);
+  };
+
+  // 1.5. INJECT ALL TASKS OF A SPECIFIC WEEK TO PLANNER
+  const handleInjectWeekTasks = (goal: Goal, week: GoalWeek, phaseNumber: number) => {
+    let count = 0;
+    onUpdateData(prev => {
+      const { categoryId, updatedCategories } = ensureGoalCategory(goal, prev.categories || []);
+      const newCoreTasks = [...(prev.coreTasks || [])];
+      const newSecTasks = [...(prev.secondaryTasks || [])];
+      const newReminders = [...(prev.reminders || [])];
+
+      week.tasks.forEach(task => {
+        const taskTitle = task.title;
+        const taskDesc = task.description || `فاز ${phaseNumber} - ${week.week_title} (هدف: ${goal.title})`;
+
+        if (task.type === 'core') {
+          newCoreTasks.push({
+            id: `ct_wk_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+            categoryId: categoryId,
+            title: taskTitle,
+            description: taskDesc,
+            status: 'pending',
+            deadline: task.suggested_weekday ? { weekday: task.suggested_weekday } : undefined
+          });
+        } else if (task.type === 'secondary') {
+          newSecTasks.push({
+            id: `st_wk_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+            columnId: prev.secondaryTaskColumns?.[0]?.id || 'learn',
+            categoryId: categoryId,
+            textFa: taskTitle,
+            textEn: taskTitle,
+            description: taskDesc,
+            status: 'pending',
+            deadline: task.suggested_weekday ? { weekday: task.suggested_weekday } : undefined
+          });
+        } else {
+          newReminders.push({
+            id: `rem_wk_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+            textFa: taskTitle,
+            textEn: taskTitle,
+            checkedDays: [],
+            frequency: 'every_day'
+          });
+        }
+        count++;
+      });
+
+      return {
+        ...prev,
+        categories: updatedCategories,
+        coreTasks: newCoreTasks,
+        secondaryTasks: newSecTasks,
+        reminders: newReminders
+      };
+    });
+
+    showToast(`تعداد ${count} تسک از ${week.week_title} با موفقیت به برنامه‌ریز منتقل شد.`);
+  };
+
+  // 1.6. INJECT A PRACTICAL EXERCISE / DRILL TO PLANNER
+  const handleInjectExercise = (goal: Goal, exercise: GoalPracticeExercise) => {
+    onUpdateData(prev => {
+      const { categoryId, updatedCategories } = ensureGoalCategory(goal, prev.categories || []);
+      const newCoreTasks = [...(prev.coreTasks || [])];
+
+      const drillText = exercise.target_drill ? ` [تمرین مشخص: ${exercise.target_drill}]` : '';
+      newCoreTasks.push({
+        id: `ct_ex_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+        categoryId: categoryId,
+        title: `[تمرین عملی] ${exercise.title}`,
+        description: `${exercise.description}${drillText} - هدف: ${goal.title}`,
+        status: 'pending'
+      });
+
+      return {
+        ...prev,
+        categories: updatedCategories,
+        coreTasks: newCoreTasks
+      };
+    });
+
+    showToast(`تمرین عملی «${exercise.title}» با موفقیت به کارهای اصلی اضافه شد.`);
   };
 
   // 2. INJECT TASKS OF A SPECIFIC PHASE TO WEEKLY PLANNER
@@ -1013,6 +1140,67 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
                         </div>
                       </div>
                     )}
+
+                    {/* PRACTICAL EXERCISES & DRILLS SECTION */}
+                    {goal.practical_exercises && goal.practical_exercises.length > 0 && (
+                      <div className="bg-gradient-to-r from-indigo-900/5 via-purple-900/5 to-slate-900/5 p-4.5 rounded-2xl border border-indigo-200/80 space-y-3.5">
+                        <div className="flex items-center justify-between border-b border-indigo-100 pb-2.5">
+                          <div className="flex items-center gap-2">
+                            <Dumbbell className="w-4 h-4 text-indigo-600" />
+                            <h4 className="text-xs font-black text-slate-800">
+                              تمرینات عملی و پروژه‌های مشخص ({goal.practical_exercises.length} تمرین)
+                            </h4>
+                          </div>
+                          <span className="text-[10px] bg-indigo-100 text-indigo-800 px-2.5 py-1 rounded-xl font-black flex items-center gap-1">
+                            <Target className="w-3 h-3 text-indigo-600" />
+                            <span>تثبیت و مهارت‌آموزی عملی</span>
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {goal.practical_exercises.map((pe, peIdx) => (
+                            <div 
+                              key={pe.id || peIdx}
+                              className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs space-y-2 flex flex-col justify-between"
+                            >
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                                    <Code2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                                    <span>{pe.title}</span>
+                                  </span>
+                                  <span className="text-[9px] bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-md font-bold shrink-0">
+                                    {pe.type === 'project' ? 'پروژه عملی' : pe.type === 'drill' ? 'دریل مهارتی' : 'تمرین اصلی'}
+                                  </span>
+                                </div>
+                                
+                                {pe.target_drill && (
+                                  <div className="p-2.5 bg-amber-50/90 border border-amber-200/80 rounded-xl text-[11px] text-amber-900 font-bold flex items-start gap-1.5">
+                                    <Target className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                                    <span>تمرین مشخص: {pe.target_drill}</span>
+                                  </div>
+                                )}
+
+                                <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
+                                  {pe.description}
+                                </p>
+                              </div>
+
+                              <div className="pt-2 flex justify-end border-t border-slate-100 mt-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleInjectExercise(goal, pe)}
+                                  className="flex items-center gap-1 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black transition-all cursor-pointer shadow-2xs"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  <span>انتقال تمرین به برنامه‌ریز</span>
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* ROADMAP PHASES SECTION */}
@@ -1021,16 +1209,16 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
                       <div className="flex items-center gap-2">
                         <Layers className="w-4 h-4 text-indigo-600" />
                         <h4 className="text-xs font-black text-slate-800">
-                          نقشه راه کامل و فازهای عملیاتی ({goal.phases?.length || 0} فاز)
+                          نقشه راه تفکیک‌شده فازها و هفته‌ها ({goal.phases?.length || 0} فاز)
                         </h4>
                       </div>
                       <span className="text-[10px] text-slate-400 font-bold">
-                        تسک‌ها بر اساس فاز در حافظه برنامه ذخیره شده‌اند
+                        تسک‌ها به تفکیک تک‌تک هفته‌ها
                       </span>
                     </div>
 
                     {/* Phases Grid / Accordion */}
-                    <div className="space-y-3">
+                    <div className="space-y-4">
                       {goal.phases && goal.phases.map((phase) => {
                         const phaseKey = `${goal.goal_id}_p_${phase.phase_number}`;
                         const isExpanded = expandedPhases[phaseKey] ?? true;
@@ -1072,10 +1260,10 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
                                     handleInjectPhaseTasks(goal, phase);
                                   }}
                                   className="flex items-center gap-1 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-[10px] font-black transition-all cursor-pointer"
-                                  title="تزریق تسک‌های این فاز به برنامه‌ریز هفتگی"
+                                  title="تزریق تسک‌های تمام هفته‌های این فاز به برنامه‌ریز"
                                 >
                                   <Plus className="w-3.5 h-3.5" />
-                                  <span>تزریق تسک‌های این فاز به برنامه‌ریز</span>
+                                  <span>تزریق تسک‌های کل فاز</span>
                                 </button>
 
                                 {isExpanded ? (
@@ -1086,55 +1274,149 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
                               </div>
                             </div>
 
-                            {/* Phase Tasks Body */}
+                            {/* Phase Tasks & Weeks Body */}
                             {isExpanded && (
-                              <div className="p-4 space-y-2 border-t border-slate-100">
-                                <p className="text-[11px] text-slate-600 bg-indigo-50/40 p-2.5 rounded-xl border border-indigo-100/50 mb-3 font-medium">
+                              <div className="p-4 space-y-3 border-t border-slate-100">
+                                <p className="text-[11px] text-slate-600 bg-indigo-50/40 p-2.5 rounded-xl border border-indigo-100/50 font-medium">
                                   {phase.description}
                                 </p>
 
-                                <div className="space-y-2">
-                                  {phase.tasks.map((task, idx) => (
-                                    <div 
-                                      key={task.id || idx}
-                                      className="p-3 bg-slate-50/50 border border-slate-200/70 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-2 text-right"
-                                    >
-                                      <div className="space-y-1">
-                                        <div className="flex items-center gap-2">
-                                          <span className={`text-[8px] font-black px-1.5 py-0.5 rounded ${task.type === 'core' ? 'bg-blue-100 text-blue-800' : task.type === 'secondary' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
-                                            {task.type === 'core' ? 'اصلی' : task.type === 'secondary' ? 'فرعی' : 'عادت'}
-                                          </span>
-                                          <span className="text-xs font-black text-slate-800">
-                                            {task.title}
-                                          </span>
+                                {/* Week-by-Week Granular Rendering */}
+                                {phase.weeks && phase.weeks.length > 0 ? (
+                                  <div className="space-y-3.5 pt-1">
+                                    {phase.weeks.map((week) => (
+                                      <div 
+                                        key={week.week_number} 
+                                        className="bg-slate-50/60 border border-slate-200/90 rounded-2xl p-3.5 space-y-2.5"
+                                      >
+                                        {/* Week Header */}
+                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/70 pb-2">
+                                          <div className="space-y-1">
+                                            <div className="flex items-center gap-2">
+                                              <span className="px-2 py-0.5 bg-indigo-600 text-white font-black text-[10px] rounded-md shrink-0">
+                                                هفته {week.week_number}
+                                              </span>
+                                              <h6 className="text-xs font-black text-slate-800">
+                                                {week.week_title}
+                                              </h6>
+                                            </div>
+                                            {week.weekly_goal && (
+                                              <p className="text-[10px] text-slate-500 font-medium">
+                                                🎯 هدف اصلی هفته: {week.weekly_goal}
+                                              </p>
+                                            )}
+                                          </div>
+
+                                          <button
+                                            type="button"
+                                            onClick={() => handleInjectWeekTasks(goal, week, phase.phase_number)}
+                                            className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-[10px] font-bold transition-all cursor-pointer self-start sm:self-auto shrink-0 shadow-2xs"
+                                            title={`انتقال کارهای هفته ${week.week_number} به برنامه‌ریز`}
+                                          >
+                                            <Plus className="w-3.5 h-3.5 text-emerald-600" />
+                                            <span>تزریق تسک‌های هفته {week.week_number}</span>
+                                          </button>
                                         </div>
 
-                                        {task.description && (
-                                          <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
-                                            {task.description}
-                                          </p>
+                                        {/* Specific Week Practice Drill */}
+                                        {week.practice_exercise && (
+                                          <div className="p-2.5 bg-amber-50 border border-amber-200/80 rounded-xl text-[11px] text-amber-900 font-bold flex items-center gap-2">
+                                            <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
+                                            <span>تمرین عملی هفته: {week.practice_exercise}</span>
+                                          </div>
                                         )}
-                                      </div>
 
-                                      <div className="flex items-center gap-2 self-start md:self-auto shrink-0">
-                                        {task.deadline_note && (
-                                          <span className="text-[9px] text-slate-400 font-bold bg-white border border-slate-200 px-2 py-1 rounded-lg">
-                                            مهلت: {task.deadline_note}
-                                          </span>
-                                        )}
-                                        <button
-                                          type="button"
-                                          onClick={() => handleInjectSingleTask(goal, task, phase.phase_number)}
-                                          className="flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-emerald-50 text-emerald-700 border border-slate-200 hover:border-emerald-300 rounded-lg text-[10px] font-bold transition-all cursor-pointer shadow-2xs"
-                                          title="انتقال تکی این کار به برنامه‌ریز"
-                                        >
-                                          <Plus className="w-3 h-3 text-emerald-600" />
-                                          <span>انتقال تکی</span>
-                                        </button>
+                                        {/* Week Tasks */}
+                                        <div className="space-y-2">
+                                          {week.tasks.map((task, tIdx) => (
+                                            <div 
+                                              key={task.id || tIdx}
+                                              className="p-3 bg-white border border-slate-200/80 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-2 text-right"
+                                            >
+                                              <div className="space-y-1">
+                                                <div className="flex items-center gap-2">
+                                                  <span className={`text-[8px] font-black px-1.5 py-0.5 rounded ${task.type === 'core' ? 'bg-blue-100 text-blue-800' : task.type === 'secondary' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                                                    {task.type === 'core' ? 'اصلی' : task.type === 'secondary' ? 'فرعی' : 'عادت'}
+                                                  </span>
+                                                  <span className="text-xs font-black text-slate-800">
+                                                    {task.title}
+                                                  </span>
+                                                </div>
+
+                                                {task.description && (
+                                                  <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
+                                                    {task.description}
+                                                  </p>
+                                                )}
+                                              </div>
+
+                                              <div className="flex items-center gap-2 self-start md:self-auto shrink-0">
+                                                {task.deadline_note && (
+                                                  <span className="text-[9px] text-slate-400 font-bold bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg">
+                                                    مهلت: {task.deadline_note}
+                                                  </span>
+                                                )}
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleInjectSingleTask(goal, task, phase.phase_number)}
+                                                  className="flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-emerald-50 text-emerald-700 border border-slate-200 hover:border-emerald-300 rounded-lg text-[10px] font-bold transition-all cursor-pointer shadow-2xs"
+                                                  title="انتقال تکی این کار به برنامه‌ریز"
+                                                >
+                                                  <Plus className="w-3 h-3 text-emerald-600" />
+                                                  <span>انتقال تکی</span>
+                                                </button>
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
                                       </div>
-                                    </div>
-                                  ))}
-                                </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  /* Fallback for flat phase tasks */
+                                  <div className="space-y-2">
+                                    {phase.tasks.map((task, idx) => (
+                                      <div 
+                                        key={task.id || idx}
+                                        className="p-3 bg-slate-50/50 border border-slate-200/70 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-2 text-right"
+                                      >
+                                        <div className="space-y-1">
+                                          <div className="flex items-center gap-2">
+                                            <span className={`text-[8px] font-black px-1.5 py-0.5 rounded ${task.type === 'core' ? 'bg-blue-100 text-blue-800' : task.type === 'secondary' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                                              {task.type === 'core' ? 'اصلی' : task.type === 'secondary' ? 'فرعی' : 'عادت'}
+                                            </span>
+                                            <span className="text-xs font-black text-slate-800">
+                                              {task.title}
+                                            </span>
+                                          </div>
+
+                                          {task.description && (
+                                            <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
+                                              {task.description}
+                                            </p>
+                                          )}
+                                        </div>
+
+                                        <div className="flex items-center gap-2 self-start md:self-auto shrink-0">
+                                          {task.deadline_note && (
+                                            <span className="text-[9px] text-slate-400 font-bold bg-white border border-slate-200 px-2 py-1 rounded-lg">
+                                              مهلت: {task.deadline_note}
+                                            </span>
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={() => handleInjectSingleTask(goal, task, phase.phase_number)}
+                                            className="flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-emerald-50 text-emerald-700 border border-slate-200 hover:border-emerald-300 rounded-lg text-[10px] font-bold transition-all cursor-pointer shadow-2xs"
+                                            title="انتقال تکی این کار به برنامه‌ریز"
+                                          >
+                                            <Plus className="w-3 h-3 text-emerald-600" />
+                                            <span>انتقال تکی</span>
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>

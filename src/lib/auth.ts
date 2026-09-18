@@ -1,6 +1,7 @@
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
+  signInWithCustomToken,
   signOut,
   onAuthStateChanged,
   getIdToken,
@@ -9,7 +10,7 @@ import {
 } from 'firebase/auth';
 import { auth, googleAuthProvider } from './firebase.ts';
 
-export { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged };
+export { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithCustomToken, signOut, onAuthStateChanged };
 
 export function getAuthErrorMessage(error: any, isRtl: boolean = true): string {
   const code = error?.code || error?.message || '';
@@ -66,32 +67,61 @@ export async function safeParseJson(res: Response): Promise<any> {
 }
 
 export async function clientRegister(email: string, username: string, password: string) {
-  const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-  const user = userCredential.user;
-  
-  const token = await getIdToken(user);
-  
-  const res = await fetch('/api/auth/firebase-sync', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`
-    },
-    body: JSON.stringify({ username })
-  });
-  
-  if (!res.ok) {
-    const errorData = await safeParseJson(res);
-    throw new Error(errorData.error || 'Backend sync failed');
+  try {
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const user = userCredential.user;
+    
+    const token = await getIdToken(user);
+    
+    const res = await fetch('/api/auth/firebase-sync', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ username })
+    });
+    
+    if (!res.ok) {
+      const errorData = await safeParseJson(res);
+      throw new Error(errorData.error || 'Backend sync failed');
+    }
+    
+    const data = await safeParseJson(res);
+    return {
+      id: user.uid,
+      email: user.email!,
+      username: data.user.username || username,
+      token,
+    };
+  } catch (err: any) {
+    // If Email/Password provider is disabled in Firebase Console or returns operation-not-allowed, fallback to server registration
+    if (err?.code?.includes('operation-not-allowed') || err?.message?.includes('operation-not-allowed') || err?.code === 'auth/operation-not-allowed') {
+      const res = await fetch('/api/auth/server-register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, username, password })
+      });
+
+      if (!res.ok) {
+        const errorData = await safeParseJson(res);
+        throw new Error(errorData.error || 'خطا در ثبت‌نام کاربری');
+      }
+
+      const data = await safeParseJson(res);
+      const userCredential = await signInWithCustomToken(auth, data.customToken);
+      const user = userCredential.user;
+      const token = await getIdToken(user);
+
+      return {
+        id: user.uid,
+        email: user.email!,
+        username: data.user.username || username,
+        token
+      };
+    }
+    throw err;
   }
-  
-  const data = await safeParseJson(res);
-  return {
-    id: user.uid,
-    email: user.email!,
-    username: data.user.username || username,
-    token,
-  };
 }
 
 export async function clientLogin(emailOrUsername: string, password: string) {
@@ -105,31 +135,59 @@ export async function clientLogin(emailOrUsername: string, password: string) {
       throw new Error('نام کاربری معتبر نیست یا یافت نشد');
     }
   }
-  
-  const userCredential = await signInWithEmailAndPassword(auth, email, password);
-  const user = userCredential.user;
-  const token = await getIdToken(user);
-  
-  const res = await fetch('/api/auth/firebase-sync', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`
+
+  try {
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    const user = userCredential.user;
+    const token = await getIdToken(user);
+    
+    const res = await fetch('/api/auth/firebase-sync', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    
+    if (!res.ok) {
+      const errorData = await safeParseJson(res);
+      throw new Error(errorData.error || 'Backend verification failed');
     }
-  });
-  
-  if (!res.ok) {
-    const errorData = await safeParseJson(res);
-    throw new Error(errorData.error || 'Backend verification failed');
+    
+    const data = await safeParseJson(res);
+    return {
+      id: user.uid,
+      email: user.email!,
+      username: data.user.username,
+      token,
+    };
+  } catch (err: any) {
+    if (err?.code?.includes('operation-not-allowed') || err?.message?.includes('operation-not-allowed') || err?.code === 'auth/operation-not-allowed') {
+      const res = await fetch('/api/auth/server-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailOrUsername, password })
+      });
+
+      if (!res.ok) {
+        const errorData = await safeParseJson(res);
+        throw new Error(errorData.error || 'خطا در ورود به حساب کاربری');
+      }
+
+      const data = await safeParseJson(res);
+      const userCredential = await signInWithCustomToken(auth, data.customToken);
+      const user = userCredential.user;
+      const token = await getIdToken(user);
+
+      return {
+        id: user.uid,
+        email: user.email!,
+        username: data.user.username,
+        token
+      };
+    }
+    throw err;
   }
-  
-  const data = await safeParseJson(res);
-  return {
-    id: user.uid,
-    email: user.email!,
-    username: data.user.username,
-    token,
-  };
 }
 
 export async function clientGoogleLogin() {

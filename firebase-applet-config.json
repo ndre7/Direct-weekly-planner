@@ -1,12 +1,12 @@
 {
-  "projectId": "notional-atom-2wjrd",
-  "appId": "1:1013455557689:web:5ff96d326e842de81829e8",
-  "apiKey": "AIzaSyBoY62jDtu_8Q_I5RzbFXJXa7KkugS-BPU",
-  "authDomain": "notional-atom-2wjrd.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-weeklyplannercus-993a644a-566f-4307-9548-454f3f2f9982",
-  "storageBucket": "notional-atom-2wjrd.firebasestorage.app",
-  "messagingSenderId": "1013455557689",
-  "measurementId": "",
-  "oAuthClientId": "1013455557689-3ucrdnv08dmebvketcj5fb3hf32buaoa.apps.googleusercontent.com",
+  "projectId": "weekly-planner-1d0cc",
+  "appId": "1:570279388857:web:9e43b0f69d33061dbe5d68",
+  "apiKey": "AIzaSyADEkMC6MVVkhBxslJhvZ4jeLP0kVMUDL0",
+  "authDomain": "weekly-planner-1d0cc.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket":  "weekly-planner-1d0cc.firebasestorage.app",
+  "messagingSenderId": "570279388857",
+  "measurementId": "G-TY1SXD327X",
+  "oAuthClientId": "",
   "recaptchaSiteKey": ""
 }
