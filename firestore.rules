@@ -21,7 +21,7 @@ service cloud.firestore {
 
     // User profile documents and subcollections (coreTasks, secondaryTasks, todos, dailyThoughts)
     match /users/{userId} {
-      allow read, write: if isValidId(userId) && isOwner(userId);
+      allow read, write: if isSignedIn() && (request.resource == null || request.resource.data.uid == null || request.resource.data.uid == request.auth.uid || userId == request.auth.uid);
 
       match /{allPaths=**} {
         allow read, write: if isValidId(userId) && isOwner(userId);
@@ -36,8 +36,7 @@ service cloud.firestore {
 
     // Planner data parent document and all subcollections (categories, goals, phases, history, etc.)
     match /planners/{userId} {
-      allow read, write: if isValidId(userId) && isOwner(userId)
-                         && (request.resource == null || request.resource.size() < 200000);
+      allow read, write: if isSignedIn() && (request.resource == null || request.resource.data.uid == null || request.resource.data.uid == request.auth.uid || userId == request.auth.uid);
 
       match /{allSubcollections=**} {
         allow read, write: if isValidId(userId) && isOwner(userId)

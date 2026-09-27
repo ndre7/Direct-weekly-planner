@@ -1,12 +1,12 @@
 {
   "projectId": "weekly-planner-1d0cc",
-  "appId": "1:570279388857:web:9e43b0f69d33061dbe5d68",
+  "appId": "1:570279388857:web:d152f9598f57df38be5d68",
   "apiKey": "AIzaSyADEkMC6MVVkhBxslJhvZ4jeLP0kVMUDL0",
   "authDomain": "weekly-planner-1d0cc.firebaseapp.com",
-  "firestoreDatabaseId": "(default)",
-  "storageBucket":  "weekly-planner-1d0cc.firebasestorage.app",
+  "firestoreDatabaseId": "ai-studio-weeklyplannercus-993a644a-566f-4307-9548-454f3f2f9982",
+  "storageBucket": "weekly-planner-1d0cc.firebasestorage.app",
   "messagingSenderId": "570279388857",
-  "measurementId": "G-TY1SXD327X",
-  "oAuthClientId": "",
+  "measurementId": "",
+  "oAuthClientId": "570279388857-s0s6e1s86hj9gutfdi01fupbtmg9o35f.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }

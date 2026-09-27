@@ -28,9 +28,9 @@ function hashPassword(password: string): string {
 }
 
 function verifyPassword(password: string, storedHash?: string | null): boolean {
-  if (!storedHash) return true;
+  if (!storedHash) return false; // fail-closed
   const parts = storedHash.split(':');
-  if (parts.length !== 2) return true;
+  if (parts.length !== 2) return false; // fail-closed
   const [salt, originalHash] = parts;
   const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
   return hash === originalHash;

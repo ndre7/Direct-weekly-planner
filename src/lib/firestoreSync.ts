@@ -11,6 +11,32 @@ import {
 } from 'firebase/firestore';
 import { db, auth } from './firebase.ts';
 import { jalaliToGregorian, JALALI_MONTHS } from '../utils/jalali.ts';
+import { 
+  PlannerData, 
+  CoreTask, 
+  SecondaryTask, 
+  NoteItem, 
+  Category, 
+  ClassSlot, 
+  DailyTask, 
+  ReminderItem, 
+  Goal, 
+  GoalPhase, 
+  DetailsColumn, 
+  SecondaryTaskColumn, 
+  PostponedEvent 
+} from '../types.ts';
+import {
+  computeDiff,
+  applyDiff,
+  updateMirrorFromSnapshot,
+  resetMirror,
+  sanitizePhaseForStorage,
+  extractScalarSettings,
+  hashContent
+} from './plannerSyncEngine.ts';
+
+export { resetMirror };
 
 export enum OperationType {
   CREATE = 'create',
@@ -96,27 +122,14 @@ export async function flushPendingSyncQueue(userId: string): Promise<void> {
   try {
     await savePlannerSubcollections(userId, pendingData);
   } catch (_) {
-    // If still fails, re-queue silently
-    pendingSyncQueue.set(userId, pendingData);
+    // If still fails, re-queue silently — merge so that any NEWER data
+    // queued while this flush was in flight is not lost
+    const current = pendingSyncQueue.get(userId) || {};
+    pendingSyncQueue.set(userId, { ...pendingData, ...current });
   } finally {
     isFlushingQueue = false;
   }
 }
-import { 
-  PlannerData, 
-  CoreTask, 
-  SecondaryTask, 
-  NoteItem, 
-  Category, 
-  ClassSlot, 
-  DailyTask,
-  ReminderItem, 
-  Goal, 
-  GoalPhase, 
-  DetailsColumn, 
-  SecondaryTaskColumn, 
-  PostponedEvent
-} from '../types';
 
 const WEEKDAY_OFFSETS: Record<string, number> = {
   saturday: 0,
@@ -134,7 +147,6 @@ const WEEKDAY_OFFSETS: Record<string, number> = {
  */
 export function normalizeToDateISO(val: any): string {
   if (!val) {
-    console.warn("[Date Normalization Warning] Empty date provided, using today ISO");
     return new Date().toISOString().split('T')[0];
   }
 
@@ -173,7 +185,6 @@ export function normalizeToDateISO(val: any): string {
     }
   }
 
-  console.warn(`[Date Normalization Warning] Could not recognize date format '${strVal}', using today ISO`);
   return new Date().toISOString().split('T')[0];
 }
 
@@ -204,138 +215,6 @@ export function getISOFromWeekContext(dataCtx: Partial<PlannerData> | undefined,
 }
 
 /**
- * 1. Legacy User Subcollection Operations (users/{uid}/coreTasks, etc.)
- */
-export async function addCoreTask(uid: string, task: CoreTask): Promise<void> {
-  if (!uid || !task.id) return;
-  const taskRef = doc(db, 'users', uid, 'coreTasks', task.id);
-  await setDoc(taskRef, task, { merge: true });
-}
-
-export async function updateCoreTask(uid: string, taskId: string, updates: Partial<CoreTask>): Promise<void> {
-  if (!uid || !taskId) return;
-  const taskRef = doc(db, 'users', uid, 'coreTasks', taskId);
-  await updateDoc(taskRef, updates);
-}
-
-export async function deleteCoreTask(uid: string, taskId: string): Promise<void> {
-  if (!uid || !taskId) return;
-  const taskRef = doc(db, 'users', uid, 'coreTasks', taskId);
-  await deleteDoc(taskRef);
-}
-
-export async function addSecondaryTask(uid: string, task: SecondaryTask): Promise<void> {
-  if (!uid || !task.id) return;
-  const taskRef = doc(db, 'users', uid, 'secondaryTasks', task.id);
-  await setDoc(taskRef, task, { merge: true });
-}
-
-export async function updateSecondaryTask(uid: string, taskId: string, updates: Partial<SecondaryTask>): Promise<void> {
-  if (!uid || !taskId) return;
-  const taskRef = doc(db, 'users', uid, 'secondaryTasks', taskId);
-  await updateDoc(taskRef, updates);
-}
-
-export async function addTodo(uid: string, todo: NoteItem): Promise<void> {
-  if (!uid || !todo.id) return;
-  const todoRef = doc(db, 'users', uid, 'todos', todo.id);
-  await setDoc(todoRef, todo, { merge: true });
-}
-
-export async function updateTodo(uid: string, todoId: string, updates: Partial<NoteItem>): Promise<void> {
-  if (!uid || !todoId) return;
-  const todoRef = doc(db, 'users', uid, 'todos', todoId);
-  await updateDoc(todoRef, updates);
-}
-
-export async function deleteTodo(uid: string, todoId: string): Promise<void> {
-  if (!uid || !todoId) return;
-  const todoRef = doc(db, 'users', uid, 'todos', todoId);
-  await deleteDoc(todoRef);
-}
-
-export async function addDailyThought(uid: string, thought: NoteItem): Promise<void> {
-  if (!uid || !thought.id) return;
-  const thoughtRef = doc(db, 'users', uid, 'dailyThoughts', thought.id);
-  await setDoc(thoughtRef, thought, { merge: true });
-}
-
-export async function updateDailyThought(uid: string, thoughtId: string, updates: Partial<NoteItem>): Promise<void> {
-  if (!uid || !thoughtId) return;
-  const thoughtRef = doc(db, 'users', uid, 'dailyThoughts', thoughtId);
-  await updateDoc(thoughtRef, updates);
-}
-
-export async function deleteDailyThought(uid: string, thoughtId: string): Promise<void> {
-  if (!uid || !thoughtId) return;
-  const thoughtRef = doc(db, 'users', uid, 'dailyThoughts', thoughtId);
-  await deleteDoc(thoughtRef);
-}
-
-/**
- * 2. Goal Task Deduplication Helper
- */
-export function sanitizePhaseForStorage(phase: GoalPhase): GoalPhase {
-  const sanitized = { ...phase };
-  if (sanitized.weeks && sanitized.weeks.length > 0) {
-    sanitized.tasks = [];
-  }
-  return sanitized;
-}
-
-export function sanitizeGoalForStorage(goal: Goal): Goal {
-  const sanitized = { ...goal };
-  if (sanitized.phases) {
-    sanitized.phases = sanitized.phases.map(p => sanitizePhaseForStorage(p));
-  }
-  return sanitized;
-}
-
-/**
- * 3. Planner Settings (Parent Document: /planners/{userId})
- * Strips all subcollections, examColumns, and unbounded history arrays.
- */
-export async function savePlannerSettings(userId: string, data: Partial<PlannerData>): Promise<void> {
-  if (!userId) return;
-  const plannerRef = doc(db, 'planners', userId);
-
-  const {
-    categories,
-    classesSchedule,
-    dailyTasks,
-    reminders,
-    goals,
-    detailsColumns,
-    examColumns,
-    secondaryTaskColumns,
-    secondaryTasks,
-    todoList,
-    timebox,
-    postponedEvents,
-    weeklyEvents,
-    dailyThoughts,
-    pomodoroHistory,
-    waterTrackerHistory,
-    habitTracking,
-    data: oldMonolithicBlob,
-    ...rest
-  } = data as any;
-
-  const scalarSettings: Record<string, any> = { ...rest, updatedAt: new Date().toISOString() };
-
-  if (scalarSettings.pomodoro && typeof scalarSettings.pomodoro === 'object') {
-    const { history, ...pomoScalars } = scalarSettings.pomodoro;
-    scalarSettings.pomodoro = pomoScalars;
-  }
-  if (scalarSettings.waterTracker && typeof scalarSettings.waterTracker === 'object') {
-    const { history, ...waterScalars } = scalarSettings.waterTracker;
-    scalarSettings.waterTracker = waterScalars;
-  }
-
-  await setDoc(plannerRef, scalarSettings, { merge: true });
-}
-
-/**
  * Audits the byte size of the parent document /planners/{userId} to verify no subcollections leak.
  */
 export async function auditPlannerDocSize(userId: string): Promise<number> {
@@ -347,9 +226,8 @@ export async function auditPlannerDocSize(userId: string): Promise<number> {
     const jsonString = JSON.stringify(data);
     const byteSize = new Blob([jsonString]).size;
     const kbSize = byteSize / 1024;
-    console.log(`[Planner Doc Size Audit] /planners/${userId} parent doc size: ${kbSize.toFixed(2)} KB (${byteSize} bytes)`);
     if (kbSize > 50) {
-      console.warn(`[Planner Doc Size Warning] Parent document /planners/${userId} is ${kbSize.toFixed(2)} KB (> 50 KB). Top-level keys present:`, Object.keys(data));
+      console.warn(`[Planner Doc Size Warning] Parent document /planners/${userId} is ${kbSize.toFixed(2)} KB (> 50 KB). Top-level keys:`, Object.keys(data));
     }
     return byteSize;
   } catch (err) {
@@ -359,211 +237,252 @@ export async function auditPlannerDocSize(userId: string): Promise<number> {
 }
 
 /**
- * 4. Subcollection CRUD Operations (/planners/{userId}/*)
+ * Saves parent document scalar settings (/planners/{userId})
  */
-
-// Categories
-export async function saveCategoryDoc(userId: string, category: Category): Promise<void> {
-  if (!userId || !category.id) return;
-  const ref = doc(db, 'planners', userId, 'categories', category.id);
-  await setDoc(ref, category, { merge: true });
+export async function savePlannerSettings(userId: string, data: Partial<PlannerData>): Promise<void> {
+  if (!userId) return;
+  const plannerRef = doc(db, 'planners', userId);
+  const scalarSettings = extractScalarSettings(data);
+  await setDoc(plannerRef, { ...scalarSettings, updatedAt: new Date().toISOString() }, { merge: true });
 }
 
+// -------------------------------------------------------------
+// Legacy Functions (Kept for compatibility with @deprecated)
+// -------------------------------------------------------------
+
+/** @deprecated Use savePlannerSubcollections with diff engine */
+export async function addCoreTask(uid: string, task: CoreTask): Promise<void> {
+  if (!uid || !task.id) return;
+  await setDoc(doc(db, 'planners', uid, 'coreTasks', task.id), task, { merge: true });
+}
+
+/** @deprecated Use savePlannerSubcollections with diff engine */
+export async function updateCoreTask(uid: string, taskId: string, updates: Partial<CoreTask>): Promise<void> {
+  if (!uid || !taskId) return;
+  await updateDoc(doc(db, 'planners', uid, 'coreTasks', taskId), updates);
+}
+
+/** @deprecated Use savePlannerSubcollections with diff engine */
+export async function deleteCoreTask(uid: string, taskId: string): Promise<void> {
+  if (!uid || !taskId) return;
+  await deleteDoc(doc(db, 'planners', uid, 'coreTasks', taskId));
+}
+
+/** @deprecated Use savePlannerSubcollections with diff engine */
+export async function addSecondaryTask(uid: string, task: SecondaryTask): Promise<void> {
+  if (!uid || !task.id) return;
+  await setDoc(doc(db, 'planners', uid, 'secondaryTasks', task.id), task, { merge: true });
+}
+
+/** @deprecated Use savePlannerSubcollections with diff engine */
+export async function updateSecondaryTask(uid: string, taskId: string, updates: Partial<SecondaryTask>): Promise<void> {
+  if (!uid || !taskId) return;
+  await updateDoc(doc(db, 'planners', uid, 'secondaryTasks', taskId), updates);
+}
+
+/** @deprecated Use savePlannerSubcollections with diff engine */
+export async function addTodo(uid: string, todo: NoteItem): Promise<void> {
+  if (!uid || !todo.id) return;
+  await setDoc(doc(db, 'planners', uid, 'todoList', todo.id), todo, { merge: true });
+}
+
+/** @deprecated Use savePlannerSubcollections with diff engine */
+export async function updateTodo(uid: string, todoId: string, updates: Partial<NoteItem>): Promise<void> {
+  if (!uid || !todoId) return;
+  await updateDoc(doc(db, 'planners', uid, 'todoList', todoId), updates);
+}
+
+/** @deprecated Use savePlannerSubcollections with diff engine */
+export async function deleteTodo(uid: string, todoId: string): Promise<void> {
+  if (!uid || !todoId) return;
+  await deleteDoc(doc(db, 'planners', uid, 'todoList', todoId));
+}
+
+/** @deprecated Use savePlannerSubcollections with diff engine */
+export async function addDailyThought(uid: string, thought: NoteItem): Promise<void> {
+  if (!uid || !thought.id) return;
+  await setDoc(doc(db, 'planners', uid, 'dailyThoughts', thought.id), thought, { merge: true });
+}
+
+/** @deprecated Use savePlannerSubcollections with diff engine */
+export async function updateDailyThought(uid: string, thoughtId: string, updates: Partial<NoteItem>): Promise<void> {
+  if (!uid || !thoughtId) return;
+  await updateDoc(doc(db, 'planners', uid, 'dailyThoughts', thoughtId), updates);
+}
+
+/** @deprecated Use savePlannerSubcollections with diff engine */
+export async function deleteDailyThought(uid: string, thoughtId: string): Promise<void> {
+  if (!uid || !thoughtId) return;
+  await deleteDoc(doc(db, 'planners', uid, 'dailyThoughts', thoughtId));
+}
+
+/** @deprecated Use savePlannerSubcollections with diff engine */
+export async function saveCategoryDoc(userId: string, category: Category): Promise<void> {
+  if (!userId || !category.id) return;
+  await setDoc(doc(db, 'planners', userId, 'categories', category.id), category, { merge: true });
+}
+
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function deleteCategoryDoc(userId: string, categoryId: string): Promise<void> {
   if (!userId || !categoryId) return;
   await deleteDoc(doc(db, 'planners', userId, 'categories', categoryId));
 }
 
-// Classes Schedule
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function saveClassScheduleDoc(userId: string, classItem: ClassSlot): Promise<void> {
   if (!userId || !classItem.id) return;
-  const ref = doc(db, 'planners', userId, 'classesSchedule', classItem.id);
-  await setDoc(ref, classItem, { merge: true });
+  await setDoc(doc(db, 'planners', userId, 'classesSchedule', classItem.id), classItem, { merge: true });
 }
 
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function deleteClassSlotDoc(userId: string, classId: string): Promise<void> {
   if (!userId || !classId) return;
   await deleteDoc(doc(db, 'planners', userId, 'classesSchedule', classId));
 }
 
-// Daily Tasks (Working copy + Historical Snapshot + Daily Stats Rollup)
-export async function saveDailyTasksDoc(userId: string, dayKey: string, tasks: DailyTask[], dataCtx?: Partial<PlannerData>): Promise<void> {
-  if (!userId || !dayKey) return;
-  // 1. Current week working copy
-  const ref = doc(db, 'planners', userId, 'dailyTasks', dayKey);
-  await setDoc(ref, { dayKey, tasks }, { merge: true });
-
-  // 2. Immutable history snapshot
-  const { dateISO, weekIdentifier } = getISOFromWeekContext(dataCtx, dayKey);
-  const historyRef = doc(db, 'planners', userId, 'dailyTasksHistory', dateISO);
-  await setDoc(historyRef, {
-    date: dateISO,
-    dayKey,
-    weekIdentifier,
-    tasks,
-    updatedAt: new Date().toISOString()
-  }, { merge: true });
-
-  // 3. Rollup stats for analytics
-  if (dataCtx) {
-    await saveDailyStatsDoc(userId, dateISO, {
-      ...dataCtx,
-      dailyTasks: { ...(dataCtx.dailyTasks || {}), [dayKey]: tasks }
-    });
-  }
-}
-
-// Reminders
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function saveReminderDoc(userId: string, reminder: ReminderItem): Promise<void> {
   if (!userId || !reminder.id) return;
-  const ref = doc(db, 'planners', userId, 'reminders', reminder.id);
-  await setDoc(ref, reminder, { merge: true });
+  await setDoc(doc(db, 'planners', userId, 'reminders', reminder.id), reminder, { merge: true });
 }
 
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function deleteReminderDoc(userId: string, reminderId: string): Promise<void> {
   if (!userId || !reminderId) return;
   await deleteDoc(doc(db, 'planners', userId, 'reminders', reminderId));
 }
 
-// Goals & Phase Subcollections
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function saveGoalDoc(userId: string, goal: Goal): Promise<void> {
   if (!userId || !goal.goal_id) return;
-  const sanitizedGoal = sanitizeGoalForStorage(goal);
-  const { phases, ...goalTopLevel } = sanitizedGoal;
-
-  const goalRef = doc(db, 'planners', userId, 'goals', goal.goal_id);
-  await setDoc(goalRef, goalTopLevel, { merge: true });
-
-  if (phases && phases.length > 0) {
+  const sanitized = sanitizePhaseForStorage ? goal : goal;
+  const { phases, ...topLevel } = sanitized;
+  await setDoc(doc(db, 'planners', userId, 'goals', goal.goal_id), topLevel, { merge: true });
+  if (phases) {
     for (const phase of phases) {
-      const phaseNum = String(phase.phase_number);
-      const phaseRef = doc(db, 'planners', userId, 'goals', goal.goal_id, 'phases', phaseNum);
-      await setDoc(phaseRef, phase, { merge: true });
+      await setDoc(doc(db, 'planners', userId, 'goals', goal.goal_id, 'phases', String(phase.phase_number)), sanitizePhaseForStorage(phase), { merge: true });
     }
   }
 }
 
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function deleteGoalDoc(userId: string, goalId: string): Promise<void> {
   if (!userId || !goalId) return;
-  
-  const phasesCol = collection(db, 'planners', userId, 'goals', goalId, 'phases');
-  const phasesSnap = await getDocs(phasesCol);
-  for (const phaseDoc of phasesSnap.docs) {
-    await deleteDoc(phaseDoc.ref);
+  const phasesSnap = await getDocs(collection(db, 'planners', userId, 'goals', goalId, 'phases'));
+  for (const p of phasesSnap.docs) {
+    await deleteDoc(p.ref);
   }
-
   await deleteDoc(doc(db, 'planners', userId, 'goals', goalId));
 }
 
-// Details Columns
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function saveDetailsColumnDoc(userId: string, column: DetailsColumn): Promise<void> {
   if (!userId || !column.id) return;
-  const ref = doc(db, 'planners', userId, 'detailsColumns', column.id);
-  await setDoc(ref, column, { merge: true });
+  await setDoc(doc(db, 'planners', userId, 'detailsColumns', column.id), column, { merge: true });
 }
 
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function deleteDetailsColumnDoc(userId: string, columnId: string): Promise<void> {
   if (!userId || !columnId) return;
   await deleteDoc(doc(db, 'planners', userId, 'detailsColumns', columnId));
 }
 
-// Exam Columns (Fix A2)
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function saveExamColumnDoc(userId: string, column: DetailsColumn): Promise<void> {
   if (!userId || !column.id) return;
-  const ref = doc(db, 'planners', userId, 'examColumns', column.id);
-  await setDoc(ref, column, { merge: true });
+  await setDoc(doc(db, 'planners', userId, 'examColumns', column.id), column, { merge: true });
 }
 
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function deleteExamColumnDoc(userId: string, columnId: string): Promise<void> {
   if (!userId || !columnId) return;
   await deleteDoc(doc(db, 'planners', userId, 'examColumns', columnId));
 }
 
-// Secondary Task Columns
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function saveSecondaryTaskColumnDoc(userId: string, column: SecondaryTaskColumn): Promise<void> {
   if (!userId || !column.id) return;
-  const ref = doc(db, 'planners', userId, 'secondaryTaskColumns', column.id);
-  await setDoc(ref, column, { merge: true });
+  await setDoc(doc(db, 'planners', userId, 'secondaryTaskColumns', column.id), column, { merge: true });
 }
 
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function deleteSecondaryTaskColumnDoc(userId: string, columnId: string): Promise<void> {
   if (!userId || !columnId) return;
   await deleteDoc(doc(db, 'planners', userId, 'secondaryTaskColumns', columnId));
 }
 
-// Secondary Tasks
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function saveSecondaryTaskDoc(userId: string, task: SecondaryTask): Promise<void> {
   if (!userId || !task.id) return;
-  const ref = doc(db, 'planners', userId, 'secondaryTasks', task.id);
-  await setDoc(ref, task, { merge: true });
+  await setDoc(doc(db, 'planners', userId, 'secondaryTasks', task.id), task, { merge: true });
 }
 
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function deleteSecondaryTaskDoc(userId: string, taskId: string): Promise<void> {
   if (!userId || !taskId) return;
   await deleteDoc(doc(db, 'planners', userId, 'secondaryTasks', taskId));
 }
 
-// Todo List
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function saveTodoListDoc(userId: string, todo: NoteItem): Promise<void> {
   if (!userId || !todo.id) return;
-  const ref = doc(db, 'planners', userId, 'todoList', todo.id);
-  await setDoc(ref, todo, { merge: true });
+  await setDoc(doc(db, 'planners', userId, 'todoList', todo.id), todo, { merge: true });
 }
 
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function deleteTodoItemDoc(userId: string, todoId: string): Promise<void> {
   if (!userId || !todoId) return;
   await deleteDoc(doc(db, 'planners', userId, 'todoList', todoId));
 }
 
-// Timebox
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function saveTimeboxDoc(userId: string, entry: any): Promise<void> {
   if (!userId || !entry.id) return;
-  const ref = doc(db, 'planners', userId, 'timebox', entry.id);
-  await setDoc(ref, entry, { merge: true });
+  await setDoc(doc(db, 'planners', userId, 'timebox', entry.id), entry, { merge: true });
 }
 
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function deleteTimeboxDoc(userId: string, entryId: string): Promise<void> {
   if (!userId || !entryId) return;
   await deleteDoc(doc(db, 'planners', userId, 'timebox', entryId));
 }
 
-// Postponed Events
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function savePostponedEventDoc(userId: string, event: PostponedEvent): Promise<void> {
   if (!userId || !event.id) return;
-  const ref = doc(db, 'planners', userId, 'postponedEvents', event.id);
-  await setDoc(ref, event, { merge: true });
+  await setDoc(doc(db, 'planners', userId, 'postponedEvents', event.id), event, { merge: true });
 }
 
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function deletePostponedEventDoc(userId: string, eventId: string): Promise<void> {
   if (!userId || !eventId) return;
   await deleteDoc(doc(db, 'planners', userId, 'postponedEvents', eventId));
 }
 
-// Weekly Events
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function saveWeeklyEventDoc(userId: string, event: NoteItem): Promise<void> {
   if (!userId || !event.id) return;
-  const ref = doc(db, 'planners', userId, 'weeklyEvents', event.id);
-  await setDoc(ref, event, { merge: true });
+  await setDoc(doc(db, 'planners', userId, 'weeklyEvents', event.id), event, { merge: true });
 }
 
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function deleteWeeklyEventDoc(userId: string, eventId: string): Promise<void> {
   if (!userId || !eventId) return;
   await deleteDoc(doc(db, 'planners', userId, 'weeklyEvents', eventId));
 }
 
-// Daily Thoughts
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function saveDailyThoughtDoc(userId: string, thought: NoteItem): Promise<void> {
   if (!userId || !thought.id) return;
-  const ref = doc(db, 'planners', userId, 'dailyThoughts', thought.id);
-  await setDoc(ref, thought, { merge: true });
+  await setDoc(doc(db, 'planners', userId, 'dailyThoughts', thought.id), thought, { merge: true });
 }
 
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function deleteDailyThoughtDoc(userId: string, thoughtId: string): Promise<void> {
   if (!userId || !thoughtId) return;
   await deleteDoc(doc(db, 'planners', userId, 'dailyThoughts', thoughtId));
 }
 
-// History & Unbounded Subcollections (Normalized dates B2 & B3)
 export async function savePomodoroHistoryDoc(userId: string, rawDateKey: string, entry: any): Promise<void> {
   if (!userId || !rawDateKey) return;
   const dateISO = normalizeToDateISO(rawDateKey);
@@ -578,39 +497,25 @@ export async function saveWaterTrackerHistoryDoc(userId: string, rawDateKey: str
   await setDoc(ref, { ...entry, date: dateISO, updatedAt: new Date().toISOString() }, { merge: true });
 }
 
-export async function saveHabitTrackingDoc(userId: string, weekKey: string, entry: any, dataCtx?: Partial<PlannerData>): Promise<void> {
-  if (!userId || !weekKey) return;
-  let weekStartDate = entry.weekStartDate ? normalizeToDateISO(entry.weekStartDate) : '';
-  if (!weekStartDate) {
-    const { weekIdentifier } = getISOFromWeekContext(dataCtx, 'saturday');
-    weekStartDate = weekIdentifier;
-  }
+// -------------------------------------------------------------
+// Phase C — Stats, Snapshots, Habits & Monthly Aggregation
+// -------------------------------------------------------------
 
-  const docId = weekStartDate || String(weekKey);
-  const ref = doc(db, 'planners', userId, 'habitTracking', docId);
-  await setDoc(ref, {
-    weekStartDate,
-    label: weekKey,
-    entry: entry.habits || entry,
-    updatedAt: new Date().toISOString()
-  }, { merge: true });
-}
+/**
+ * C1. Saves daily numerical stats and task snapshot records for a changed day
+ */
+export async function saveDailyStatsAndSnapshot(
+  userId: string, 
+  dayKey: string, 
+  data: Partial<PlannerData>
+): Promise<void> {
+  if (!userId || !dayKey) return;
 
-// Daily Stats Rollup Subcollection (B5)
-export async function saveDailyStatsDoc(userId: string, dateISO: string, data: Partial<PlannerData>): Promise<void> {
-  if (!userId || !dateISO) return;
-
-  const normalizedDate = normalizeToDateISO(dateISO);
-
-  const gDate = new Date(normalizedDate);
-  const utcDay = gDate.getUTCDay();
-  const dayIndex = (utcDay + 1) % 7;
-  const dayKey = ['saturday', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday'][dayIndex];
-
+  const { dateISO, weekIdentifier } = getISOFromWeekContext(data, dayKey);
   const tasksForDay: DailyTask[] = (data.dailyTasks && (data.dailyTasks as any)[dayKey]) || [];
 
   let tasksCompleted = 0;
-  let tasksTotal = tasksForDay.length;
+  const tasksTotal = tasksForDay.length;
   const categoryBreakdown: Record<string, { completed: number; total: number }> = {};
 
   tasksForDay.forEach(t => {
@@ -627,7 +532,7 @@ export async function saveDailyStatsDoc(userId: string, dateISO: string, data: P
 
   let focusMinutes = 0;
   if (data.pomodoro?.history && Array.isArray(data.pomodoro.history)) {
-    const dayPomo = data.pomodoro.history.find((p: any) => normalizeToDateISO(p.date || p.timestamp) === normalizedDate);
+    const dayPomo = data.pomodoro.history.find((p: any) => normalizeToDateISO(p.date || p.timestamp) === dateISO);
     if (dayPomo) {
       focusMinutes = dayPomo.focusMinutes || dayPomo.minutes || 0;
     }
@@ -635,7 +540,7 @@ export async function saveDailyStatsDoc(userId: string, dateISO: string, data: P
 
   let waterMl = 0;
   if (data.waterTracker?.history && Array.isArray(data.waterTracker.history)) {
-    const dayWater = data.waterTracker.history.find((w: any) => normalizeToDateISO(w.date || w.timestamp) === normalizedDate);
+    const dayWater = data.waterTracker.history.find((w: any) => normalizeToDateISO(w.date || w.timestamp) === dateISO);
     if (dayWater) {
       waterMl = dayWater.amount || dayWater.waterMl || 0;
     }
@@ -643,20 +548,24 @@ export async function saveDailyStatsDoc(userId: string, dateISO: string, data: P
 
   let habitsCompleted = 0;
   let habitsTotal = 0;
-  if (data.habitTracking) {
-    const habitEntries = Array.isArray(data.habitTracking) ? data.habitTracking : Object.values(data.habitTracking);
-    habitEntries.forEach((h: any) => {
-      if (h.completedDays && Array.isArray(h.completedDays)) {
+  if (Array.isArray(data.reminders)) {
+    data.reminders.forEach((r: ReminderItem) => {
+      if (r.checkedDays && Array.isArray(r.checkedDays)) {
         habitsTotal++;
-        if (h.completedDays.includes(dayKey)) habitsCompleted++;
+        if (r.checkedDays.includes(dayKey)) habitsCompleted++;
+      } else if (r.dayProgress && r.dayProgress[dayKey] !== undefined) {
+        habitsTotal++;
+        if (Number(r.dayProgress[dayKey]) >= (r.targetCount || 1)) habitsCompleted++;
       }
     });
   }
 
-  const rollupRef = doc(db, 'planners', userId, 'dailyStats', normalizedDate);
+  // 1. Daily Numerical Stats Doc (C1)
+  const rollupRef = doc(db, 'planners', userId, 'dailyStats', dateISO);
   await setDoc(rollupRef, {
-    date: normalizedDate,
+    date: dateISO,
     dayKey,
+    weekIdentifier,
     tasksCompleted,
     tasksTotal,
     categoryBreakdown,
@@ -666,10 +575,186 @@ export async function saveDailyStatsDoc(userId: string, dateISO: string, data: P
     habitsTotal,
     updatedAt: new Date().toISOString()
   }, { merge: true });
+
+  // 2. Daily Snapshots Doc with records array (C1)
+  const records: Array<{
+    id: string;
+    kind: 'daily' | 'core' | 'secondary';
+    text: string;
+    status: 'pending' | 'completed' | 'failed';
+    categoryId?: string;
+    completionDate?: string;
+  }> = [];
+
+  tasksForDay.forEach(t => {
+    records.push({
+      id: t.id,
+      kind: 'daily',
+      text: t.textFa || t.textEn || '',
+      status: t.status,
+      categoryId: t.categoryId,
+      completionDate: t.completionDate
+    });
+  });
+
+  // Include coreTasks matching this day's weekday or deadline
+  if (Array.isArray(data.coreTasks)) {
+    data.coreTasks.forEach(ct => {
+      const matchDay = ct.deadline?.weekday === dayKey;
+      if (matchDay || (ct.status === 'completed' && ct.deadline)) {
+        records.push({
+          id: ct.id,
+          kind: 'core',
+          text: ct.title || ct.description || '',
+          status: ct.status,
+          categoryId: ct.categoryId
+        });
+      }
+    });
+  }
+
+  // Include secondaryTasks matching this day's weekday or deadline
+  if (Array.isArray(data.secondaryTasks)) {
+    data.secondaryTasks.forEach(st => {
+      const matchDay = st.deadline?.weekday === dayKey;
+      if (matchDay || (st.status === 'completed' && st.deadline)) {
+        records.push({
+          id: st.id,
+          kind: 'secondary',
+          text: st.textFa || st.textEn || '',
+          status: st.status,
+          categoryId: st.categoryId,
+          completionDate: st.completionDate
+        });
+      }
+    });
+  }
+
+  const snapshotRef = doc(db, 'planners', userId, 'dailySnapshots', dateISO);
+  await setDoc(snapshotRef, {
+    date: dateISO,
+    dayKey,
+    weekIdentifier,
+    records,
+    updatedAt: new Date().toISOString()
+  }, { merge: true });
+
+  // 3. Monthly Aggregate Stats Rollup (C3)
+  await updateMonthlyStats(userId, dateISO, tasksCompleted, tasksTotal);
 }
 
 /**
- * Saves entire planner data into appropriate subcollections and parent document settings
+ * C3. Aggregates monthly stats without field explosion
+ */
+export async function updateMonthlyStats(
+  userId: string, 
+  dateISO: string, 
+  dailyCompleted: number, 
+  dailyTotal: number
+): Promise<void> {
+  const monthKey = dateISO.slice(0, 7); // YYYY-MM
+  const monthRef = doc(db, 'planners', userId, 'monthlyStats', monthKey);
+  try {
+    const snap = await getDoc(monthRef);
+    let prevDays: Record<string, { completed: number; total: number }> = {};
+    if (snap.exists()) {
+      const d = snap.data();
+      prevDays = d.days || {};
+    }
+    prevDays[dateISO] = { completed: dailyCompleted, total: dailyTotal };
+
+    let sumComp = 0;
+    let sumTot = 0;
+    const dayKeys = Object.keys(prevDays);
+    for (const k of dayKeys) {
+      sumComp += (prevDays[k]?.completed || 0);
+      sumTot += (prevDays[k]?.total || 0);
+    }
+
+    await setDoc(monthRef, {
+      month: monthKey,
+      tasksCompleted: sumComp,
+      tasksTotal: sumTot,
+      daysPresent: dayKeys.length,
+      days: prevDays,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+  } catch (err) {
+    console.warn('[Monthly Stats Warning] Could not update monthly rollup:', err);
+  }
+}
+
+/**
+ * C2. Updates habitTracking/{weekStartDate} with cells matrix
+ */
+export async function syncHabitTrackingDoc(userId: string, data: Partial<PlannerData>): Promise<void> {
+  if (!userId || !Array.isArray(data.reminders)) return;
+  const { weekIdentifier } = getISOFromWeekContext(data, 'saturday');
+  const cells: Record<string, Record<string, number>> = {};
+
+  data.reminders.forEach((r: ReminderItem) => {
+    if (!r.id) return;
+    cells[r.id] = {};
+    if (r.dayProgress) {
+      for (const [dKey, prog] of Object.entries(r.dayProgress)) {
+        cells[r.id][dKey] = Number(prog) || 0;
+      }
+    } else if (r.checkedDays && Array.isArray(r.checkedDays)) {
+      for (const dKey of r.checkedDays) {
+        cells[r.id][dKey] = 1;
+      }
+    }
+  });
+
+  const ref = doc(db, 'planners', userId, 'habitTracking', weekIdentifier);
+  await setDoc(ref, {
+    weekStartDate: weekIdentifier,
+    cells,
+    updatedAt: new Date().toISOString()
+  }, { merge: true });
+}
+
+/**
+ * C5. Prunes dailySnapshots older than 400 days once per month
+ */
+export async function pruneOldSnapshots(userId: string): Promise<void> {
+  if (!userId || !isAuthValidForUser(userId, true)) return;
+  try {
+    const currentMonthKey = new Date().toISOString().slice(0, 7);
+    const lastPrune = localStorage.getItem('planner_last_prune');
+    if (lastPrune === currentMonthKey) {
+      return;
+    }
+
+    const cutoffISO = new Date(Date.now() - 400 * 86400000).toISOString().split('T')[0];
+    const snap = await getDocs(collection(db, 'planners', userId, 'dailySnapshots'));
+    const deletions: Promise<void>[] = [];
+
+    snap.forEach(d => {
+      const docDate = d.data().date || d.id;
+      if (typeof docDate === 'string' && docDate < cutoffISO) {
+        deletions.push(deleteDoc(d.ref));
+      }
+    });
+
+    if (deletions.length > 0) {
+      await Promise.all(deletions);
+      console.log(`[Snapshot Pruning] Pruned ${deletions.length} old snapshots (< ${cutoffISO})`);
+    }
+
+    localStorage.setItem('planner_last_prune', currentMonthKey);
+  } catch (err) {
+    console.warn('[Snapshot Pruning Warning] Failed to prune old snapshots:', err);
+  }
+}
+
+// -------------------------------------------------------------
+// Phase A2 — Rewritten savePlannerSubcollections with Diff Engine
+// -------------------------------------------------------------
+
+/**
+ * Saves planner data using the Mirror-Diff Engine:
+ * computeDiff -> applyDiff -> stats/history rollups
  */
 export async function savePlannerSubcollections(userId: string, data: Partial<PlannerData>): Promise<void> {
   if (!userId) return;
@@ -679,110 +764,31 @@ export async function savePlannerSubcollections(userId: string, data: Partial<Pl
     return;
   }
 
-  // 1. Save parent doc scalar settings (no arrays / subcollections)
-  await savePlannerSettings(userId, data);
+  // 1. Compute and apply diff
+  const diff = computeDiff(userId, data);
+  await applyDiff(userId, diff, data);
 
-  // 2. Save categories
-  if (Array.isArray(data.categories)) {
-    for (const cat of data.categories) {
-      await saveCategoryDoc(userId, cat);
-    }
-  }
-
-  // 3. Save classesSchedule
-  if (Array.isArray(data.classesSchedule)) {
-    for (const cls of data.classesSchedule) {
-      await saveClassScheduleDoc(userId, cls);
-    }
-  }
-
-  // 4. Save dailyTasks
-  if (data.dailyTasks && typeof data.dailyTasks === 'object') {
-    for (const [dayKey, tasks] of Object.entries(data.dailyTasks)) {
-      if (Array.isArray(tasks)) {
-        await saveDailyTasksDoc(userId, dayKey, tasks as DailyTask[], data);
+  // 2. Phase C1 & C3: Daily Stats, Snapshots and Monthly Stats for changed days
+  if (diff.changedStatusDays.length > 0) {
+    for (const dayKey of diff.changedStatusDays) {
+      try {
+        await saveDailyStatsAndSnapshot(userId, dayKey, data);
+      } catch (err) {
+        console.warn(`[Stats Sync Warning] Failed to write daily stats for ${dayKey}:`, err);
       }
     }
   }
 
-  // 5. Save reminders
+  // 3. Phase C2: Habit Tracking rollup
   if (Array.isArray(data.reminders)) {
-    for (const rem of data.reminders) {
-      await saveReminderDoc(userId, rem);
+    try {
+      await syncHabitTrackingDoc(userId, data);
+    } catch (err) {
+      console.warn('[Habit Sync Warning] Failed to sync habit tracking:', err);
     }
   }
 
-  // 6. Save goals
-  if (Array.isArray(data.goals)) {
-    for (const goal of data.goals) {
-      await saveGoalDoc(userId, goal);
-    }
-  }
-
-  // 7. Save detailsColumns
-  if (Array.isArray(data.detailsColumns)) {
-    for (const col of data.detailsColumns) {
-      await saveDetailsColumnDoc(userId, col);
-    }
-  }
-
-  // 8. Save examColumns (Fix A2)
-  if (Array.isArray(data.examColumns)) {
-    for (const col of data.examColumns) {
-      await saveExamColumnDoc(userId, col);
-    }
-  }
-
-  // 9. Save secondaryTaskColumns
-  if (Array.isArray(data.secondaryTaskColumns)) {
-    for (const col of data.secondaryTaskColumns) {
-      await saveSecondaryTaskColumnDoc(userId, col);
-    }
-  }
-
-  // 10. Save secondaryTasks
-  if (Array.isArray(data.secondaryTasks)) {
-    for (const task of data.secondaryTasks) {
-      await saveSecondaryTaskDoc(userId, task);
-    }
-  }
-
-  // 11. Save todoList
-  if (Array.isArray(data.todoList)) {
-    for (const todo of data.todoList) {
-      await saveTodoListDoc(userId, todo);
-    }
-  }
-
-  // 12. Save timebox
-  if (Array.isArray(data.timebox)) {
-    for (const tb of data.timebox) {
-      await saveTimeboxDoc(userId, tb);
-    }
-  }
-
-  // 13. Save postponedEvents
-  if (Array.isArray(data.postponedEvents)) {
-    for (const pe of data.postponedEvents) {
-      await savePostponedEventDoc(userId, pe);
-    }
-  }
-
-  // 14. Save weeklyEvents
-  if (Array.isArray(data.weeklyEvents)) {
-    for (const we of data.weeklyEvents) {
-      await saveWeeklyEventDoc(userId, we);
-    }
-  }
-
-  // 15. Save dailyThoughts
-  if (Array.isArray(data.dailyThoughts)) {
-    for (const dt of data.dailyThoughts) {
-      await saveDailyThoughtDoc(userId, dt);
-    }
-  }
-
-  // 16. Save pomodoro history
+  // 4. Save unbounded history subcollections (if arrays provided)
   if (data.pomodoro?.history && Array.isArray(data.pomodoro.history)) {
     for (let idx = 0; idx < data.pomodoro.history.length; idx++) {
       const entry = data.pomodoro.history[idx];
@@ -791,7 +797,6 @@ export async function savePlannerSubcollections(userId: string, data: Partial<Pl
     }
   }
 
-  // 17. Save waterTracker history
   if (data.waterTracker?.history && Array.isArray(data.waterTracker.history)) {
     for (let idx = 0; idx < data.waterTracker.history.length; idx++) {
       const entry = data.waterTracker.history[idx];
@@ -800,28 +805,14 @@ export async function savePlannerSubcollections(userId: string, data: Partial<Pl
     }
   }
 
-  // 18. Save habitTracking
-  if (data.habitTracking) {
-    if (Array.isArray(data.habitTracking)) {
-      for (let idx = 0; idx < data.habitTracking.length; idx++) {
-        const entry = data.habitTracking[idx];
-        const weekKey = entry.weekKey || entry.id || `week_${idx}`;
-        await saveHabitTrackingDoc(userId, String(weekKey), entry, data);
-      }
-    } else if (typeof data.habitTracking === 'object') {
-      for (const [weekKey, entry] of Object.entries(data.habitTracking)) {
-        await saveHabitTrackingDoc(userId, weekKey, entry, data);
-      }
-    }
-  }
-
-  // Audit parent doc size
+  // 5. Parent doc size audit
   await auditPlannerDocSize(userId);
 }
 
-/**
- * 5. Real-Time Subscription for /planners/{userId} + Subcollections
- */
+// -------------------------------------------------------------
+// Phase B — Two-Wave Subscription + Lightweight Debounced Notify
+// -------------------------------------------------------------
+
 export function subscribeToPlannerSubcollections(
   userId: string,
   onDataCombined: (data: Partial<PlannerData>) => void,
@@ -830,16 +821,22 @@ export function subscribeToPlannerSubcollections(
   if (!userId || !isAuthValidForUser(userId)) return () => {};
 
   let settingsData: Record<string, any> = {};
+  let settingsReady = false;
+  const readyCollections = new Set<string>();
+
   let categoriesList: Category[] = [];
   let classesScheduleList: ClassSlot[] = [];
   let dailyTasksMap: Record<string, DailyTask[]> = {
     saturday: [], sunday: [], monday: [], tuesday: [], wednesday: [], thursday: [], friday: []
   };
+  let coreTasksList: CoreTask[] = [];
+  let secondaryTasksList: SecondaryTask[] = [];
   let remindersList: ReminderItem[] = [];
+
+  // Wave 2 data
   let detailsColumnsList: DetailsColumn[] = [];
   let examColumnsList: DetailsColumn[] = [];
   let secondaryTaskColumnsList: SecondaryTaskColumn[] = [];
-  let secondaryTasksList: SecondaryTask[] = [];
   let todoListItems: NoteItem[] = [];
   let timeboxEntries: any[] = [];
   let postponedEventsList: PostponedEvent[] = [];
@@ -853,81 +850,140 @@ export function subscribeToPlannerSubcollections(
   const phaseUnsubs = new Map<string, () => void>();
   const goalPhasesMap = new Map<string, GoalPhase[]>();
 
-  const notify = () => {
-    const combinedGoals: Goal[] = goalsTopLevelList.map(goal => {
-      const phases = goalPhasesMap.get(goal.goal_id) || [];
-      return {
-        ...goal,
-        phases
-      };
-    });
+  const allUnsubs: (() => void)[] = [];
+  let wave2Timer: ReturnType<typeof setTimeout> | null = null;
+  let notifyTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const pomoState = {
-      ...(settingsData.pomodoro || {}),
-      history: pomodoroHistoryList
-    };
+  // B2: Debounced notify (trailing 300ms) with mirror sync
+  const scheduleNotify = () => {
+    if (notifyTimer) clearTimeout(notifyTimer);
+    notifyTimer = setTimeout(() => {
+      const combinedData: Partial<PlannerData> = {};
 
-    const waterState = {
-      ...(settingsData.waterTracker || {}),
-      history: waterTrackerHistoryList
-    };
+      if (settingsReady) {
+        const { pomodoro: _pomo, waterTracker: _water, ...cleanSettings } = settingsData;
+        Object.assign(combinedData, cleanSettings);
+      }
 
-    onDataCombined({
-      ...settingsData,
-      categories: categoriesList,
-      classesSchedule: classesScheduleList,
-      dailyTasks: dailyTasksMap,
-      reminders: remindersList,
-      goals: combinedGoals,
-      detailsColumns: detailsColumnsList,
-      examColumns: examColumnsList,
-      secondaryTaskColumns: secondaryTaskColumnsList,
-      secondaryTasks: secondaryTasksList,
-      todoList: todoListItems,
-      timebox: timeboxEntries,
-      postponedEvents: postponedEventsList,
-      weeklyEvents: weeklyEventsList,
-      dailyThoughts: dailyThoughtsList,
-      pomodoro: pomoState,
-      waterTracker: waterState,
-      habitTracking: habitTrackingMap
-    });
+      if (readyCollections.has('categories')) {
+        combinedData.categories = categoriesList;
+      }
+      if (readyCollections.has('classesSchedule')) {
+        combinedData.classesSchedule = classesScheduleList;
+      }
+      if (readyCollections.has('dailyTasks')) {
+        combinedData.dailyTasks = dailyTasksMap;
+      }
+      if (readyCollections.has('coreTasks')) {
+        combinedData.coreTasks = coreTasksList;
+      }
+      if (readyCollections.has('secondaryTasks')) {
+        combinedData.secondaryTasks = secondaryTasksList;
+      }
+      if (readyCollections.has('secondaryColumns')) {
+        combinedData.secondaryTaskColumns = secondaryTaskColumnsList;
+      }
+      if (readyCollections.has('reminders')) {
+        combinedData.reminders = remindersList;
+      }
+      if (readyCollections.has('goals')) {
+        const combinedGoals: Goal[] = goalsTopLevelList.map(goal => {
+          const phases = goalPhasesMap.get(goal.goal_id) || [];
+          return {
+            ...goal,
+            phases
+          };
+        });
+        combinedData.goals = combinedGoals;
+      }
+      if (readyCollections.has('detailsColumns')) {
+        combinedData.detailsColumns = detailsColumnsList;
+      }
+      if (readyCollections.has('examColumns')) {
+        combinedData.examColumns = examColumnsList;
+      }
+      if (readyCollections.has('todoList')) {
+        combinedData.todoList = todoListItems;
+      }
+      if (readyCollections.has('timebox')) {
+        combinedData.timebox = timeboxEntries;
+      }
+      if (readyCollections.has('postponedEvents')) {
+        combinedData.postponedEvents = postponedEventsList;
+      }
+      if (readyCollections.has('weeklyEvents')) {
+        combinedData.weeklyEvents = weeklyEventsList;
+      }
+      if (readyCollections.has('dailyThoughts')) {
+        combinedData.dailyThoughts = dailyThoughtsList;
+      }
+      if (readyCollections.has('pomodoroHistory')) {
+        combinedData.pomodoro = {
+          ...(settingsData.pomodoro || {}),
+          history: pomodoroHistoryList
+        };
+      }
+      if (readyCollections.has('waterTrackerHistory')) {
+        combinedData.waterTracker = {
+          ...(settingsData.waterTracker || {}),
+          history: waterTrackerHistoryList
+        };
+      }
+      if (readyCollections.has('habitTracking')) {
+        combinedData.habitTracking = habitTrackingMap;
+      }
+
+      // Update local mirror before invoking callback to prevent echo (B2)
+      updateMirrorFromSnapshot(userId, combinedData);
+      onDataCombined(combinedData);
+    }, 300);
   };
 
-  const topLevelUnsubs: (() => void)[] = [];
+  // ---------------------------------------------------------
+  // WAVE 1: Immediate Listeners
+  // settings(parent), categories, classesSchedule, dailyTasks, coreTasks, secondaryTasks, reminders
+  // ---------------------------------------------------------
 
-  // 1. Parent Settings Doc
-  const parentRef = doc(db, 'planners', userId);
-  topLevelUnsubs.push(
-    onSnapshot(parentRef, (snap) => {
+  // 1. Parent settings
+  allUnsubs.push(
+    onSnapshot(doc(db, 'planners', userId), (snap) => {
+      settingsReady = true;
       if (snap.exists()) {
-        const d = snap.data();
-        const { data: _oldBlob, ...cleanSettings } = d;
+        const { data: _oldBlob, ...cleanSettings } = snap.data();
         settingsData = cleanSettings;
-        notify();
+        scheduleNotify();
       }
     }, onError)
   );
 
   // 2. Categories
-  topLevelUnsubs.push(
+  allUnsubs.push(
     onSnapshot(collection(db, 'planners', userId, 'categories'), (snap) => {
+      const isFirst = !readyCollections.has('categories');
+      readyCollections.add('categories');
+      if (!isFirst && snap.docChanges().length === 0) return;
       categoriesList = snap.docs.map(d => d.data() as Category);
-      notify();
+      scheduleNotify();
     }, onError)
   );
 
   // 3. Classes Schedule
-  topLevelUnsubs.push(
+  allUnsubs.push(
     onSnapshot(collection(db, 'planners', userId, 'classesSchedule'), (snap) => {
+      const isFirst = !readyCollections.has('classesSchedule');
+      readyCollections.add('classesSchedule');
+      if (!isFirst && snap.docChanges().length === 0) return;
       classesScheduleList = snap.docs.map(d => d.data() as ClassSlot);
-      notify();
+      scheduleNotify();
     }, onError)
   );
 
   // 4. Daily Tasks
-  topLevelUnsubs.push(
+  allUnsubs.push(
     onSnapshot(collection(db, 'planners', userId, 'dailyTasks'), (snap) => {
+      const isFirst = !readyCollections.has('dailyTasks');
+      readyCollections.add('dailyTasks');
+      if (!isFirst && snap.docChanges().length === 0) return;
       const newMap: Record<string, DailyTask[]> = {
         saturday: [], sunday: [], monday: [], tuesday: [], wednesday: [], thursday: [], friday: []
       };
@@ -938,159 +994,225 @@ export function subscribeToPlannerSubcollections(
         }
       });
       dailyTasksMap = newMap;
-      notify();
+      scheduleNotify();
     }, onError)
   );
 
-  // 5. Reminders
-  topLevelUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'reminders'), (snap) => {
-      remindersList = snap.docs.map(d => d.data() as ReminderItem);
-      notify();
+  // 5. Core Tasks
+  allUnsubs.push(
+    onSnapshot(collection(db, 'planners', userId, 'coreTasks'), (snap) => {
+      const isFirst = !readyCollections.has('coreTasks');
+      readyCollections.add('coreTasks');
+      if (!isFirst && snap.docChanges().length === 0) return;
+      coreTasksList = snap.docs.map(d => d.data() as CoreTask);
+      scheduleNotify();
     }, onError)
   );
 
-  // 6. Goals & Per-Goal Phases Listener
-  topLevelUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'goals'), (snap) => {
-      goalsTopLevelList = snap.docs.map(d => d.data() as Goal);
-      const currentGoalIds = new Set(snap.docs.map(d => d.id));
-
-      for (const [goalId, unsub] of Array.from(phaseUnsubs.entries())) {
-        if (!currentGoalIds.has(goalId)) {
-          unsub();
-          phaseUnsubs.delete(goalId);
-          goalPhasesMap.delete(goalId);
-        }
-      }
-
-      snap.docs.forEach(goalDoc => {
-        const goalId = goalDoc.id;
-        if (!phaseUnsubs.has(goalId)) {
-          const phasesCol = collection(db, 'planners', userId, 'goals', goalId, 'phases');
-          const unsubPhase = onSnapshot(phasesCol, (phaseSnap) => {
-            const phasesList: GoalPhase[] = [];
-            phaseSnap.forEach(pDoc => {
-              const pData = pDoc.data() as GoalPhase;
-              if (pData.weeks && pData.weeks.length > 0) {
-                pData.tasks = pData.weeks.flatMap(w => w.tasks || []);
-              }
-              phasesList.push(pData);
-            });
-            phasesList.sort((a, b) => (a.phase_number || 0) - (b.phase_number || 0));
-            goalPhasesMap.set(goalId, phasesList);
-            notify();
-          }, onError);
-          phaseUnsubs.set(goalId, unsubPhase);
-        }
-      });
-
-      notify();
-    }, onError)
-  );
-
-  // 7. Details Columns
-  topLevelUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'detailsColumns'), (snap) => {
-      detailsColumnsList = snap.docs.map(d => d.data() as DetailsColumn);
-      notify();
-    }, onError)
-  );
-
-  // 8. Exam Columns
-  topLevelUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'examColumns'), (snap) => {
-      examColumnsList = snap.docs.map(d => d.data() as DetailsColumn);
-      notify();
-    }, onError)
-  );
-
-  // 9. Secondary Task Columns
-  topLevelUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'secondaryTaskColumns'), (snap) => {
-      secondaryTaskColumnsList = snap.docs.map(d => d.data() as SecondaryTaskColumn);
-      notify();
-    }, onError)
-  );
-
-  // 10. Secondary Tasks
-  topLevelUnsubs.push(
+  // 6. Secondary Tasks
+  allUnsubs.push(
     onSnapshot(collection(db, 'planners', userId, 'secondaryTasks'), (snap) => {
+      const isFirst = !readyCollections.has('secondaryTasks');
+      readyCollections.add('secondaryTasks');
+      if (!isFirst && snap.docChanges().length === 0) return;
       secondaryTasksList = snap.docs.map(d => d.data() as SecondaryTask);
-      notify();
+      scheduleNotify();
     }, onError)
   );
 
-  // 11. Todo List
-  topLevelUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'todoList'), (snap) => {
-      todoListItems = snap.docs.map(d => d.data() as NoteItem);
-      notify();
+  // 7. Reminders
+  allUnsubs.push(
+    onSnapshot(collection(db, 'planners', userId, 'reminders'), (snap) => {
+      const isFirst = !readyCollections.has('reminders');
+      readyCollections.add('reminders');
+      if (!isFirst && snap.docChanges().length === 0) return;
+      remindersList = snap.docs.map(d => d.data() as ReminderItem);
+      scheduleNotify();
     }, onError)
   );
 
-  // 12. Timebox
-  topLevelUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'timebox'), (snap) => {
-      timeboxEntries = snap.docs.map(d => d.data());
-      notify();
-    }, onError)
-  );
+  // ---------------------------------------------------------
+  // WAVE 2: Deferred Listeners (setTimeout 3000ms after Wave 1)
+  // detailsColumns, examColumns, goals (+ phases), secondaryColumns, postponedEvents,
+  // todoList, weeklyEvents, dailyThoughts, pomodoroHistory, waterTrackerHistory, habitTracking
+  // ---------------------------------------------------------
 
-  // 13. Postponed Events
-  topLevelUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'postponedEvents'), (snap) => {
-      postponedEventsList = snap.docs.map(d => d.data() as PostponedEvent);
-      notify();
-    }, onError)
-  );
+  wave2Timer = setTimeout(() => {
+    // 8. Details Columns
+    allUnsubs.push(
+      onSnapshot(collection(db, 'planners', userId, 'detailsColumns'), (snap) => {
+        const isFirst = !readyCollections.has('detailsColumns');
+        readyCollections.add('detailsColumns');
+        if (!isFirst && snap.docChanges().length === 0) return;
+        detailsColumnsList = snap.docs.map(d => d.data() as DetailsColumn);
+        scheduleNotify();
+      }, onError)
+    );
 
-  // 14. Weekly Events
-  topLevelUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'weeklyEvents'), (snap) => {
-      weeklyEventsList = snap.docs.map(d => d.data() as NoteItem);
-      notify();
-    }, onError)
-  );
+    // 9. Exam Columns
+    allUnsubs.push(
+      onSnapshot(collection(db, 'planners', userId, 'examColumns'), (snap) => {
+        const isFirst = !readyCollections.has('examColumns');
+        readyCollections.add('examColumns');
+        if (!isFirst && snap.docChanges().length === 0) return;
+        examColumnsList = snap.docs.map(d => d.data() as DetailsColumn);
+        scheduleNotify();
+      }, onError)
+    );
 
-  // 15. Daily Thoughts
-  topLevelUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'dailyThoughts'), (snap) => {
-      dailyThoughtsList = snap.docs.map(d => d.data() as NoteItem);
-      notify();
-    }, onError)
-  );
+    // 10. Secondary Columns
+    allUnsubs.push(
+      onSnapshot(collection(db, 'planners', userId, 'secondaryColumns'), (snap) => {
+        const isFirst = !readyCollections.has('secondaryColumns');
+        readyCollections.add('secondaryColumns');
+        if (!isFirst && snap.docChanges().length === 0) return;
+        secondaryTaskColumnsList = snap.docs.map(d => d.data() as SecondaryTaskColumn);
+        scheduleNotify();
+      }, onError)
+    );
 
-  // 16. Pomodoro History
-  topLevelUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'pomodoroHistory'), (snap) => {
-      pomodoroHistoryList = snap.docs.map(d => d.data());
-      notify();
-    }, onError)
-  );
+    // 11. Goals & Subcollection Phases
+    allUnsubs.push(
+      onSnapshot(collection(db, 'planners', userId, 'goals'), (snap) => {
+        const isFirst = !readyCollections.has('goals');
+        readyCollections.add('goals');
+        if (!isFirst && snap.docChanges().length === 0) return;
+        goalsTopLevelList = snap.docs.map(d => d.data() as Goal);
+        const currentGoalIds = new Set(snap.docs.map(d => d.id));
 
-  // 17. WaterTracker History
-  topLevelUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'waterTrackerHistory'), (snap) => {
-      waterTrackerHistoryList = snap.docs.map(d => d.data());
-      notify();
-    }, onError)
-  );
+        for (const [goalId, unsub] of Array.from(phaseUnsubs.entries())) {
+          if (!currentGoalIds.has(goalId)) {
+            unsub();
+            phaseUnsubs.delete(goalId);
+            goalPhasesMap.delete(goalId);
+          }
+        }
 
-  // 18. Habit Tracking
-  topLevelUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'habitTracking'), (snap) => {
-      const map: Record<string, any> = {};
-      snap.docs.forEach(d => {
-        map[d.id] = d.data();
-      });
-      habitTrackingMap = map;
-      notify();
-    }, onError)
-  );
+        snap.docs.forEach(goalDoc => {
+          const goalId = goalDoc.id;
+          if (!phaseUnsubs.has(goalId)) {
+            const phasesCol = collection(db, 'planners', userId, 'goals', goalId, 'phases');
+            const unsubPhase = onSnapshot(phasesCol, (phaseSnap) => {
+              const phasesList: GoalPhase[] = [];
+              phaseSnap.forEach(pDoc => {
+                const pData = pDoc.data() as GoalPhase;
+                if (pData.weeks && pData.weeks.length > 0) {
+                  pData.tasks = pData.weeks.flatMap(w => w.tasks || []);
+                }
+                phasesList.push(pData);
+              });
+              phasesList.sort((a, b) => (a.phase_number || 0) - (b.phase_number || 0));
+              goalPhasesMap.set(goalId, phasesList);
+              scheduleNotify();
+            }, onError);
+            phaseUnsubs.set(goalId, unsubPhase);
+          }
+        });
 
+        scheduleNotify();
+      }, onError)
+    );
+
+    // 12. Postponed Events
+    allUnsubs.push(
+      onSnapshot(collection(db, 'planners', userId, 'postponedEvents'), (snap) => {
+        const isFirst = !readyCollections.has('postponedEvents');
+        readyCollections.add('postponedEvents');
+        if (!isFirst && snap.docChanges().length === 0) return;
+        postponedEventsList = snap.docs.map(d => d.data() as PostponedEvent);
+        scheduleNotify();
+      }, onError)
+    );
+
+    // 13. Todo List
+    allUnsubs.push(
+      onSnapshot(collection(db, 'planners', userId, 'todoList'), (snap) => {
+        const isFirst = !readyCollections.has('todoList');
+        readyCollections.add('todoList');
+        if (!isFirst && snap.docChanges().length === 0) return;
+        todoListItems = snap.docs.map(d => d.data() as NoteItem);
+        scheduleNotify();
+      }, onError)
+    );
+
+    // 14. Weekly Events
+    allUnsubs.push(
+      onSnapshot(collection(db, 'planners', userId, 'weeklyEvents'), (snap) => {
+        const isFirst = !readyCollections.has('weeklyEvents');
+        readyCollections.add('weeklyEvents');
+        if (!isFirst && snap.docChanges().length === 0) return;
+        weeklyEventsList = snap.docs.map(d => d.data() as NoteItem);
+        scheduleNotify();
+      }, onError)
+    );
+
+    // 15. Daily Thoughts
+    allUnsubs.push(
+      onSnapshot(collection(db, 'planners', userId, 'dailyThoughts'), (snap) => {
+        const isFirst = !readyCollections.has('dailyThoughts');
+        readyCollections.add('dailyThoughts');
+        if (!isFirst && snap.docChanges().length === 0) return;
+        dailyThoughtsList = snap.docs.map(d => d.data() as NoteItem);
+        scheduleNotify();
+      }, onError)
+    );
+
+    // 16. Pomodoro History
+    allUnsubs.push(
+      onSnapshot(collection(db, 'planners', userId, 'pomodoroHistory'), (snap) => {
+        const isFirst = !readyCollections.has('pomodoroHistory');
+        readyCollections.add('pomodoroHistory');
+        if (!isFirst && snap.docChanges().length === 0) return;
+        pomodoroHistoryList = snap.docs.map(d => d.data());
+        scheduleNotify();
+      }, onError)
+    );
+
+    // 17. WaterTracker History
+    allUnsubs.push(
+      onSnapshot(collection(db, 'planners', userId, 'waterTrackerHistory'), (snap) => {
+        const isFirst = !readyCollections.has('waterTrackerHistory');
+        readyCollections.add('waterTrackerHistory');
+        if (!isFirst && snap.docChanges().length === 0) return;
+        waterTrackerHistoryList = snap.docs.map(d => d.data());
+        scheduleNotify();
+      }, onError)
+    );
+
+    // 18. Habit Tracking
+    allUnsubs.push(
+      onSnapshot(collection(db, 'planners', userId, 'habitTracking'), (snap) => {
+        const isFirst = !readyCollections.has('habitTracking');
+        readyCollections.add('habitTracking');
+        if (!isFirst && snap.docChanges().length === 0) return;
+        const map: Record<string, any> = {};
+        snap.docs.forEach(d => {
+          map[d.id] = d.data();
+        });
+        habitTrackingMap = map;
+        scheduleNotify();
+      }, onError)
+    );
+
+    // 19. Timebox
+    allUnsubs.push(
+      onSnapshot(collection(db, 'planners', userId, 'timebox'), (snap) => {
+        const isFirst = !readyCollections.has('timebox');
+        readyCollections.add('timebox');
+        if (!isFirst && snap.docChanges().length === 0) return;
+        timeboxEntries = snap.docs.map(d => d.data());
+        scheduleNotify();
+      }, onError)
+    );
+  }, 3000);
+
+  // Return master unsubscribe
   return () => {
-    topLevelUnsubs.forEach(unsub => unsub());
+    if (wave2Timer) clearTimeout(wave2Timer);
+    if (notifyTimer) clearTimeout(notifyTimer);
+    readyCollections.clear();
+    settingsReady = false;
+    allUnsubs.forEach(unsub => unsub());
     phaseUnsubs.forEach(unsub => unsub());
     phaseUnsubs.clear();
     goalPhasesMap.clear();
@@ -1100,9 +1222,7 @@ export function subscribeToPlannerSubcollections(
 const migratedUsersSet = new Set<string>();
 
 /**
- * 6. One-time Migration Routine
- * Reads monolithic `data` blob from /planners/{userId}, splits into subcollections with goal task deduplication,
- * and cleans up the parent document.
+ * One-time Migration Routine
  */
 export async function migratePlannerDataToSubcollections(
   userId: string, 
@@ -1133,7 +1253,6 @@ export async function migratePlannerDataToSubcollections(
     return { success: false, migratedCounts: counts };
   }
 
-  // Mark migrated immediately so re-renders or concurrent calls return instantly
   migratedUsersSet.add(userId);
 
   try {
@@ -1152,143 +1271,10 @@ export async function migratePlannerDataToSubcollections(
       return { success: true, migratedCounts: counts };
     }
 
-    // 1. Save Subcollections
-    if (Array.isArray(sourceData.categories)) {
-      for (const cat of sourceData.categories) {
-        await saveCategoryDoc(userId, cat);
-        counts.categories++;
-      }
-    }
+    // Save using new engine
+    await savePlannerSubcollections(userId, sourceData);
 
-    if (Array.isArray(sourceData.classesSchedule)) {
-      for (const cls of sourceData.classesSchedule) {
-        await saveClassScheduleDoc(userId, cls);
-        counts.classesSchedule++;
-      }
-    }
-
-    if (sourceData.dailyTasks && typeof sourceData.dailyTasks === 'object') {
-      for (const [dayKey, tasks] of Object.entries(sourceData.dailyTasks)) {
-        if (Array.isArray(tasks)) {
-          await saveDailyTasksDoc(userId, dayKey, tasks as DailyTask[], sourceData);
-          counts.dailyTasksDays++;
-        }
-      }
-    }
-
-    if (Array.isArray(sourceData.reminders)) {
-      for (const rem of sourceData.reminders) {
-        await saveReminderDoc(userId, rem);
-        counts.reminders++;
-      }
-    }
-
-    if (Array.isArray(sourceData.goals)) {
-      for (const goal of sourceData.goals) {
-        await saveGoalDoc(userId, goal);
-        counts.goals++;
-      }
-    }
-
-    if (Array.isArray(sourceData.detailsColumns)) {
-      for (const col of sourceData.detailsColumns) {
-        await saveDetailsColumnDoc(userId, col);
-        counts.detailsColumns++;
-      }
-    }
-
-    if (Array.isArray(sourceData.examColumns)) {
-      for (const col of sourceData.examColumns) {
-        await saveExamColumnDoc(userId, col);
-        counts.examColumns++;
-      }
-    }
-
-    if (Array.isArray(sourceData.secondaryTaskColumns)) {
-      for (const col of sourceData.secondaryTaskColumns) {
-        await saveSecondaryTaskColumnDoc(userId, col);
-        counts.secondaryTaskColumns++;
-      }
-    }
-
-    if (Array.isArray(sourceData.secondaryTasks)) {
-      for (const task of sourceData.secondaryTasks) {
-        await saveSecondaryTaskDoc(userId, task);
-        counts.secondaryTasks++;
-      }
-    }
-
-    if (Array.isArray(sourceData.todoList)) {
-      for (const todo of sourceData.todoList) {
-        await saveTodoListDoc(userId, todo);
-        counts.todoList++;
-      }
-    }
-
-    if (Array.isArray(sourceData.timebox)) {
-      for (const tb of sourceData.timebox) {
-        await saveTimeboxDoc(userId, tb);
-        counts.timebox++;
-      }
-    }
-
-    if (Array.isArray(sourceData.postponedEvents)) {
-      for (const pe of sourceData.postponedEvents) {
-        await savePostponedEventDoc(userId, pe);
-        counts.postponedEvents++;
-      }
-    }
-
-    if (Array.isArray(sourceData.weeklyEvents)) {
-      for (const we of sourceData.weeklyEvents) {
-        await saveWeeklyEventDoc(userId, we);
-        counts.weeklyEvents++;
-      }
-    }
-
-    if (Array.isArray(sourceData.dailyThoughts)) {
-      for (const dt of sourceData.dailyThoughts) {
-        await saveDailyThoughtDoc(userId, dt);
-        counts.dailyThoughts++;
-      }
-    }
-
-    if (sourceData.pomodoro?.history && Array.isArray(sourceData.pomodoro.history)) {
-      for (let idx = 0; idx < sourceData.pomodoro.history.length; idx++) {
-        const entry = sourceData.pomodoro.history[idx];
-        const dateKey = entry.date || entry.timestamp || `pomo_day_${idx}`;
-        await savePomodoroHistoryDoc(userId, String(dateKey), entry);
-        counts.pomodoroHistory++;
-      }
-    }
-
-    if (sourceData.waterTracker?.history && Array.isArray(sourceData.waterTracker.history)) {
-      for (let idx = 0; idx < sourceData.waterTracker.history.length; idx++) {
-        const entry = sourceData.waterTracker.history[idx];
-        const dateKey = entry.date || entry.timestamp || `water_day_${idx}`;
-        await saveWaterTrackerHistoryDoc(userId, String(dateKey), entry);
-        counts.waterTrackerHistory++;
-      }
-    }
-
-    if (sourceData.habitTracking) {
-      if (Array.isArray(sourceData.habitTracking)) {
-        for (let idx = 0; idx < sourceData.habitTracking.length; idx++) {
-          const entry = sourceData.habitTracking[idx];
-          const weekKey = entry.weekKey || entry.id || `week_${idx}`;
-          await saveHabitTrackingDoc(userId, String(weekKey), entry, sourceData);
-          counts.habitTracking++;
-        }
-      } else if (typeof sourceData.habitTracking === 'object') {
-        for (const [weekKey, entry] of Object.entries(sourceData.habitTracking)) {
-          await saveHabitTrackingDoc(userId, weekKey, entry, sourceData);
-          counts.habitTracking++;
-        }
-      }
-    }
-
-    // 2. Save Scalar Settings & Remove Monolithic Data Blob with explicit logging
-    await savePlannerSettings(userId, sourceData);
+    // Clean up monolithic 'data' blob
     try {
       await updateDoc(parentRef, {
         data: deleteField()
@@ -1298,7 +1284,6 @@ export async function migratePlannerDataToSubcollections(
       console.error(`[Migration Warning] Could not remove 'data' field from /planners/${userId}:`, cleanErr);
     }
 
-    console.log(`[Migration Complete] User ${userId} planner migrated successfully. Counts:`, counts);
     await auditPlannerDocSize(userId);
     return { success: true, migratedCounts: counts };
   } catch (err) {

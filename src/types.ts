@@ -56,6 +56,7 @@ export interface DetailsItem {
   emailReminder?: boolean;
   reminderOffset?: '1week' | '3days' | '1day' | '6hours' | '1hour';
   reminderSent?: boolean;
+  lastSentDate?: string;
   deadline?: {
     day?: number;
     month?: string;
@@ -93,6 +94,7 @@ export interface SecondaryTask {
   emailReminder?: boolean;
   reminderOffset?: '1week' | '3days' | '1day' | '6hours' | '1hour';
   reminderSent?: boolean;
+  lastSentDate?: string;
   deadline?: {
     day?: number;
     month?: string;
@@ -128,6 +130,7 @@ export interface ReminderItem {
   emailReminder?: boolean;
   reminderOffset?: '1week' | '3days' | '1day' | '6hours' | '1hour';
   reminderSent?: boolean;
+  lastSentDate?: string;
 }
 
 export interface CoreTask {
@@ -141,6 +144,7 @@ export interface CoreTask {
   emailReminder?: boolean;
   reminderOffset?: '1week' | '3days' | '1day' | '6hours' | '1hour';
   reminderSent?: boolean;
+  lastSentDate?: string;
   deadline?: {
     day?: number;
     month?: string;

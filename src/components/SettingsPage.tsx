@@ -583,7 +583,22 @@ export default function SettingsPage({
                     dir="ltr"
                     onClick={() => {
                       const next = !(data.emailRemindersGlobalEnabled !== false);
-                      setData(prev => ({ ...prev, emailRemindersGlobalEnabled: next }));
+                      setData(prev => {
+                        const cleaned = {
+                          ...prev,
+                          emailRemindersGlobalEnabled: next,
+                          examColumns: (prev.examColumns || []).map(col => ({
+                            ...col,
+                            items: (col.items || []).map(it => ({ ...it, lastSentDate: undefined, reminderSent: false }))
+                          })),
+                          detailsColumns: (prev.detailsColumns || []).map(col => ({
+                            ...col,
+                            items: (col.items || []).map(it => ({ ...it, lastSentDate: undefined, reminderSent: false }))
+                          })),
+                          reminders: (prev.reminders || []).map(r => ({ ...r, lastSentDate: undefined, reminderSent: false }))
+                        };
+                        return cleaned;
+                      });
                     }}
                     className={`w-12 h-7 rounded-full transition-colors duration-200 focus:outline-none cursor-pointer shrink-0 relative flex items-center p-1 ${ (data.emailRemindersGlobalEnabled !== false) ? 'bg-indigo-600 justify-end' : 'bg-slate-300 justify-start'}`}
                   >
@@ -603,7 +618,19 @@ export default function SettingsPage({
                         type="radio"
                         name="emailTargetType"
                         checked={(data.reminderEmailTargetType || 'account') === 'account'}
-                        onChange={() => setData(prev => ({ ...prev, reminderEmailTargetType: 'account' }))}
+                        onChange={() => setData(prev => ({
+                          ...prev,
+                          reminderEmailTargetType: 'account',
+                          examColumns: (prev.examColumns || []).map(col => ({
+                            ...col,
+                            items: (col.items || []).map(it => ({ ...it, lastSentDate: undefined, reminderSent: false }))
+                          })),
+                          detailsColumns: (prev.detailsColumns || []).map(col => ({
+                            ...col,
+                            items: (col.items || []).map(it => ({ ...it, lastSentDate: undefined, reminderSent: false }))
+                          })),
+                          reminders: (prev.reminders || []).map(r => ({ ...r, lastSentDate: undefined, reminderSent: false }))
+                        }))}
                         className="text-indigo-600 focus:ring-0"
                       />
                       <span>ایمیل حساب کاربری ({currentUser?.email || 'حساب فعلی'})</span>
@@ -614,7 +641,19 @@ export default function SettingsPage({
                         type="radio"
                         name="emailTargetType"
                         checked={data.reminderEmailTargetType === 'custom'}
-                        onChange={() => setData(prev => ({ ...prev, reminderEmailTargetType: 'custom' }))}
+                        onChange={() => setData(prev => ({
+                          ...prev,
+                          reminderEmailTargetType: 'custom',
+                          examColumns: (prev.examColumns || []).map(col => ({
+                            ...col,
+                            items: (col.items || []).map(it => ({ ...it, lastSentDate: undefined, reminderSent: false }))
+                          })),
+                          detailsColumns: (prev.detailsColumns || []).map(col => ({
+                            ...col,
+                            items: (col.items || []).map(it => ({ ...it, lastSentDate: undefined, reminderSent: false }))
+                          })),
+                          reminders: (prev.reminders || []).map(r => ({ ...r, lastSentDate: undefined, reminderSent: false }))
+                        }))}
                         className="text-indigo-600 focus:ring-0"
                       />
                       <span>ایمیل سفارشی دیگر</span>
@@ -627,7 +666,19 @@ export default function SettingsPage({
                         type="email"
                         placeholder="مثلاً: user@example.com"
                         value={data.reminderCustomEmail || ''}
-                        onChange={(e) => setData(prev => ({ ...prev, reminderCustomEmail: e.target.value }))}
+                        onChange={(e) => setData(prev => ({
+                          ...prev,
+                          reminderCustomEmail: e.target.value,
+                          examColumns: (prev.examColumns || []).map(col => ({
+                            ...col,
+                            items: (col.items || []).map(it => ({ ...it, lastSentDate: undefined, reminderSent: false }))
+                          })),
+                          detailsColumns: (prev.detailsColumns || []).map(col => ({
+                            ...col,
+                            items: (col.items || []).map(it => ({ ...it, lastSentDate: undefined, reminderSent: false }))
+                          })),
+                          reminders: (prev.reminders || []).map(r => ({ ...r, lastSentDate: undefined, reminderSent: false }))
+                        }))}
                         className="w-full text-xs font-bold p-2.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-500 text-left"
                         dir="ltr"
                       />
@@ -654,7 +705,19 @@ export default function SettingsPage({
                     value={data.emailReminderDefaultOffset || '1day'}
                     onChange={(e) => {
                       const val = e.target.value as ReminderOffset;
-                      setData(prev => ({ ...prev, emailReminderDefaultOffset: val }));
+                      setData(prev => ({
+                        ...prev,
+                        emailReminderDefaultOffset: val,
+                        examColumns: (prev.examColumns || []).map(col => ({
+                          ...col,
+                          items: (col.items || []).map(it => ({ ...it, lastSentDate: undefined, reminderSent: false }))
+                        })),
+                        detailsColumns: (prev.detailsColumns || []).map(col => ({
+                          ...col,
+                          items: (col.items || []).map(it => ({ ...it, lastSentDate: undefined, reminderSent: false }))
+                        })),
+                        reminders: (prev.reminders || []).map(r => ({ ...r, lastSentDate: undefined, reminderSent: false }))
+                      }));
                     }}
                     className="bg-white border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 shrink-0"
                   >

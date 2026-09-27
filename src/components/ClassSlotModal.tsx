@@ -51,12 +51,13 @@ export default function ClassSlotModal({
   onSave,
   onDelete,
 }: ClassSlotModalProps) {
-  if (!isOpen || !slot) return null;
-
   const t = TRANSLATIONS[lang];
   const isRtl = lang === 'fa';
-
-  const parsed = React.useMemo(() => parseTime(slot.timeFa || slot.timeEn || ''), [slot.timeFa, slot.timeEn]);
+  const parsed = React.useMemo(
+    () => parseTime(slot?.timeFa || slot?.timeEn || ''),
+    [slot?.timeFa, slot?.timeEn]
+  );
+  if (!isOpen || !slot) return null;
 
   const handleTimeChange = (type: 'startH' | 'startM' | 'endH' | 'endM', val: string) => {
     const current = { ...parsed, [type]: val };

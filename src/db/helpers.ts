@@ -22,7 +22,8 @@ export async function getOrCreateUser(uid: string, email: string, username?: str
 
     const valuesToSet: any = {
       email: normEmail,
-      username: normUsername,
+      // username عمداً در update حذف شده تا نام انتخابی کاربر در لاگین‌های
+      // بعدی بازنویسی نشود؛ username فقط هنگام insert اولیه ست می‌شود.
     };
     if (passwordHash) {
       valuesToSet.passwordHash = passwordHash;

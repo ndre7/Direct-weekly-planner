@@ -47,6 +47,7 @@ import {
   savePlannerSubcollections,
   migratePlannerDataToSubcollections,
   flushPendingSyncQueue,
+  pruneOldSnapshots,
   addCoreTask, 
   addSecondaryTask, 
   addTodo, 
@@ -434,7 +435,14 @@ export default function App() {
 
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('planner_user');
-    return saved ? JSON.parse(saved) : null;
+    if (!saved) return null;
+    try {
+      const parsed = JSON.parse(saved);
+      return (parsed && typeof parsed === 'object' && parsed.id) ? parsed : null;
+    } catch (e) {
+      localStorage.removeItem('planner_user');
+      return null;
+    }
   });
 
   const [lang, setLang] = useState<'fa' | 'en'>(() => {
@@ -674,6 +682,11 @@ export default function App() {
   const isRemoteUpdateRef = useRef<boolean>(false);
   const lastSavedDataJsonRef = useRef<string>('');
   const hasMigratedRef = useRef<Record<string, boolean>>({});
+  const dataRef = useRef(data);
+
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
 
   // Global Firebase Authentication Listener
   useEffect(() => {
@@ -743,7 +756,7 @@ export default function App() {
   useEffect(() => {
     const handleOnline = () => {
       if (currentUser && currentUser.id) {
-        handleSyncData(currentUser, data).catch(() => {});
+        handleSyncData(currentUser, dataRef.current).catch(() => {});
       }
     };
 
@@ -759,10 +772,11 @@ export default function App() {
       return;
     }
 
-    // Trigger one-time idempotent subcollection migration
+    // Trigger one-time idempotent subcollection migration & monthly snapshot pruning
     if (!hasMigratedRef.current[userId]) {
       hasMigratedRef.current[userId] = true;
       migratePlannerDataToSubcollections(userId).catch(() => {});
+      pruneOldSnapshots(userId).catch(() => {});
     }
 
     let isInitial = true;
@@ -771,14 +785,20 @@ export default function App() {
       if (isInitial) {
         isInitial = false;
         setDataRaw((prev) => {
-          const merged = { ...prev, ...combinedData };
+          const merged = { ...prev };
+          for (const [key, val] of Object.entries(combinedData)) {
+            if (val !== undefined) (merged as any)[key] = val;
+          }
           const updated = syncAllTasksToDetails(merged);
           lastSavedDataJsonRef.current = JSON.stringify(updated);
           return updated;
         });
       } else {
         setDataRaw((prev) => {
-          const merged = { ...prev, ...combinedData };
+          const merged = { ...prev };
+          for (const [key, val] of Object.entries(combinedData)) {
+            if (val !== undefined) (merged as any)[key] = val;
+          }
           const updated = syncAllTasksToDetails(merged);
           const updatedJson = JSON.stringify(updated);
           if (JSON.stringify(prev) !== updatedJson) {
@@ -801,6 +821,7 @@ export default function App() {
 
     const checkAndSendReminders = async () => {
       const now = Date.now();
+      const todayISO = new Date().toISOString().split('T')[0];
       let hasUpdates = false;
       const updatedData = { ...data };
 
@@ -814,13 +835,13 @@ export default function App() {
       const updatedExamCols = (updatedData.examColumns || []).map((col) => {
         let colChanged = false;
         const updatedItems = col.items.map((item) => {
-          if (item.emailReminder && !item.reminderSent && !item.completed) {
+          if (item.emailReminder && !item.completed && item.lastSentDate !== todayISO) {
             const deadlineMs = parseItemDeadlineMs(item, data.weekYear || 1405);
             if (deadlineMs) {
               const offsetMs = getOffsetMs(item.reminderOffset || data.emailReminderDefaultOffset || '1day');
               const reminderTime = deadlineMs - offsetMs;
               
-              if (now >= reminderTime && now <= deadlineMs + 24 * 60 * 60 * 1000) {
+              if (now >= reminderTime && now <= deadlineMs + 24 * 60 * 60 * 1000 && item.lastSentDate !== todayISO) {
                 const deadlineDisplay = item.date || 'سررسید قریب‌الوقوع';
                 const html = buildReminderEmailHtml(
                   item.text,
@@ -842,7 +863,7 @@ export default function App() {
 
                 colChanged = true;
                 hasUpdates = true;
-                return { ...item, reminderSent: true };
+                return { ...item, reminderSent: true, lastSentDate: todayISO };
               }
             }
           }
@@ -856,13 +877,13 @@ export default function App() {
       const updatedDetailsCols = (updatedData.detailsColumns || []).map((col) => {
         let colChanged = false;
         const updatedItems = col.items.map((item) => {
-          if (item.emailReminder && !item.reminderSent && !item.completed) {
+          if (item.emailReminder && !item.completed && item.lastSentDate !== todayISO) {
             const deadlineMs = parseItemDeadlineMs(item, data.weekYear || 1405);
             if (deadlineMs) {
               const offsetMs = getOffsetMs(item.reminderOffset || data.emailReminderDefaultOffset || '1day');
               const reminderTime = deadlineMs - offsetMs;
               
-              if (now >= reminderTime && now <= deadlineMs + 24 * 60 * 60 * 1000) {
+              if (now >= reminderTime && now <= deadlineMs + 24 * 60 * 60 * 1000 && item.lastSentDate !== todayISO) {
                 const deadlineDisplay = item.date || 'سررسید ددلاین';
                 const html = buildReminderEmailHtml(
                   item.text,
@@ -883,7 +904,7 @@ export default function App() {
 
                 colChanged = true;
                 hasUpdates = true;
-                return { ...item, reminderSent: true };
+                return { ...item, reminderSent: true, lastSentDate: todayISO };
               }
             }
           }
@@ -896,13 +917,13 @@ export default function App() {
       // 3. Check Reminders (Habits / Everyday Reminders)
       let remindersChanged = false;
       const updatedReminders = (updatedData.reminders || []).map((item) => {
-        if (item.emailReminder && !item.reminderSent) {
+        if (item.emailReminder && item.lastSentDate !== todayISO) {
           const deadlineMs = parseItemDeadlineMs(item, data.weekYear || 1405);
           if (deadlineMs) {
             const offsetMs = getOffsetMs(item.reminderOffset || data.emailReminderDefaultOffset || '1day');
             const reminderTime = deadlineMs - offsetMs;
 
-            if (now >= reminderTime && now <= deadlineMs + 24 * 60 * 60 * 1000) {
+            if (now >= reminderTime && now <= deadlineMs + 24 * 60 * 60 * 1000 && item.lastSentDate !== todayISO) {
               const deadlineDisplay = item.time ? `ساعت ${item.time}` : (item.date || 'امروز');
               const html = buildReminderEmailHtml(
                 item.textFa,
@@ -923,7 +944,7 @@ export default function App() {
 
               remindersChanged = true;
               hasUpdates = true;
-              return { ...item, reminderSent: true };
+              return { ...item, reminderSent: true, lastSentDate: todayISO };
             }
           }
         }
@@ -1884,6 +1905,18 @@ export default function App() {
     if (totalDays !== 7) {
       alert(`تعداد روزهای انتخاب شده ${totalDays} روز است. لطفا دقیقا بازه ۷ روزه (یک هفته کامل) را انتخاب کنید.`);
       return;
+    }
+
+    const willRemoveCount =
+      (data.coreTasks || []).filter(t => t.status === 'completed' && t.deadline && (t.deadline.day || t.deadline.month || t.deadline.weekday)).length +
+      (data.secondaryTasks || []).filter(t => t.status === 'completed' && t.deadline && (t.deadline.day || t.deadline.month || t.deadline.weekday)).length +
+      (data.detailsColumns || []).reduce((acc, col) => acc + (col.items || []).filter(it => !!it.date && !!it.completed && !(it.id && (it.id.startsWith('task_core_') || it.id.startsWith('task_sec_')))).length, 0);
+
+    if (willRemoveCount > 0) {
+      const ok = window.confirm(
+        `بازه تقویم جدید ثبت شود؟\nتعداد ${willRemoveCount} کار انجام‌شده‌ی ددلاین‌دار از لیست‌های فعال پاک می‌شوند.`
+      );
+      if (!ok) return;
     }
 
     setData(prev => {
@@ -3085,7 +3118,7 @@ export default function App() {
     const endMonth = data.weekEndMonth || startMonth;
     const year = data.weekYear || 1405;
 
-    const daysInStartMonth = getDaysInMonth(startMonth);
+    const daysInStartMonth = getDaysInMonth(startMonth, year);
 
     // Absolute start and end coordinates
     const absStart = start;

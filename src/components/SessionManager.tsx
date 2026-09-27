@@ -21,6 +21,7 @@ import {
   Database
 } from 'lucide-react';
 import { User, PlannerData } from '../types';
+import { INITIAL_PLANNER_DATA } from '../initialData';
 
 interface SessionManagerProps {
   currentUser: User | null;
@@ -65,7 +66,7 @@ export function verifyAndRepairPlannerData(rawData: any): { repairedData: any; r
   
   expectedArrays.forEach(key => {
     if (!repaired[key] || !Array.isArray(repaired[key])) {
-      repaired[key] = [];
+      repaired[key] = INITIAL_PLANNER_DATA[key as keyof typeof INITIAL_PLANNER_DATA] ?? [];
       repairedCount++;
     }
   });
