@@ -24,7 +24,8 @@ import {
   GoalPhase, 
   DetailsColumn, 
   SecondaryTaskColumn, 
-  PostponedEvent 
+  PostponedEvent,
+  HabitTrackingWeekDoc
 } from '../types.ts';
 import {
   computeDiff,
@@ -33,10 +34,12 @@ import {
   resetMirror,
   sanitizePhaseForStorage,
   extractScalarSettings,
-  hashContent
+  hashContent,
+  normalizeToDateISO,
+  isValidDateValue
 } from './plannerSyncEngine.ts';
 
-export { resetMirror };
+export { resetMirror, normalizeToDateISO, isValidDateValue };
 
 export enum OperationType {
   CREATE = 'create',
@@ -140,53 +143,6 @@ const WEEKDAY_OFFSETS: Record<string, number> = {
   thursday: 5,
   friday: 6
 };
-
-/**
- * Normalizes any date representation (Jalali string, Unix timestamp, ISO string)
- * to a canonical YYYY-MM-DD Gregorian ISO string for sortable, indexable Firestore document keys.
- */
-export function normalizeToDateISO(val: any): string {
-  if (!val) {
-    return new Date().toISOString().split('T')[0];
-  }
-
-  const strVal = String(val).trim();
-
-  // Standard YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}$/.test(strVal)) {
-    return strVal;
-  }
-
-  // ISO Datetime string (2026-07-28T04:15:00...)
-  if (strVal.includes('T') && !isNaN(Date.parse(strVal))) {
-    return new Date(strVal).toISOString().split('T')[0];
-  }
-
-  // Numeric timestamp
-  if (/^\d+$/.test(strVal)) {
-    const num = Number(strVal);
-    const ms = num < 10000000000 ? num * 1000 : num;
-    return new Date(ms).toISOString().split('T')[0];
-  }
-
-  // Jalali format e.g. "1405/05/03" or "1405-05-03"
-  const jalaliParts = strVal.split(/[/.\-]/);
-  if (jalaliParts.length === 3) {
-    const jy = Number(jalaliParts[0]);
-    const jm = Number(jalaliParts[1]);
-    const jd = Number(jalaliParts[2]);
-    if (!isNaN(jy) && !isNaN(jm) && !isNaN(jd) && jy >= 1300 && jy <= 1500) {
-      try {
-        const gDate = jalaliToGregorian(jy, jm, jd);
-        return gDate.toISOString().split('T')[0];
-      } catch (err) {
-        console.warn(`[Date Normalization Error] Failed to parse Jalali date ${strVal}:`, err);
-      }
-    }
-  }
-
-  return new Date().toISOString().split('T')[0];
-}
 
 /**
  * Derives the exact YYYY-MM-DD ISO date string and week identifier from the planner's week context.
@@ -399,16 +355,24 @@ export async function deleteExamColumnDoc(userId: string, columnId: string): Pro
   await deleteDoc(doc(db, 'planners', userId, 'examColumns', columnId));
 }
 
-/** @deprecated Use savePlannerSubcollections with diff engine */
+/** 
+ * @deprecated Use savePlannerSubcollections with diff engine.
+ * NOTE: The active canonical collection in Firestore is 'secondaryColumns' (used by computeDiff and listeners).
+ * This function also writes to 'secondaryColumns' to prevent fragmentation while retaining backwards compatibility.
+ */
 export async function saveSecondaryTaskColumnDoc(userId: string, column: SecondaryTaskColumn): Promise<void> {
   if (!userId || !column.id) return;
-  await setDoc(doc(db, 'planners', userId, 'secondaryTaskColumns', column.id), column, { merge: true });
+  await setDoc(doc(db, 'planners', userId, 'secondaryColumns', column.id), column, { merge: true });
 }
 
-/** @deprecated Use savePlannerSubcollections with diff engine */
+/** 
+ * @deprecated Use savePlannerSubcollections with diff engine.
+ * NOTE: The active canonical collection in Firestore is 'secondaryColumns' (used by computeDiff and listeners).
+ * This function also deletes from 'secondaryColumns' to retain backwards compatibility.
+ */
 export async function deleteSecondaryTaskColumnDoc(userId: string, columnId: string): Promise<void> {
   if (!userId || !columnId) return;
-  await deleteDoc(doc(db, 'planners', userId, 'secondaryTaskColumns', columnId));
+  await deleteDoc(doc(db, 'planners', userId, 'secondaryColumns', columnId));
 }
 
 /** @deprecated Use savePlannerSubcollections with diff engine */
@@ -483,6 +447,7 @@ export async function deleteDailyThoughtDoc(userId: string, thoughtId: string): 
   await deleteDoc(doc(db, 'planners', userId, 'dailyThoughts', thoughtId));
 }
 
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function savePomodoroHistoryDoc(userId: string, rawDateKey: string, entry: any): Promise<void> {
   if (!userId || !rawDateKey) return;
   const dateISO = normalizeToDateISO(rawDateKey);
@@ -490,6 +455,7 @@ export async function savePomodoroHistoryDoc(userId: string, rawDateKey: string,
   await setDoc(ref, { ...entry, date: dateISO, updatedAt: new Date().toISOString() }, { merge: true });
 }
 
+/** @deprecated Use savePlannerSubcollections with diff engine */
 export async function saveWaterTrackerHistoryDoc(userId: string, rawDateKey: string, entry: any): Promise<void> {
   if (!userId || !rawDateKey) return;
   const dateISO = normalizeToDateISO(rawDateKey);
@@ -532,7 +498,10 @@ export async function saveDailyStatsAndSnapshot(
 
   let focusMinutes = 0;
   if (data.pomodoro?.history && Array.isArray(data.pomodoro.history)) {
-    const dayPomo = data.pomodoro.history.find((p: any) => normalizeToDateISO(p.date || p.timestamp) === dateISO);
+    const dayPomo = data.pomodoro.history.find((p: any) => {
+      const raw = p.date || p.timestamp || p.dateKey;
+      return raw && isValidDateValue(raw) && normalizeToDateISO(raw) === dateISO;
+    });
     if (dayPomo) {
       focusMinutes = dayPomo.focusMinutes || dayPomo.minutes || 0;
     }
@@ -540,7 +509,10 @@ export async function saveDailyStatsAndSnapshot(
 
   let waterMl = 0;
   if (data.waterTracker?.history && Array.isArray(data.waterTracker.history)) {
-    const dayWater = data.waterTracker.history.find((w: any) => normalizeToDateISO(w.date || w.timestamp) === dateISO);
+    const dayWater = data.waterTracker.history.find((w: any) => {
+      const raw = w.date || w.timestamp || w.dateKey;
+      return raw && isValidDateValue(raw) && normalizeToDateISO(raw) === dateISO;
+    });
     if (dayWater) {
       waterMl = dayWater.amount || dayWater.waterMl || 0;
     }
@@ -748,6 +720,31 @@ export async function pruneOldSnapshots(userId: string): Promise<void> {
   }
 }
 
+/**
+ * Idempotent one-time cleanup to remove subcollection arrays that leaked into parent doc planners/{uid}
+ */
+export async function cleanupLeakedParentFields(userId: string): Promise<void> {
+  if (!userId || !isAuthValidForUser(userId, true)) return;
+  try {
+    const snap = await getDoc(doc(db, 'planners', userId));
+    if (!snap.exists()) return;
+    const leaked: Record<string, any> = {};
+    const d = snap.data();
+    // هر کلیدی که باید در زیرکالکشن باشد ولی در والد درز کرده:
+    for (const key of ['coreTasks', 'secondaryTasks', 'todoList',
+                       'weeklyEvents', 'dailyThoughts', 'postponedEvents',
+                       'categories', 'classesSchedule', 'reminders',
+                       'detailsColumns', 'examColumns']) {
+      if (d[key] !== undefined) leaked[key] = deleteField();
+    }
+    if (Object.keys(leaked).length === 0) return;
+    await updateDoc(doc(db, 'planners', userId), leaked);
+    console.log(`[Parent Cleanup] Removed leaked fields: ${Object.keys(leaked).join(', ')}`);
+  } catch (err) {
+    console.warn('[Parent Cleanup Warning]', err);
+  }
+}
+
 // -------------------------------------------------------------
 // Phase A2 — Rewritten savePlannerSubcollections with Diff Engine
 // -------------------------------------------------------------
@@ -788,24 +785,7 @@ export async function savePlannerSubcollections(userId: string, data: Partial<Pl
     }
   }
 
-  // 4. Save unbounded history subcollections (if arrays provided)
-  if (data.pomodoro?.history && Array.isArray(data.pomodoro.history)) {
-    for (let idx = 0; idx < data.pomodoro.history.length; idx++) {
-      const entry = data.pomodoro.history[idx];
-      const dateKey = entry.date || entry.timestamp || `pomo_day_${idx}`;
-      await savePomodoroHistoryDoc(userId, String(dateKey), entry);
-    }
-  }
-
-  if (data.waterTracker?.history && Array.isArray(data.waterTracker.history)) {
-    for (let idx = 0; idx < data.waterTracker.history.length; idx++) {
-      const entry = data.waterTracker.history[idx];
-      const dateKey = entry.date || entry.timestamp || `water_day_${idx}`;
-      await saveWaterTrackerHistoryDoc(userId, String(dateKey), entry);
-    }
-  }
-
-  // 5. Parent doc size audit
+  // 4. Parent doc size audit
   await auditPlannerDocSize(userId);
 }
 
@@ -844,7 +824,7 @@ export function subscribeToPlannerSubcollections(
   let dailyThoughtsList: NoteItem[] = [];
   let pomodoroHistoryList: any[] = [];
   let waterTrackerHistoryList: any[] = [];
-  let habitTrackingMap: Record<string, any> = {};
+  let habitTrackingMap: Record<string, HabitTrackingWeekDoc> = {};
 
   let goalsTopLevelList: Goal[] = [];
   const phaseUnsubs = new Map<string, () => void>();
@@ -946,7 +926,8 @@ export function subscribeToPlannerSubcollections(
 
   // 1. Parent settings
   allUnsubs.push(
-    onSnapshot(doc(db, 'planners', userId), (snap) => {
+    onSnapshot(doc(db, 'planners', userId), { includeMetadataChanges: true }, (snap) => {
+      if (snap.metadata.hasPendingWrites) return;
       settingsReady = true;
       if (snap.exists()) {
         const { data: _oldBlob, ...cleanSettings } = snap.data();
@@ -958,7 +939,8 @@ export function subscribeToPlannerSubcollections(
 
   // 2. Categories
   allUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'categories'), (snap) => {
+    onSnapshot(collection(db, 'planners', userId, 'categories'), { includeMetadataChanges: true }, (snap) => {
+      if (snap.metadata.hasPendingWrites) return;
       const isFirst = !readyCollections.has('categories');
       readyCollections.add('categories');
       if (!isFirst && snap.docChanges().length === 0) return;
@@ -969,7 +951,8 @@ export function subscribeToPlannerSubcollections(
 
   // 3. Classes Schedule
   allUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'classesSchedule'), (snap) => {
+    onSnapshot(collection(db, 'planners', userId, 'classesSchedule'), { includeMetadataChanges: true }, (snap) => {
+      if (snap.metadata.hasPendingWrites) return;
       const isFirst = !readyCollections.has('classesSchedule');
       readyCollections.add('classesSchedule');
       if (!isFirst && snap.docChanges().length === 0) return;
@@ -980,7 +963,8 @@ export function subscribeToPlannerSubcollections(
 
   // 4. Daily Tasks
   allUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'dailyTasks'), (snap) => {
+    onSnapshot(collection(db, 'planners', userId, 'dailyTasks'), { includeMetadataChanges: true }, (snap) => {
+      if (snap.metadata.hasPendingWrites) return;
       const isFirst = !readyCollections.has('dailyTasks');
       readyCollections.add('dailyTasks');
       if (!isFirst && snap.docChanges().length === 0) return;
@@ -1000,7 +984,8 @@ export function subscribeToPlannerSubcollections(
 
   // 5. Core Tasks
   allUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'coreTasks'), (snap) => {
+    onSnapshot(collection(db, 'planners', userId, 'coreTasks'), { includeMetadataChanges: true }, (snap) => {
+      if (snap.metadata.hasPendingWrites) return;
       const isFirst = !readyCollections.has('coreTasks');
       readyCollections.add('coreTasks');
       if (!isFirst && snap.docChanges().length === 0) return;
@@ -1011,7 +996,8 @@ export function subscribeToPlannerSubcollections(
 
   // 6. Secondary Tasks
   allUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'secondaryTasks'), (snap) => {
+    onSnapshot(collection(db, 'planners', userId, 'secondaryTasks'), { includeMetadataChanges: true }, (snap) => {
+      if (snap.metadata.hasPendingWrites) return;
       const isFirst = !readyCollections.has('secondaryTasks');
       readyCollections.add('secondaryTasks');
       if (!isFirst && snap.docChanges().length === 0) return;
@@ -1022,7 +1008,8 @@ export function subscribeToPlannerSubcollections(
 
   // 7. Reminders
   allUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'reminders'), (snap) => {
+    onSnapshot(collection(db, 'planners', userId, 'reminders'), { includeMetadataChanges: true }, (snap) => {
+      if (snap.metadata.hasPendingWrites) return;
       const isFirst = !readyCollections.has('reminders');
       readyCollections.add('reminders');
       if (!isFirst && snap.docChanges().length === 0) return;
@@ -1040,7 +1027,8 @@ export function subscribeToPlannerSubcollections(
   wave2Timer = setTimeout(() => {
     // 8. Details Columns
     allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'detailsColumns'), (snap) => {
+      onSnapshot(collection(db, 'planners', userId, 'detailsColumns'), { includeMetadataChanges: true }, (snap) => {
+        if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('detailsColumns');
         readyCollections.add('detailsColumns');
         if (!isFirst && snap.docChanges().length === 0) return;
@@ -1051,7 +1039,8 @@ export function subscribeToPlannerSubcollections(
 
     // 9. Exam Columns
     allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'examColumns'), (snap) => {
+      onSnapshot(collection(db, 'planners', userId, 'examColumns'), { includeMetadataChanges: true }, (snap) => {
+        if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('examColumns');
         readyCollections.add('examColumns');
         if (!isFirst && snap.docChanges().length === 0) return;
@@ -1062,7 +1051,8 @@ export function subscribeToPlannerSubcollections(
 
     // 10. Secondary Columns
     allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'secondaryColumns'), (snap) => {
+      onSnapshot(collection(db, 'planners', userId, 'secondaryColumns'), { includeMetadataChanges: true }, (snap) => {
+        if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('secondaryColumns');
         readyCollections.add('secondaryColumns');
         if (!isFirst && snap.docChanges().length === 0) return;
@@ -1073,7 +1063,8 @@ export function subscribeToPlannerSubcollections(
 
     // 11. Goals & Subcollection Phases
     allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'goals'), (snap) => {
+      onSnapshot(collection(db, 'planners', userId, 'goals'), { includeMetadataChanges: true }, (snap) => {
+        if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('goals');
         readyCollections.add('goals');
         if (!isFirst && snap.docChanges().length === 0) return;
@@ -1092,7 +1083,8 @@ export function subscribeToPlannerSubcollections(
           const goalId = goalDoc.id;
           if (!phaseUnsubs.has(goalId)) {
             const phasesCol = collection(db, 'planners', userId, 'goals', goalId, 'phases');
-            const unsubPhase = onSnapshot(phasesCol, (phaseSnap) => {
+            const unsubPhase = onSnapshot(phasesCol, { includeMetadataChanges: true }, (phaseSnap) => {
+              if (phaseSnap.metadata.hasPendingWrites) return;
               const phasesList: GoalPhase[] = [];
               phaseSnap.forEach(pDoc => {
                 const pData = pDoc.data() as GoalPhase;
@@ -1115,7 +1107,8 @@ export function subscribeToPlannerSubcollections(
 
     // 12. Postponed Events
     allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'postponedEvents'), (snap) => {
+      onSnapshot(collection(db, 'planners', userId, 'postponedEvents'), { includeMetadataChanges: true }, (snap) => {
+        if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('postponedEvents');
         readyCollections.add('postponedEvents');
         if (!isFirst && snap.docChanges().length === 0) return;
@@ -1126,7 +1119,8 @@ export function subscribeToPlannerSubcollections(
 
     // 13. Todo List
     allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'todoList'), (snap) => {
+      onSnapshot(collection(db, 'planners', userId, 'todoList'), { includeMetadataChanges: true }, (snap) => {
+        if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('todoList');
         readyCollections.add('todoList');
         if (!isFirst && snap.docChanges().length === 0) return;
@@ -1137,7 +1131,8 @@ export function subscribeToPlannerSubcollections(
 
     // 14. Weekly Events
     allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'weeklyEvents'), (snap) => {
+      onSnapshot(collection(db, 'planners', userId, 'weeklyEvents'), { includeMetadataChanges: true }, (snap) => {
+        if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('weeklyEvents');
         readyCollections.add('weeklyEvents');
         if (!isFirst && snap.docChanges().length === 0) return;
@@ -1148,7 +1143,8 @@ export function subscribeToPlannerSubcollections(
 
     // 15. Daily Thoughts
     allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'dailyThoughts'), (snap) => {
+      onSnapshot(collection(db, 'planners', userId, 'dailyThoughts'), { includeMetadataChanges: true }, (snap) => {
+        if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('dailyThoughts');
         readyCollections.add('dailyThoughts');
         if (!isFirst && snap.docChanges().length === 0) return;
@@ -1159,7 +1155,8 @@ export function subscribeToPlannerSubcollections(
 
     // 16. Pomodoro History
     allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'pomodoroHistory'), (snap) => {
+      onSnapshot(collection(db, 'planners', userId, 'pomodoroHistory'), { includeMetadataChanges: true }, (snap) => {
+        if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('pomodoroHistory');
         readyCollections.add('pomodoroHistory');
         if (!isFirst && snap.docChanges().length === 0) return;
@@ -1170,7 +1167,8 @@ export function subscribeToPlannerSubcollections(
 
     // 17. WaterTracker History
     allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'waterTrackerHistory'), (snap) => {
+      onSnapshot(collection(db, 'planners', userId, 'waterTrackerHistory'), { includeMetadataChanges: true }, (snap) => {
+        if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('waterTrackerHistory');
         readyCollections.add('waterTrackerHistory');
         if (!isFirst && snap.docChanges().length === 0) return;
@@ -1181,13 +1179,14 @@ export function subscribeToPlannerSubcollections(
 
     // 18. Habit Tracking
     allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'habitTracking'), (snap) => {
+      onSnapshot(collection(db, 'planners', userId, 'habitTracking'), { includeMetadataChanges: true }, (snap) => {
+        if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('habitTracking');
         readyCollections.add('habitTracking');
         if (!isFirst && snap.docChanges().length === 0) return;
-        const map: Record<string, any> = {};
+        const map: Record<string, HabitTrackingWeekDoc> = {};
         snap.docs.forEach(d => {
-          map[d.id] = d.data();
+          map[d.id] = d.data() as HabitTrackingWeekDoc;
         });
         habitTrackingMap = map;
         scheduleNotify();
@@ -1196,7 +1195,8 @@ export function subscribeToPlannerSubcollections(
 
     // 19. Timebox
     allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'timebox'), (snap) => {
+      onSnapshot(collection(db, 'planners', userId, 'timebox'), { includeMetadataChanges: true }, (snap) => {
+        if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('timebox');
         readyCollections.add('timebox');
         if (!isFirst && snap.docChanges().length === 0) return;

@@ -151,6 +151,7 @@ export interface CoreTask {
     weekday?: string;
     time?: string;
   };
+  completionDate?: string;
 }
 
 export interface PostponedEvent {
@@ -213,9 +214,31 @@ export interface PlannerData {
   postponedEvents?: PostponedEvent[];
   goals?: Goal[];
   timebox?: any[];
-  pomodoro?: any;
-  waterTracker?: any;
-  habitTracking?: any;
+  pomodoro?: { history?: PomodoroEntry[]; [key: string]: any };
+  waterTracker?: { history?: WaterEntry[]; [key: string]: any };
+  habitTracking?: Record<string, HabitTrackingWeekDoc>;
+}
+
+export interface PomodoroEntry {
+  date: string;          // 'YYYY/MM/DD' جلالی یا ISO — الزامی
+  focusMinutes?: number;
+  minutes?: number;
+  timestamp?: number;
+  [key: string]: any;    // فیلدهای اضافه مجاز
+}
+
+export interface WaterEntry {
+  date: string;          // الزامی
+  amount?: number;
+  waterMl?: number;
+  timestamp?: number;
+  [key: string]: any;
+}
+
+export interface HabitTrackingWeekDoc {
+  weekStartDate: string;
+  cells: Record<string, Record<string, number>>; // reminderId -> dayKey -> count
+  updatedAt?: string;
 }
 
 export interface GoalMilestone {

@@ -1,5 +1,6 @@
 import { doc, writeBatch } from 'firebase/firestore';
 import { db } from './firebase.ts';
+import { jalaliToGregorian } from '../utils/jalali.ts';
 import { 
   PlannerData, 
   Category, 
@@ -20,6 +21,8 @@ export interface UserMirror {
   collections: Record<string, Map<string, string>>; // colName -> (docId -> hash)
   dailyTasks: Map<string, string>; // dayKey -> hash
   goalPhases: Map<string, Map<string, string>>; // goalId -> (phaseNum -> hash)
+  pomoHistory: Map<string, string>; // dateISO -> hash
+  waterHistory: Map<string, string>; // dateISO -> hash
   parentHash: string;
   // Status snapshot per dayKey for Phase C stats trigger
   dayStatusSnapshot: Map<string, string>; // dayKey -> statusSummaryHash
@@ -34,6 +37,8 @@ export function getOrCreateMirror(userId: string): UserMirror {
       collections: {},
       dailyTasks: new Map(),
       goalPhases: new Map(),
+      pomoHistory: new Map(),
+      waterHistory: new Map(),
       parentHash: '',
       dayStatusSnapshot: new Map()
     };
@@ -44,6 +49,91 @@ export function getOrCreateMirror(userId: string): UserMirror {
 
 export function resetMirror(userId: string): void {
   userMirrors.delete(userId);
+}
+
+/**
+ * Normalizes any date representation (Jalali string, Unix timestamp, ISO string)
+ * to a canonical YYYY-MM-DD Gregorian ISO string for sortable, indexable Firestore document keys.
+ */
+export function normalizeToDateISO(val: any): string {
+  if (!val) {
+    return new Date().toISOString().split('T')[0];
+  }
+
+  const strVal = String(val).trim();
+
+  // Standard YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(strVal)) {
+    return strVal;
+  }
+
+  // ISO Datetime string (2026-07-28T04:15:00...)
+  if (strVal.includes('T') && !isNaN(Date.parse(strVal))) {
+    return new Date(strVal).toISOString().split('T')[0];
+  }
+
+  // Numeric timestamp
+  if (/^\d+$/.test(strVal)) {
+    const num = Number(strVal);
+    const ms = num < 10000000000 ? num * 1000 : num;
+    return new Date(ms).toISOString().split('T')[0];
+  }
+
+  // Jalali format e.g. "1405/05/03" or "1405-05-03"
+  const jalaliParts = strVal.split(/[/.\-]/);
+  if (jalaliParts.length === 3) {
+    const jy = Number(jalaliParts[0]);
+    const jm = Number(jalaliParts[1]);
+    const jd = Number(jalaliParts[2]);
+    if (!isNaN(jy) && !isNaN(jm) && !isNaN(jd) && jy >= 1300 && jy <= 1500) {
+      try {
+        const gDate = jalaliToGregorian(jy, jm, jd);
+        return gDate.toISOString().split('T')[0];
+      } catch (err) {
+        console.warn(`[Date Normalization Error] Failed to parse Jalali date ${strVal}:`, err);
+      }
+    }
+  }
+
+  return new Date().toISOString().split('T')[0];
+}
+
+/**
+ * Validates whether a given raw date value represents a plausible calendar date.
+ */
+export function isValidDateValue(val: any): boolean {
+  if (val === null || val === undefined) return false;
+  const str = String(val).trim();
+  if (!str) return false;
+
+  // Standard YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    return true;
+  }
+
+  // ISO Datetime string (2026-07-28T04:15:00...)
+  if (str.includes('T') && !isNaN(Date.parse(str))) {
+    return true;
+  }
+
+  // Numeric timestamp (positive ms)
+  if (/^\d+$/.test(str)) {
+    const num = Number(str);
+    return num > 100000000;
+  }
+
+  // Jalali format e.g. "1405/05/03" or "1405-05-03"
+  const jalaliParts = str.split(/[/.\-]/);
+  if (jalaliParts.length === 3) {
+    const jy = Number(jalaliParts[0]);
+    const jm = Number(jalaliParts[1]);
+    const jd = Number(jalaliParts[2]);
+    if (!isNaN(jy) && !isNaN(jm) && !isNaN(jd) && jy >= 1300 && jy <= 1500) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -85,6 +175,7 @@ export function extractScalarSettings(state: Partial<PlannerData>): Record<strin
     examColumns,
     secondaryTaskColumns,
     secondaryTasks,
+    coreTasks,
     todoList,
     timebox,
     postponedEvents,
@@ -97,15 +188,49 @@ export function extractScalarSettings(state: Partial<PlannerData>): Record<strin
     ...rest
   } = state as any;
 
-  const scalarSettings: Record<string, any> = { ...rest };
+  const scalarSettings: Record<string, any> = {};
 
-  if (scalarSettings.pomodoro && typeof scalarSettings.pomodoro === 'object') {
-    const { history, ...pomoScalars } = scalarSettings.pomodoro;
-    scalarSettings.pomodoro = pomoScalars;
+  // Checklist of permitted scalar settings for parent doc
+  const allowedScalarKeys = [
+    'month', 'term', 'activeClassesOnly', 'quoteText', 'quoteAuthor',
+    'classRows', 'dailyTaskRows', 'activeClassStatus', 'classStatusList', 'activeDayKeys',
+    'classesTitle', 'dailyTasksTitle', 'detailsTitle', 'secondaryTitle', 'remindersTitle',
+    'notesTitle', 'todoTitle', 'coreTasksTitle', 'examsAndPresentationsTitle',
+    'emailRemindersGlobalEnabled', 'emailReminderDefaultOffset', 'reminderEmailTargetType',
+    'reminderCustomEmail', 'notes', 'weekStartDay', 'weekEndDay', 'weekYear', 'weekEndYear',
+    'weekMonth', 'weekEndMonth'
+  ];
+
+  for (const key of allowedScalarKeys) {
+    if (key in rest && rest[key] !== undefined) {
+      scalarSettings[key] = rest[key];
+    }
   }
-  if (scalarSettings.waterTracker && typeof scalarSettings.waterTracker === 'object') {
-    const { history, ...waterScalars } = scalarSettings.waterTracker;
+
+  // Handle pomodoro (without unbounded history)
+  if (rest.pomodoro && typeof rest.pomodoro === 'object') {
+    const { history, ...pomoScalars } = rest.pomodoro;
+    scalarSettings.pomodoro = pomoScalars;
+  } else if (rest.pomodoro !== undefined) {
+    scalarSettings.pomodoro = rest.pomodoro;
+  }
+
+  // Handle waterTracker (without unbounded history)
+  if (rest.waterTracker && typeof rest.waterTracker === 'object') {
+    const { history, ...waterScalars } = rest.waterTracker;
     scalarSettings.waterTracker = waterScalars;
+  } else if (rest.waterTracker !== undefined) {
+    scalarSettings.waterTracker = rest.waterTracker;
+  }
+
+  // Ironclad guard: ensure no stray objects or arrays leak to parent doc (preserving 1MB limit)
+  for (const [k, v] of Object.entries(scalarSettings)) {
+    if (k !== 'pomodoro' && k !== 'waterTracker' && k !== 'classStatusList' && k !== 'activeDayKeys') {
+      if (typeof v === 'object' && v !== null) {
+        console.warn(`[Parent Doc Guard] Stripping unexpected non-scalar field '${k}' from parent document.`);
+        delete scalarSettings[k];
+      }
+    }
   }
 
   return scalarSettings;
@@ -281,13 +406,85 @@ export function computeDiff(userId: string, state: Partial<PlannerData>): DiffRe
   }
 
   for (const [cachedDay] of mirror.dailyTasks.entries()) {
-    if (!presentDays.has(cachedDay) && validDayKeys.includes(cachedDay)) {
+    if (!presentDays.has(cachedDay)) {
       toDelete.push({ collection: 'dailyTasks', id: cachedDay });
       changedStatusDays.push(cachedDay);
     }
   }
 
-  // 5. Parent Document Scalars
+  // 5. Pomodoro History (doc per dateISO)
+  const presentPomoDates = new Set<string>();
+  let skippedPomoCount = 0;
+  if (state.pomodoro?.history && Array.isArray(state.pomodoro.history)) {
+    for (const entry of state.pomodoro.history) {
+      const rawDate = entry?.date || entry?.timestamp || entry?.dateKey;
+      if (!rawDate || !isValidDateValue(rawDate)) {
+        skippedPomoCount++;
+        continue;
+      }
+      const dateISO = normalizeToDateISO(rawDate);
+      presentPomoDates.add(dateISO);
+
+      const { updatedAt: _up, ...contentToHash } = entry;
+      const currentHash = hashContent({ ...contentToHash, date: dateISO });
+      const cachedHash = mirror.pomoHistory.get(dateISO);
+
+      if (cachedHash !== currentHash) {
+        toSet.push({
+          collection: 'pomodoroHistory',
+          id: dateISO,
+          data: { ...entry, date: dateISO, updatedAt: new Date().toISOString() }
+        });
+      }
+    }
+    if (skippedPomoCount > 0) {
+      console.warn(`[Diff Engine] Skipped ${skippedPomoCount} pomodoro history entries lacking valid dates.`);
+    }
+  }
+
+  for (const [cachedDate] of mirror.pomoHistory.entries()) {
+    if (!presentPomoDates.has(cachedDate)) {
+      toDelete.push({ collection: 'pomodoroHistory', id: cachedDate });
+    }
+  }
+
+  // 6. WaterTracker History (doc per dateISO)
+  const presentWaterDates = new Set<string>();
+  let skippedWaterCount = 0;
+  if (state.waterTracker?.history && Array.isArray(state.waterTracker.history)) {
+    for (const entry of state.waterTracker.history) {
+      const rawDate = entry?.date || entry?.timestamp || entry?.dateKey;
+      if (!rawDate || !isValidDateValue(rawDate)) {
+        skippedWaterCount++;
+        continue;
+      }
+      const dateISO = normalizeToDateISO(rawDate);
+      presentWaterDates.add(dateISO);
+
+      const { updatedAt: _up, ...contentToHash } = entry;
+      const currentHash = hashContent({ ...contentToHash, date: dateISO });
+      const cachedHash = mirror.waterHistory.get(dateISO);
+
+      if (cachedHash !== currentHash) {
+        toSet.push({
+          collection: 'waterTrackerHistory',
+          id: dateISO,
+          data: { ...entry, date: dateISO, updatedAt: new Date().toISOString() }
+        });
+      }
+    }
+    if (skippedWaterCount > 0) {
+      console.warn(`[Diff Engine] Skipped ${skippedWaterCount} water tracker history entries lacking valid dates.`);
+    }
+  }
+
+  for (const [cachedDate] of mirror.waterHistory.entries()) {
+    if (!presentWaterDates.has(cachedDate)) {
+      toDelete.push({ collection: 'waterTrackerHistory', id: cachedDate });
+    }
+  }
+
+  // 7. Parent Document Scalars
   let parentData: Record<string, any> | undefined = undefined;
   const scalarSettings = extractScalarSettings(state);
   const currentParentHash = hashContent(scalarSettings);
@@ -425,7 +622,14 @@ export function updateMirrorFromSnapshot(userId: string, data: Partial<PlannerDa
     updateListColMirror('timebox', data.timebox, (it: any) => it.id);
   }
 
-  const sanitizeCol = (c: DetailsColumn) => ({ ...c, items: (c.items || []).slice(0, 200) });
+  const sanitizeCol = (c: DetailsColumn) => {
+    let items = c.items || [];
+    if (items.length > 200) {
+      console.warn(`[Mirror Engine] Column '${c.id}' items exceed 200 (${items.length}), slicing first 200`);
+      items = items.slice(0, 200);
+    }
+    return { ...c, items };
+  };
   updateListColMirror('detailsColumns', data.detailsColumns, (it: DetailsColumn) => it.id, sanitizeCol);
   updateListColMirror('examColumns', data.examColumns, (it: DetailsColumn) => it.id, sanitizeCol);
 
@@ -458,6 +662,30 @@ export function updateMirrorFromSnapshot(userId: string, data: Partial<PlannerDa
       const arr = Array.isArray(tasks) ? tasks : [];
       mirror.dailyTasks.set(dayKey, hashContent(arr));
       mirror.dayStatusSnapshot.set(dayKey, hashContent(arr.map(t => ({ i: t.id, s: t.status, d: t.completionDate }))));
+    }
+  }
+
+  // Pomodoro History
+  if (data.pomodoro?.history !== undefined && Array.isArray(data.pomodoro.history)) {
+    mirror.pomoHistory.clear();
+    for (const entry of data.pomodoro.history) {
+      const rawDate = entry?.date || entry?.timestamp || entry?.dateKey;
+      if (!rawDate || !isValidDateValue(rawDate)) continue;
+      const dateISO = normalizeToDateISO(rawDate);
+      const { updatedAt: _up, ...contentToHash } = entry;
+      mirror.pomoHistory.set(dateISO, hashContent({ ...contentToHash, date: dateISO }));
+    }
+  }
+
+  // WaterTracker History
+  if (data.waterTracker?.history !== undefined && Array.isArray(data.waterTracker.history)) {
+    mirror.waterHistory.clear();
+    for (const entry of data.waterTracker.history) {
+      const rawDate = entry?.date || entry?.timestamp || entry?.dateKey;
+      if (!rawDate || !isValidDateValue(rawDate)) continue;
+      const dateISO = normalizeToDateISO(rawDate);
+      const { updatedAt: _up, ...contentToHash } = entry;
+      mirror.waterHistory.set(dateISO, hashContent({ ...contentToHash, date: dateISO }));
     }
   }
 

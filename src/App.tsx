@@ -45,9 +45,11 @@ import { safeParseJson, getCachedGmailToken, connectGmail, clientSignOut, client
 import { 
   subscribeToPlannerSubcollections,
   savePlannerSubcollections,
+  queuePendingSync,
   migratePlannerDataToSubcollections,
   flushPendingSyncQueue,
   pruneOldSnapshots,
+  cleanupLeakedParentFields,
   addCoreTask, 
   addSecondaryTask, 
   addTodo, 
@@ -606,8 +608,9 @@ export default function App() {
         try {
           // Save planner data into Firestore subcollections under /planners/{userId}
           await savePlannerSubcollections(user.id, dataToSync);
-        } catch (_) {
-          // Silently handled by pending sync queue
+        } catch (syncErr) {
+          console.warn('[Planner Sync Warning] save failed, re-queuing:', syncErr);
+          queuePendingSync(user.id, dataToSync);
         }
       }
 
@@ -772,11 +775,26 @@ export default function App() {
       return;
     }
 
-    // Trigger one-time idempotent subcollection migration & monthly snapshot pruning
+    // Trigger one-time idempotent subcollection migration, cleanup of leaked parent fields & monthly snapshot pruning
     if (!hasMigratedRef.current[userId]) {
-      hasMigratedRef.current[userId] = true;
-      migratePlannerDataToSubcollections(userId).catch(() => {});
-      pruneOldSnapshots(userId).catch(() => {});
+      const runMigrationAndPrune = (targetUid: string) => {
+        if (auth.currentUser?.uid === targetUid) {
+          hasMigratedRef.current[targetUid] = true;
+          migratePlannerDataToSubcollections(targetUid).catch(() => {});
+          cleanupLeakedParentFields(targetUid).catch(() => {});
+          pruneOldSnapshots(targetUid).catch(() => {});
+        } else {
+          setTimeout(() => {
+            if (auth.currentUser?.uid === targetUid && !hasMigratedRef.current[targetUid]) {
+              hasMigratedRef.current[targetUid] = true;
+              migratePlannerDataToSubcollections(targetUid).catch(() => {});
+              cleanupLeakedParentFields(targetUid).catch(() => {});
+              pruneOldSnapshots(targetUid).catch(() => {});
+            }
+          }, 3000);
+        }
+      };
+      runMigrationAndPrune(userId);
     }
 
     let isInitial = true;

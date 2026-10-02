@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { User, PlannerData } from '../types';
 import { INITIAL_PLANNER_DATA } from '../initialData';
+import { isValidDateValue } from '../lib/plannerSyncEngine.ts';
 
 interface SessionManagerProps {
   currentUser: User | null;
@@ -74,6 +75,32 @@ export function verifyAndRepairPlannerData(rawData: any): { repairedData: any; r
   if (!repaired.dailyTasks || typeof repaired.dailyTasks !== 'object') {
     repaired.dailyTasks = {};
     repairedCount++;
+  }
+
+  // Validate and repair Pomodoro history (filter out dateless entries)
+  if (repaired.pomodoro && typeof repaired.pomodoro === 'object' && Array.isArray(repaired.pomodoro.history)) {
+    const originalLen = repaired.pomodoro.history.length;
+    const validHistory = repaired.pomodoro.history.filter((entry: any) => {
+      const rawDate = entry?.date || entry?.timestamp || entry?.dateKey;
+      return Boolean(rawDate && isValidDateValue(rawDate));
+    });
+    if (validHistory.length !== originalLen) {
+      repairedCount += (originalLen - validHistory.length);
+      repaired.pomodoro = { ...repaired.pomodoro, history: validHistory };
+    }
+  }
+
+  // Validate and repair WaterTracker history (filter out dateless entries)
+  if (repaired.waterTracker && typeof repaired.waterTracker === 'object' && Array.isArray(repaired.waterTracker.history)) {
+    const originalLen = repaired.waterTracker.history.length;
+    const validHistory = repaired.waterTracker.history.filter((entry: any) => {
+      const rawDate = entry?.date || entry?.timestamp || entry?.dateKey;
+      return Boolean(rawDate && isValidDateValue(rawDate));
+    });
+    if (validHistory.length !== originalLen) {
+      repairedCount += (originalLen - validHistory.length);
+      repaired.waterTracker = { ...repaired.waterTracker, history: validHistory };
+    }
   }
   
   return { repairedData: repaired, repairedCount };
