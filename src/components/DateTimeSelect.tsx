@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { JALALI_MONTHS, YEARS_1400_TO_1430, getDaysInJalaliMonth, getTodayJalali } from '../utils/jalali';
+import { JALALI_MONTHS, YEARS_1400_TO_1430, getDaysInJalaliMonth, getTodayJalali, getJalaliWeekday } from '../utils/jalali';
 
 export interface DateTimeSelectProps {
   value: string; // 'YYYY/MM/DD' or 'YYYY/MM/DD HH:mm' or ''
@@ -157,6 +157,22 @@ export const DateTimeSelect: React.FC<DateTimeSelectProps> = ({
           </option>
         ))}
       </select>
+
+      {/* Auto-calculated Weekday Badge */}
+      {(() => {
+        if (!parsed.year || !parsed.monthName || !parsed.day) return null;
+        const mIndex = JALALI_MONTHS.indexOf(parsed.monthName);
+        if (mIndex === -1) return null;
+        const yNum = parseInt(parsed.year, 10);
+        const dNum = parseInt(parsed.day, 10);
+        if (isNaN(yNum) || isNaN(dNum)) return null;
+        const weekdayName = getJalaliWeekday(yNum, mIndex + 1, dNum).weekday.fa;
+        return (
+          <span className="px-1.5 py-0.5 text-[10px] font-black text-indigo-700 bg-indigo-50 border border-indigo-200/60 rounded-md shrink-0">
+            {weekdayName}
+          </span>
+        );
+      })()}
 
       {/* Optional Time Selects */}
       {showTime && (

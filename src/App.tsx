@@ -229,18 +229,17 @@ const getWeekdayOfPersianDate = (year: number, monthName: string, day: number): 
 
 const getTaskDeadlineCompleteDisplay = (deadline: any, weekDates: string[], year: number): string => {
   if (!deadline) return '';
-  const { day, month, weekday } = deadline;
-  
-  if (day && month && weekday) {
-    return `${weekday}، ${day} ${month}`;
-  }
+  const { day, month, weekday, year: deadlineYear } = deadline;
+  const effectiveYear = deadlineYear || year;
   
   if (day && month) {
-    const calculatedWeekday = getWeekdayOfPersianDate(year, month, day);
-    if (calculatedWeekday) {
-      return `${calculatedWeekday}، ${day} ${month}`;
+    const calculatedWeekday = getWeekdayOfPersianDate(effectiveYear, month, day);
+    const wd = calculatedWeekday || weekday || '';
+    const yearSuffix = deadlineYear ? ` ${deadlineYear}` : '';
+    if (wd) {
+      return `${wd}، ${day} ${month}${yearSuffix}`;
     }
-    return `${day} ${month}`;
+    return `${day} ${month}${yearSuffix}`;
   }
   
   if (weekday) {
@@ -490,11 +489,12 @@ export default function App() {
     const getFormattedDeadlineDate = (deadline: any): string | undefined => {
       if (!deadline) return undefined;
       const { day, month, weekday } = deadline;
+      const effectiveYear = deadline.year || year;
       
       // If we have day and month
       if (day && month) {
         const monthNum = MONTHS_MAP[month] || '01';
-        return `${year}/${monthNum}/${String(day).padStart(2, '0')}`;
+        return `${effectiveYear}/${monthNum}/${String(day).padStart(2, '0')}`;
       }
       
       // If we only have weekday
@@ -507,7 +507,7 @@ export default function App() {
           const parsed = parsePersianDate(dateStr);
           if (parsed) {
             const monthNum = MONTHS_MAP[parsed.month] || '01';
-            return `${year}/${monthNum}/${String(parsed.day).padStart(2, '0')}`;
+            return `${effectiveYear}/${monthNum}/${String(parsed.day).padStart(2, '0')}`;
           }
         }
       }
@@ -526,18 +526,21 @@ export default function App() {
         const synText = `${task.title}${descPart}`;
 
         const existingIdx = targetCol!.items.findIndex(item => item.id === synId || item.id === `task_${task.id}`);
+        const syncedDeadline = task.deadline ? { ...task.deadline, year: task.deadline.year || year } : undefined;
         if (existingIdx >= 0) {
           targetCol!.items[existingIdx] = {
             ...targetCol!.items[existingIdx],
             id: synId,
             text: synText,
-            date: formattedDate || targetCol!.items[existingIdx].date
+            date: formattedDate || targetCol!.items[existingIdx].date,
+            deadline: syncedDeadline
           };
         } else {
           targetCol!.items.push({
             id: synId,
             text: synText,
-            date: formattedDate
+            date: formattedDate,
+            deadline: syncedDeadline
           });
         }
       }
@@ -555,18 +558,21 @@ export default function App() {
         const synText = `${task.textFa}${descPart}`;
 
         const existingIdx = targetCol!.items.findIndex(item => item.id === synId || item.id === `task_${task.id}`);
+        const syncedDeadline = task.deadline ? { ...task.deadline, year: task.deadline.year || year } : undefined;
         if (existingIdx >= 0) {
           targetCol!.items[existingIdx] = {
             ...targetCol!.items[existingIdx],
             id: synId,
             text: synText,
-            date: formattedDate || targetCol!.items[existingIdx].date
+            date: formattedDate || targetCol!.items[existingIdx].date,
+            deadline: syncedDeadline
           };
         } else {
           targetCol!.items.push({
             id: synId,
             text: synText,
-            date: formattedDate
+            date: formattedDate,
+            deadline: syncedDeadline
           });
         }
       }
@@ -595,6 +601,31 @@ export default function App() {
     };
   }, []);
 
+  // Success alert toast message & once-per-session offline notification (H3 & Point 4)
+  const [successMessage, setSuccessMessage] = useState<string>('');
+  const [toastType, setToastType] = useState<'success' | 'error'>('success');
+  const hasNotifiedOfflineThisSessionRef = useRef<boolean>(false);
+
+  const showToast = useCallback((message: string, type?: 'success' | 'error') => {
+    setSuccessMessage(message);
+    const isError = type === 'error' ||
+                    message.includes('خطا') ||
+                    message.includes('اشتباه') ||
+                    message.includes('ناموفق') ||
+                    message.includes('fail') ||
+                    message.includes('error') ||
+                    message.includes('⚠️');
+    setToastType(isError ? 'error' : 'success');
+    setTimeout(() => setSuccessMessage(''), 3000);
+  }, []);
+
+  const notifyOfflineSyncThrottled = useCallback(() => {
+    if (!hasNotifiedOfflineThisSessionRef.current) {
+      hasNotifiedOfflineThisSessionRef.current = true;
+      showToast('آفلاین هستید؛ تغییرها ذخیره و بعداً همگام می‌شوند', 'success');
+    }
+  }, [showToast]);
+
   const handleSyncData = async (user: User, customData?: PlannerData) => {
     try {
       const dataToSync = customData || data;
@@ -621,7 +652,12 @@ export default function App() {
         }
       }
 
-      if (navigator.onLine && auth.currentUser) {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        notifyOfflineSyncThrottled();
+        return;
+      }
+
+      if (auth.currentUser) {
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
         let activeToken = user.token;
         if (auth.currentUser) {
@@ -650,7 +686,20 @@ export default function App() {
           throw new Error(errData.error || 'Sync failed');
         }
       }
-    } catch (err) {
+    } catch (err: any) {
+      const errMsg = err?.message || String(err);
+      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+      if (
+        isOffline ||
+        errMsg.includes('offline') ||
+        errMsg.includes('Failed to fetch') ||
+        errMsg.includes('network') ||
+        errMsg.includes('Failed to execute')
+      ) {
+        console.warn('Network offline during cloud sync, changes safely cached and queued.');
+        notifyOfflineSyncThrottled();
+        return;
+      }
       console.error('Failed to sync data with cloud:', err);
       throw err;
     }
@@ -771,17 +820,33 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [data, currentUser?.id]);
 
-  // Network Reconnection Sync Listener
+  // Network Reconnection Sync Listener (H4 & H5 & Point 4)
   useEffect(() => {
-    const handleOnline = () => {
+    const handleOnline = async () => {
+      hasNotifiedOfflineThisSessionRef.current = false;
       if (currentUser && currentUser.id) {
-        handleSyncData(currentUser, dataRef.current).catch(() => {});
+        try {
+          const flushed = await flushPendingSyncQueue(currentUser.id);
+          // H5: Conflict resolution on reconnect:
+          // If local data changed while offline (dataRef.current != lastSavedDataJsonRef.current)
+          // -> local wins (upload local state to server & subcollections).
+          // Otherwise, Firestore listener will deliver remote updates.
+          const hasLocalEdits = lastSavedDataJsonRef.current !== JSON.stringify(dataRef.current);
+          if (hasLocalEdits) {
+            await handleSyncData(currentUser, dataRef.current);
+          }
+          if (flushed || hasLocalEdits) {
+            showToast('همگام‌سازی پس از اتصال انجام شد', 'success');
+          }
+        } catch (err) {
+          console.warn('[Reconnect Sync Warning]:', err);
+        }
       }
     };
 
     window.addEventListener('online', handleOnline);
     return () => window.removeEventListener('online', handleOnline);
-  }, [currentUser?.id]);
+  }, [currentUser?.id, showToast]);
 
   // Real-time Firestore document & subcollections listener
   useEffect(() => {
@@ -1238,10 +1303,6 @@ export default function App() {
     taskId?: string;
   } | null>(null);
 
-  // Success alert toast message
-  const [successMessage, setSuccessMessage] = useState<string>('');
-  const [toastType, setToastType] = useState<'success' | 'error'>('success');
-
   // Android / Mobile Browser Hardware Back Button Handler
   useEffect(() => {
     const hasAnyModal = isCalendarRangeOpen || isDailyTaskModalOpen || isSlotModalOpen || isProfileModalOpen || completionTarget !== null;
@@ -1271,19 +1332,6 @@ export default function App() {
       window.removeEventListener('popstate', handlePopState);
     };
   }, [isCalendarRangeOpen, isDailyTaskModalOpen, isSlotModalOpen, isProfileModalOpen, completionTarget, activeTab]);
-
-  const showToast = (message: string, type?: 'success' | 'error') => {
-    setSuccessMessage(message);
-    const isError = type === 'error' || 
-                    message.includes('خطا') || 
-                    message.includes('اشتباه') || 
-                    message.includes('ناموفق') || 
-                    message.includes('fail') || 
-                    message.includes('error') || 
-                    message.includes('⚠️');
-    setToastType(isError ? 'error' : 'success');
-    setTimeout(() => setSuccessMessage(''), 3000);
-  };
 
   // Automatic week transition check (runs ONCE on app mount)
   const autoTransitionCheckedRef = useRef(false);
@@ -2667,30 +2715,39 @@ export default function App() {
     });
   };
 
-  const handleUpdateSyncedTaskDeadline = (taskId: string, type: 'core' | 'sec', field: 'day' | 'month' | 'weekday', value: string) => {
+  const handleUpdateSyncedTaskDeadline = (taskId: string, type: 'core' | 'sec', field: 'day' | 'month' | 'weekday' | 'year', value: string) => {
     setData((prev) => {
-      const year = prev.weekYear || getTodayJalali().year;
+      const defaultYear = prev.weekYear || getTodayJalali().year;
       if (type === 'core') {
         const updated = (prev.coreTasks || []).map((task) => {
           if (task.id === taskId) {
             const currentDeadline = task.deadline || {};
-            let val: any = value === '' ? undefined : value;
-            let newDay = currentDeadline.day;
-            if (field === 'day') {
-              val = value ? parseInt(value, 10) || undefined : undefined;
-              newDay = val;
-            } else if (field === 'month') {
-              if (val && newDay) {
-                const maxDays = getDaysInJalaliMonth(val, year);
-                if (newDay > maxDays) {
-                  newDay = undefined;
-                }
+            const targetYear = (field === 'year' ? (value ? parseInt(value, 10) || undefined : undefined) : currentDeadline.year) || defaultYear;
+            const nextMonth = field === 'month' ? (value || undefined) : currentDeadline.month;
+            let nextDay = field === 'day' ? (value ? parseInt(value, 10) || undefined : undefined) : currentDeadline.day;
+
+            if (nextMonth && nextDay) {
+              const maxDays = getDaysInJalaliMonth(nextMonth, targetYear);
+              if (nextDay > maxDays) {
+                nextDay = maxDays;
               }
             }
+
+            let autoWeekday: string | undefined = undefined;
+            if (nextDay && nextMonth) {
+              const mIdx = JALALI_MONTHS.indexOf(nextMonth);
+              if (mIdx !== -1) {
+                const jw = getJalaliWeekday(targetYear, mIdx + 1, nextDay);
+                autoWeekday = jw?.weekday?.fa;
+              }
+            }
+
             const updatedDeadline = {
               ...currentDeadline,
-              day: newDay,
-              [field]: val
+              year: field === 'year' ? (value ? parseInt(value, 10) || undefined : undefined) : (currentDeadline.year || defaultYear),
+              month: nextMonth,
+              day: nextDay,
+              weekday: autoWeekday
             };
             return { ...task, deadline: updatedDeadline };
           }
@@ -2701,23 +2758,32 @@ export default function App() {
         const updated = (prev.secondaryTasks || []).map((task) => {
           if (task.id === taskId) {
             const currentDeadline = task.deadline || {};
-            let val: any = value === '' ? undefined : value;
-            let newDay = currentDeadline.day;
-            if (field === 'day') {
-              val = value ? parseInt(value, 10) || undefined : undefined;
-              newDay = val;
-            } else if (field === 'month') {
-              if (val && newDay) {
-                const maxDays = getDaysInJalaliMonth(val, year);
-                if (newDay > maxDays) {
-                  newDay = undefined;
-                }
+            const targetYear = (field === 'year' ? (value ? parseInt(value, 10) || undefined : undefined) : currentDeadline.year) || defaultYear;
+            const nextMonth = field === 'month' ? (value || undefined) : currentDeadline.month;
+            let nextDay = field === 'day' ? (value ? parseInt(value, 10) || undefined : undefined) : currentDeadline.day;
+
+            if (nextMonth && nextDay) {
+              const maxDays = getDaysInJalaliMonth(nextMonth, targetYear);
+              if (nextDay > maxDays) {
+                nextDay = maxDays;
               }
             }
+
+            let autoWeekday: string | undefined = undefined;
+            if (nextDay && nextMonth) {
+              const mIdx = JALALI_MONTHS.indexOf(nextMonth);
+              if (mIdx !== -1) {
+                const jw = getJalaliWeekday(targetYear, mIdx + 1, nextDay);
+                autoWeekday = jw?.weekday?.fa;
+              }
+            }
+
             const updatedDeadline = {
               ...currentDeadline,
-              day: newDay,
-              [field]: val
+              year: field === 'year' ? (value ? parseInt(value, 10) || undefined : undefined) : (currentDeadline.year || defaultYear),
+              month: nextMonth,
+              day: nextDay,
+              weekday: autoWeekday
             };
             return { ...task, deadline: updatedDeadline };
           }
@@ -2726,6 +2792,10 @@ export default function App() {
         return { ...prev, secondaryTasks: updated };
       }
     });
+  };
+
+  const handleEditSyncedTaskDeadlineYear = (taskId: string, type: 'core' | 'sec', yearValue: any) => {
+    handleUpdateSyncedTaskDeadline(taskId, type, 'year', String(yearValue));
   };
 
   const handleDeleteSyncedTask = (taskId: string, type: 'core' | 'sec') => {
@@ -2948,25 +3018,29 @@ export default function App() {
     });
   };
 
-  const handleEditCoreTaskDeadline = (taskId: string, field: 'day' | 'month' | 'weekday', value: any) => {
+  const handleEditCoreTaskDeadline = (taskId: string, field: 'day' | 'month' | 'weekday' | 'year', value: any) => {
     setData((prev) => {
-      const year = prev.weekYear || getTodayJalali().year;
+      const defaultYear = prev.weekYear || getTodayJalali().year;
       const updated = (prev.coreTasks || []).map((ct) => {
         if (ct.id === taskId) {
           const currentDeadline = ct.deadline || {};
-          let nextVal = value;
-          let newDay = currentDeadline.day;
+          const targetYear = (field === 'year' ? (value ? parseInt(value, 10) || undefined : undefined) : currentDeadline.year) || defaultYear;
+          const nextMonth = field === 'month' ? (value || undefined) : currentDeadline.month;
+          let nextDay = field === 'day' ? (value ? parseInt(value, 10) || undefined : undefined) : currentDeadline.day;
 
-          if (field === 'day') {
-            nextVal = value ? parseInt(value) || undefined : undefined;
-            newDay = nextVal;
-          } else if (field === 'month') {
-            nextVal = value || undefined;
-            if (nextVal && newDay) {
-              const maxDays = getDaysInJalaliMonth(nextVal, year);
-              if (newDay > maxDays) {
-                newDay = undefined;
-              }
+          if (nextMonth && nextDay) {
+            const maxDays = getDaysInJalaliMonth(nextMonth, targetYear);
+            if (nextDay > maxDays) {
+              nextDay = maxDays;
+            }
+          }
+
+          let autoWeekday: string | undefined = undefined;
+          if (nextDay && nextMonth) {
+            const mIdx = JALALI_MONTHS.indexOf(nextMonth);
+            if (mIdx !== -1) {
+              const jw = getJalaliWeekday(targetYear, mIdx + 1, nextDay);
+              autoWeekday = jw?.weekday?.fa;
             }
           }
 
@@ -2974,8 +3048,10 @@ export default function App() {
             ...ct,
             deadline: {
               ...currentDeadline,
-              day: newDay,
-              [field]: nextVal || undefined,
+              year: field === 'year' ? (value ? parseInt(value, 10) || undefined : undefined) : (currentDeadline.year || defaultYear),
+              month: nextMonth,
+              day: nextDay,
+              weekday: autoWeekday
             },
           };
         }
@@ -2983,6 +3059,10 @@ export default function App() {
       });
       return { ...prev, coreTasks: updated };
     });
+  };
+
+  const handleEditCoreTaskDeadlineYear = (taskId: string, yearValue: any) => {
+    handleEditCoreTaskDeadline(taskId, 'year', yearValue);
   };
 
   const handleEditSecondaryTaskLink = (taskId: string, link: string) => {
@@ -3021,25 +3101,29 @@ export default function App() {
     });
   };
 
-  const handleEditSecondaryTaskDeadline = (taskId: string, field: 'day' | 'month' | 'weekday', value: any) => {
+  const handleEditSecondaryTaskDeadline = (taskId: string, field: 'day' | 'month' | 'weekday' | 'year', value: any) => {
     setData((prev) => {
-      const year = prev.weekYear || getTodayJalali().year;
+      const defaultYear = prev.weekYear || getTodayJalali().year;
       const tasks = prev.secondaryTasks.map((t) => {
         if (t.id === taskId) {
           const currentDeadline = t.deadline || {};
-          let nextVal = value;
-          let newDay = currentDeadline.day;
+          const targetYear = (field === 'year' ? (value ? parseInt(value, 10) || undefined : undefined) : currentDeadline.year) || defaultYear;
+          const nextMonth = field === 'month' ? (value || undefined) : currentDeadline.month;
+          let nextDay = field === 'day' ? (value ? parseInt(value, 10) || undefined : undefined) : currentDeadline.day;
 
-          if (field === 'day') {
-            nextVal = value ? parseInt(value) || undefined : undefined;
-            newDay = nextVal;
-          } else if (field === 'month') {
-            nextVal = value || undefined;
-            if (nextVal && newDay) {
-              const maxDays = getDaysInJalaliMonth(nextVal, year);
-              if (newDay > maxDays) {
-                newDay = undefined;
-              }
+          if (nextMonth && nextDay) {
+            const maxDays = getDaysInJalaliMonth(nextMonth, targetYear);
+            if (nextDay > maxDays) {
+              nextDay = maxDays;
+            }
+          }
+
+          let autoWeekday: string | undefined = undefined;
+          if (nextDay && nextMonth) {
+            const mIdx = JALALI_MONTHS.indexOf(nextMonth);
+            if (mIdx !== -1) {
+              const jw = getJalaliWeekday(targetYear, mIdx + 1, nextDay);
+              autoWeekday = jw?.weekday?.fa;
             }
           }
 
@@ -3047,8 +3131,10 @@ export default function App() {
             ...t,
             deadline: {
               ...currentDeadline,
-              day: newDay,
-              [field]: nextVal || undefined,
+              year: field === 'year' ? (value ? parseInt(value, 10) || undefined : undefined) : (currentDeadline.year || defaultYear),
+              month: nextMonth,
+              day: nextDay,
+              weekday: autoWeekday
             },
           };
         }
@@ -3056,6 +3142,10 @@ export default function App() {
       });
       return { ...prev, secondaryTasks: tasks };
     });
+  };
+
+  const handleEditSecondaryTaskDeadlineYear = (taskId: string, yearValue: any) => {
+    handleEditSecondaryTaskDeadline(taskId, 'year', yearValue);
   };
 
   const handleEditSecondaryTaskCategory = (taskId: string, categoryId: string) => {
@@ -4101,7 +4191,7 @@ export default function App() {
                                                       className="text-[9px] bg-amber-50 border border-amber-200 rounded p-1 font-bold text-slate-700 focus:outline-none"
                                                     >
                                                       <option value="" className="text-center">روز</option>
-                                                      {Array.from({ length: task.deadline?.month ? getDaysInJalaliMonth(task.deadline.month, data.weekYear || getTodayJalali().year) : 31 }, (_, i) => i + 1).map(d => (
+                                                      {Array.from({ length: task.deadline?.month ? getDaysInJalaliMonth(task.deadline.month, task.deadline?.year || data.weekYear || getTodayJalali().year) : 31 }, (_, i) => i + 1).map(d => (
                                                         <option key={d} value={d}>{d}</option>
                                                       ))}
                                                     </select>
@@ -4116,16 +4206,23 @@ export default function App() {
                                                       ))}
                                                     </select>
                                                     <select
-                                                      value={task.deadline?.weekday || ''}
-                                                      onChange={(e) => handleEditCoreTaskDeadline(task.id, 'weekday', e.target.value)}
-                                                      className="text-[9px] bg-amber-50 border border-amber-200 rounded p-1 font-bold text-slate-700 focus:outline-none text-center text-center-last"
+                                                      value={task.deadline?.year || data.weekYear || getTodayJalali().year}
+                                                      onChange={(e) => handleEditCoreTaskDeadline(task.id, 'year', e.target.value)}
+                                                      className="text-[9px] bg-amber-50 border border-amber-200 rounded p-1 font-bold text-slate-700 focus:outline-none text-center"
                                                     >
-                                                      <option value="" className="text-center">چندشنبه</option>
-                                                      {['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه'].map(w => (
-                                                        <option key={w} value={w} className="text-center">{w}</option>
+                                                      {YEARS_1400_TO_1430.map(y => (
+                                                        <option key={y} value={y}>{y}</option>
                                                       ))}
                                                     </select>
                                                   </div>
+                                                  {task.deadline?.day && task.deadline?.month && (
+                                                    <div className="flex items-center gap-1.5 mt-0.5">
+                                                      <span className="text-[8px] text-slate-400 font-bold">روز هفته:</span>
+                                                      <span className="text-[9px] font-black text-indigo-700 bg-indigo-50 border border-indigo-200/60 px-2 py-0.5 rounded-md">
+                                                        {getWeekdayOfPersianDate(task.deadline?.year || data.weekYear || getTodayJalali().year, task.deadline.month, task.deadline.day)}
+                                                      </span>
+                                                    </div>
+                                                  )}
                                                 </div>
                                               </div>
                                             </div>
@@ -4165,9 +4262,7 @@ export default function App() {
                                                 }`}>
                                                   <span>⏰ ددلاین:</span>
                                                   <span>
-                                                    {task.deadline.weekday ? `${task.deadline.weekday} ` : ''}
-                                                    {task.deadline.day ? `${task.deadline.day} ` : ''}
-                                                    {task.deadline.month ? task.deadline.month : ''}
+                                                    {getTaskDeadlineCompleteDisplay(task.deadline, weekDates, task.deadline.year || tempYear)}
                                                   </span>
                                                 </div>
                                               )}
@@ -4480,7 +4575,7 @@ export default function App() {
                                                 className="text-[9px] bg-white border border-slate-200 rounded p-1 font-bold text-slate-700 focus:outline-none"
                                               >
                                                 <option value="" className="text-center">روز</option>
-                                                {Array.from({ length: ((isCore ? coreTask?.deadline?.month : secTask?.deadline?.month) ? getDaysInJalaliMonth((isCore ? coreTask?.deadline?.month : secTask?.deadline?.month)!, data.weekYear || getTodayJalali().year) : 31) }, (_, i) => i + 1).map(d => (
+                                                {Array.from({ length: ((isCore ? coreTask?.deadline?.month : secTask?.deadline?.month) ? getDaysInJalaliMonth((isCore ? coreTask?.deadline?.month : secTask?.deadline?.month)!, (isCore ? coreTask?.deadline?.year : secTask?.deadline?.year) || data.weekYear || getTodayJalali().year) : 31) }, (_, i) => i + 1).map(d => (
                                                   <option key={d} value={d}>{d}</option>
                                                 ))}
                                               </select>
@@ -4497,18 +4592,29 @@ export default function App() {
                                                 ))}
                                               </select>
 
-                                              {/* Weekday Select */}
+                                              {/* Year Select */}
                                               <select
-                                                value={isCore ? coreTask?.deadline?.weekday || '' : secTask?.deadline?.weekday || ''}
-                                                onChange={(e) => handleUpdateSyncedTaskDeadline(taskId, isCore ? 'core' : 'sec', 'weekday', e.target.value)}
-                                                className="text-[9px] bg-white border border-slate-200 rounded p-1 font-bold text-slate-700 focus:outline-none"
+                                                value={(isCore ? coreTask?.deadline?.year : secTask?.deadline?.year) || data.weekYear || getTodayJalali().year}
+                                                onChange={(e) => handleUpdateSyncedTaskDeadline(taskId, isCore ? 'core' : 'sec', 'year', e.target.value)}
+                                                className="text-[9px] bg-white border border-slate-200 rounded p-1 font-bold text-slate-700 focus:outline-none text-center"
                                               >
-                                                <option value="" className="text-center">چندشنبه</option>
-                                                {['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه'].map(w => (
-                                                  <option key={w} value={w}>{w}</option>
+                                                {YEARS_1400_TO_1430.map(y => (
+                                                  <option key={y} value={y}>{y}</option>
                                                 ))}
                                               </select>
                                             </div>
+                                            {((isCore ? coreTask?.deadline?.day : secTask?.deadline?.day) && (isCore ? coreTask?.deadline?.month : secTask?.deadline?.month)) && (
+                                              <div className="flex items-center gap-1.5 mt-0.5">
+                                                <span className="text-[8px] text-slate-400 font-bold">روز هفته:</span>
+                                                <span className="text-[9px] font-black text-indigo-700 bg-indigo-50 border border-indigo-200/60 px-2 py-0.5 rounded-md">
+                                                  {getWeekdayOfPersianDate(
+                                                    (isCore ? coreTask?.deadline?.year : secTask?.deadline?.year) || data.weekYear || getTodayJalali().year,
+                                                    (isCore ? coreTask?.deadline?.month : secTask?.deadline?.month)!,
+                                                    (isCore ? coreTask?.deadline?.day : secTask?.deadline?.day)!
+                                                  )}
+                                                </span>
+                                              </div>
+                                            )}
                                           </div>
 
                                           {/* Delete button */}
@@ -4944,7 +5050,7 @@ export default function App() {
                                                       className="text-[9px] bg-amber-50 border border-amber-200 rounded p-1 font-bold text-slate-700 focus:outline-none"
                                                     >
                                                       <option value="" className="text-center">روز</option>
-                                                      {Array.from({ length: task.deadline?.month ? getDaysInJalaliMonth(task.deadline.month, data.weekYear || getTodayJalali().year) : 31 }, (_, i) => i + 1).map(d => (
+                                                      {Array.from({ length: task.deadline?.month ? getDaysInJalaliMonth(task.deadline.month, task.deadline?.year || data.weekYear || getTodayJalali().year) : 31 }, (_, i) => i + 1).map(d => (
                                                         <option key={d} value={d}>{d}</option>
                                                       ))}
                                                     </select>
@@ -4959,16 +5065,23 @@ export default function App() {
                                                       ))}
                                                     </select>
                                                     <select
-                                                      value={task.deadline?.weekday || ''}
-                                                      onChange={(e) => handleEditSecondaryTaskDeadline(task.id, 'weekday', e.target.value)}
-                                                      className="text-[9px] bg-amber-50 border border-amber-200 rounded p-1 font-bold text-slate-700 focus:outline-none"
+                                                      value={task.deadline?.year || data.weekYear || getTodayJalali().year}
+                                                      onChange={(e) => handleEditSecondaryTaskDeadline(task.id, 'year', e.target.value)}
+                                                      className="text-[9px] bg-amber-50 border border-amber-200 rounded p-1 font-bold text-slate-700 focus:outline-none text-center"
                                                     >
-                                                      <option value="" className="text-center">چندشنبه</option>
-                                                      {['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه'].map(w => (
-                                                        <option key={w} value={w}>{w}</option>
+                                                      {YEARS_1400_TO_1430.map(y => (
+                                                        <option key={y} value={y}>{y}</option>
                                                       ))}
                                                     </select>
                                                   </div>
+                                                  {task.deadline?.day && task.deadline?.month && (
+                                                    <div className="flex items-center gap-1.5 mt-0.5">
+                                                      <span className="text-[8px] text-slate-400 font-bold">روز هفته:</span>
+                                                      <span className="text-[9px] font-black text-indigo-700 bg-indigo-50 border border-indigo-200/60 px-2 py-0.5 rounded-md">
+                                                        {getWeekdayOfPersianDate(task.deadline?.year || data.weekYear || getTodayJalali().year, task.deadline.month, task.deadline.day)}
+                                                      </span>
+                                                    </div>
+                                                  )}
                                                 </div>
                                                 <div className="flex flex-col gap-1 sm:col-span-2">
                                                   <span className="text-[9px] text-slate-400 font-bold">دسته‌بندی (رنگ کارت):</span>
@@ -5026,9 +5139,7 @@ export default function App() {
                                                 }`}>
                                                   <span>⏰ ددلاین:</span>
                                                   <span>
-                                                    {task.deadline.weekday ? `${task.deadline.weekday} ` : ''}
-                                                    {task.deadline.day ? `${task.deadline.day} ` : ''}
-                                                    {task.deadline.month ? task.deadline.month : ''}
+                                                    {getTaskDeadlineCompleteDisplay(task.deadline, weekDates, task.deadline.year || tempYear)}
                                                   </span>
                                                 </div>
                                               )}

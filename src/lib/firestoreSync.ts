@@ -107,28 +107,118 @@ export function isAuthValidForUser(userId: string, silent = true): boolean {
 const pendingSyncQueue = new Map<string, Partial<PlannerData>>();
 let isFlushingQueue = false;
 
+const PENDING_SYNC_STORAGE_KEY = 'planner_pending_sync';
+
+export interface PendingSyncItem {
+  uid: string;
+  payload: Partial<PlannerData>;
+}
+
+export function serializePayloadSafe(payload: Partial<PlannerData>): Partial<PlannerData> {
+  try {
+    return JSON.parse(JSON.stringify(payload, (_key, value) => {
+      if (typeof value === 'function') return undefined;
+      if (value instanceof Map) return Object.fromEntries(value);
+      if (value instanceof Set) return Array.from(value);
+      if (value instanceof Date) return value.toISOString();
+      return value;
+    }));
+  } catch (_) {
+    return payload;
+  }
+}
+
 export function queuePendingSync(userId: string, data: Partial<PlannerData>): void {
   if (!userId) return;
   const existing = pendingSyncQueue.get(userId) || {};
-  pendingSyncQueue.set(userId, { ...existing, ...data });
+  const merged = { ...existing, ...data };
+  pendingSyncQueue.set(userId, merged);
+  try {
+    const safePayload = serializePayloadSafe(merged);
+    const item: PendingSyncItem = { uid: userId, payload: safePayload };
+    localStorage.setItem(PENDING_SYNC_STORAGE_KEY, JSON.stringify(item));
+  } catch (_) {}
 }
 
-export async function flushPendingSyncQueue(userId: string): Promise<void> {
-  if (!userId || isFlushingQueue) return;
-  if (!isAuthValidForUser(userId, true)) return;
+export function loadPersistedPendingSync(): PendingSyncItem | null {
+  try {
+    const raw = localStorage.getItem(PENDING_SYNC_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PendingSyncItem;
+    // Check if auth.currentUser exists and ensure matching uid
+    const currentUid = auth.currentUser?.uid;
+    if (parsed && parsed.uid && parsed.payload) {
+      if (currentUid && parsed.uid !== currentUid) {
+        console.warn(`[Offline Queue] Persisted sync queue is for user ${parsed.uid}, but current user is ${currentUid}. Skipping to avoid cross-account leak.`);
+        return null;
+      }
+      const existing = pendingSyncQueue.get(parsed.uid) || {};
+      pendingSyncQueue.set(parsed.uid, { ...existing, ...parsed.payload });
+      return parsed;
+    }
+  } catch (_) {}
+  return null;
+}
+
+// Hydrate on module load
+try {
+  loadPersistedPendingSync();
+} catch (_) {}
+
+export async function flushPendingSyncQueue(userId: string): Promise<boolean> {
+  if (!userId || isFlushingQueue) return false;
+  if (!isAuthValidForUser(userId, true)) return false;
+
+  // Point 1: Guard against user mismatch with current auth user
+  const currentUid = auth.currentUser?.uid;
+  if (currentUid && currentUid !== userId) {
+    console.warn(`[Offline Queue] Cannot flush queue for ${userId}; auth.currentUser is ${currentUid}.`);
+    return false;
+  }
+
+  // Hydrate from localStorage if present and matching
+  try {
+    const raw = localStorage.getItem(PENDING_SYNC_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as PendingSyncItem;
+      if (parsed && parsed.uid === userId && parsed.payload) {
+        const existing = pendingSyncQueue.get(userId) || {};
+        pendingSyncQueue.set(userId, { ...existing, ...parsed.payload });
+      } else if (parsed && parsed.uid !== userId) {
+        console.warn(`[Offline Queue] Persisted sync item belongs to ${parsed.uid}, skipping flush for ${userId}.`);
+      }
+    }
+  } catch (_) {}
 
   const pendingData = pendingSyncQueue.get(userId);
-  if (!pendingData) return;
+  if (!pendingData || Object.keys(pendingData).length === 0) return false;
 
   pendingSyncQueue.delete(userId);
   isFlushingQueue = true;
   try {
     await savePlannerSubcollections(userId, pendingData);
+    // Success: remove from localStorage only if item belongs to this userId
+    try {
+      const raw = localStorage.getItem(PENDING_SYNC_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as PendingSyncItem;
+        if (parsed?.uid === userId) {
+          localStorage.removeItem(PENDING_SYNC_STORAGE_KEY);
+        }
+      }
+    } catch (_) {}
+    return true;
   } catch (_) {
     // If still fails, re-queue silently — merge so that any NEWER data
     // queued while this flush was in flight is not lost
     const current = pendingSyncQueue.get(userId) || {};
-    pendingSyncQueue.set(userId, { ...pendingData, ...current });
+    const reMerged = { ...pendingData, ...current };
+    pendingSyncQueue.set(userId, reMerged);
+    try {
+      const safePayload = serializePayloadSafe(reMerged);
+      localStorage.setItem(PENDING_SYNC_STORAGE_KEY, JSON.stringify({ uid: userId, payload: safePayload }));
+    } catch (_) {}
+    return false;
   } finally {
     isFlushingQueue = false;
   }
@@ -756,37 +846,58 @@ export async function cleanupLeakedParentFields(userId: string): Promise<void> {
 export async function savePlannerSubcollections(userId: string, data: Partial<PlannerData>): Promise<void> {
   if (!userId) return;
 
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    queuePendingSync(userId, data);
+    return;
+  }
+
   if (!isAuthValidForUser(userId, true)) {
     queuePendingSync(userId, data);
     return;
   }
 
-  // 1. Compute and apply diff
-  const diff = computeDiff(userId, data);
-  await applyDiff(userId, diff, data);
+  try {
+    // 1. Compute and apply diff
+    const diff = computeDiff(userId, data);
+    await applyDiff(userId, diff, data);
 
-  // 2. Phase C1 & C3: Daily Stats, Snapshots and Monthly Stats for changed days
-  if (diff.changedStatusDays.length > 0) {
-    for (const dayKey of diff.changedStatusDays) {
-      try {
-        await saveDailyStatsAndSnapshot(userId, dayKey, data);
-      } catch (err) {
-        console.warn(`[Stats Sync Warning] Failed to write daily stats for ${dayKey}:`, err);
+    // 2. Phase C1 & C3: Daily Stats, Snapshots and Monthly Stats for changed days
+    if (diff.changedStatusDays.length > 0) {
+      for (const dayKey of diff.changedStatusDays) {
+        try {
+          await saveDailyStatsAndSnapshot(userId, dayKey, data);
+        } catch (err) {
+          console.warn(`[Stats Sync Warning] Failed to write daily stats for ${dayKey}:`, err);
+        }
       }
     }
-  }
 
-  // 3. Phase C2: Habit Tracking rollup
-  if (Array.isArray(data.reminders)) {
-    try {
-      await syncHabitTrackingDoc(userId, data);
-    } catch (err) {
-      console.warn('[Habit Sync Warning] Failed to sync habit tracking:', err);
+    // 3. Phase C2: Habit Tracking rollup
+    if (Array.isArray(data.reminders)) {
+      try {
+        await syncHabitTrackingDoc(userId, data);
+      } catch (err) {
+        console.warn('[Habit Sync Warning] Failed to sync habit tracking:', err);
+      }
     }
-  }
 
-  // 4. Parent doc size audit
-  await auditPlannerDocSize(userId);
+    // 4. Parent doc size audit
+    await auditPlannerDocSize(userId);
+  } catch (err: any) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    if (
+      errMsg.includes('offline') ||
+      errMsg.includes('network') ||
+      errMsg.includes('Failed to fetch') ||
+      errMsg.includes('unavailable') ||
+      (typeof navigator !== 'undefined' && !navigator.onLine)
+    ) {
+      console.warn('[Firestore Offline Sync] Caught offline write error, queued for reconnection:', errMsg);
+      queuePendingSync(userId, data);
+      return;
+    }
+    throw err;
+  }
 }
 
 // -------------------------------------------------------------

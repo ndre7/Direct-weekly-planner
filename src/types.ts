@@ -62,6 +62,7 @@ export interface DetailsItem {
     month?: string;
     weekday?: string;
     time?: string;
+    year?: number;
   };
 }
 
@@ -100,6 +101,7 @@ export interface SecondaryTask {
     month?: string;
     weekday?: string;
     time?: string;
+    year?: number;
   };
 }
 
@@ -150,6 +152,7 @@ export interface CoreTask {
     month?: string;
     weekday?: string;
     time?: string;
+    year?: number;
   };
   completionDate?: string;
 }

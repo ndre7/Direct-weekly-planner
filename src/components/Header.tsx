@@ -29,6 +29,21 @@ export default function Header({
   const t = TRANSLATIONS[lang];
   const isRtl = lang === 'fa';
 
+  const [isOnline, setIsOnline] = React.useState<boolean>(() =>
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+
+  React.useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   const tabNames: Record<number, { fa: string; en: string }> = {
     1: { fa: 'کلاس ها و کار های روزانه', en: 'Classes & Daily Tasks' },
     6: { fa: 'کار های اصلی', en: 'Core Tasks' },
@@ -77,6 +92,27 @@ export default function Header({
                 <span className="text-xs bg-indigo-50 border border-indigo-200/90 text-indigo-700 px-2.5 py-0.5 rounded-xl font-bold flex items-center gap-1 shadow-3xs">
                   <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 animate-pulse"></span>
                   <span>{currentTabName}</span>
+                </span>
+
+                {/* Connection Status Badge (H2) */}
+                <span
+                  className={`text-[10px] sm:text-xs px-2.5 py-0.5 rounded-xl font-bold flex items-center gap-1.5 border transition-all ${
+                    isOnline
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                      : 'bg-amber-50 border-amber-300 text-amber-800'
+                  }`}
+                  title={
+                    isOnline
+                      ? (isRtl ? 'اتصال برقرار است — همگام‌سازی فعال' : 'Connected — Sync active')
+                      : (isRtl ? 'حالت آفلاین — تغییرات به صورت محلی ذخیره می‌شوند' : 'Offline — Changes saved locally')
+                  }
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+                  <span>
+                    {isOnline
+                      ? (isRtl ? 'همگام‌سازی فعال' : 'Sync Active')
+                      : (isRtl ? 'آفلاین — تغییرها ذخیره می‌شوند' : 'Offline — Changes Saved')}
+                  </span>
                 </span>
               </div>
             </div>
