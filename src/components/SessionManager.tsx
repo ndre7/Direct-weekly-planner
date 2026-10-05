@@ -23,6 +23,7 @@ import {
 import { User, PlannerData } from '../types';
 import { INITIAL_PLANNER_DATA } from '../initialData';
 import { isValidDateValue } from '../lib/plannerSyncEngine.ts';
+import { updateNetworkTimeFromResponse, timeSyncFetch } from '../utils/networkTime';
 
 interface SessionManagerProps {
   currentUser: User | null;
@@ -170,7 +171,7 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
           }
 
           // Validate with server
-          const res = await fetch('/api/auth/validate', {
+          const res = await timeSyncFetch('/api/auth/validate', {
             method: 'POST',
             headers: { 
               'Content-Type': 'application/json',
@@ -180,6 +181,7 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
 
           const resData = await safeParseJson(res);
           if (res.ok) {
+            updateNetworkTimeFromResponse(res);
             setStatus('VALID');
             setIsCriticalAuthFailure(false);
             const verifiedUser: User = {

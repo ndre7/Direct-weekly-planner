@@ -24,7 +24,8 @@ import {
   Mail,
   Bell,
   Send,
-  CheckCircle
+  CheckCircle,
+  Clock
 } from 'lucide-react';
 import CategoriesManagementPage from './CategoriesManagementPage';
 import FirebaseCloudBackup from './FirebaseCloudBackup';
@@ -32,6 +33,7 @@ import { verifyAndRepairPlannerData } from './SessionManager';
 import GoogleCalendarSync from './GoogleCalendarSync';
 import { connectGmail, getCachedGmailToken } from '../lib/auth';
 import { sendGmailEmail, buildReminderEmailHtml, REMINDER_OFFSET_OPTIONS, ReminderOffset } from '../lib/gmailReminders';
+import { getTimeSourceLabel, getOffsetMs } from '../utils/networkTime';
 
 interface SettingsPageProps {
   data: PlannerData;
@@ -542,6 +544,25 @@ export default function SettingsPage({
                       <span>{t.themeDark}</span>
                     </button>
                   </div>
+                </div>
+
+                {/* Setting 5: Network Time Source Status (G4) */}
+                <div className="p-3 rounded-2xl bg-slate-50/70 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 flex flex-col gap-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 font-bold">
+                      <Clock className="w-4 h-4 text-indigo-500" />
+                      <span>{isRtl ? 'منبع زمان سامانه:' : 'Time Source:'}</span>
+                    </div>
+                    <span className="font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded-lg text-[11px] border border-indigo-100 dark:border-indigo-900">
+                      {getTimeSourceLabel() === 'network' ? (isRtl ? 'اینترنت (زمان واقعی)' : 'Internet (Real-time)') : (isRtl ? 'ساعت دستگاه' : 'Device Clock')}
+                    </span>
+                  </div>
+                  {Math.abs(getOffsetMs()) > 5 * 60 * 1000 && (
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 p-1.5 rounded-lg border border-amber-200 dark:border-amber-900 mt-1">
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                      <span>{isRtl ? 'ساعت دستگاه تنظیم نیست (بیش از ۵ دقیقه اختلاف با زمان واقعی اینترنت)' : 'Device clock is out of sync (> 5 min skew)'}</span>
+                    </div>
+                  )}
                 </div>
 
               </div>

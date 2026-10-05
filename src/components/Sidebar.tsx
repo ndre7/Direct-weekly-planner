@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { PlannerData, User } from '../types';
 import { clientRegister, clientLogin, clientGoogleLogin, clientSignOut, getAuthErrorMessage } from '../lib/auth.ts';
+import { getTodayJalali } from '../utils/jalali.ts';
 import { 
   X,
   User as UserIcon,
@@ -171,7 +172,7 @@ export default function Sidebar({
     if (data.weekStartDay && data.weekEndDay) {
       const startM = data.weekMonth || (isRtl ? 'خرداد' : 'June');
       const endM = data.weekEndMonth || startM;
-      const startY = data.weekYear || (isRtl ? 1405 : 2026);
+      const startY = data.weekYear || getTodayJalali().year;
       const endY = data.weekEndYear || startY;
       if (startY !== endY) {
         return isRtl 

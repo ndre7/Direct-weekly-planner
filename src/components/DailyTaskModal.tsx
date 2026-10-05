@@ -2,6 +2,7 @@ import React from 'react';
 import { DailyTask, Category, Language } from '../types';
 import { TRANSLATIONS } from '../translations';
 import { X, Save, Trash2 } from 'lucide-react';
+import { getTodayJalali, formatCompletionDate } from '../utils/jalali';
 
 interface DailyTaskModalProps {
   isOpen: boolean;
@@ -98,7 +99,7 @@ export default function DailyTaskModal({
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => onChange({ ...task, status: 'pending' })}
+                onClick={() => onChange({ ...task, status: 'pending', completionDate: undefined })}
                 className={`flex-1 text-xs py-2 px-1 font-semibold rounded-lg border text-center transition-all cursor-pointer ${
                   task.status === 'pending'
                     ? 'bg-amber-50 text-amber-800 border-amber-300'
@@ -109,7 +110,15 @@ export default function DailyTaskModal({
               </button>
               <button
                 type="button"
-                onClick={() => onChange({ ...task, status: 'completed' })}
+                onClick={() => {
+                  const today = getTodayJalali();
+                  const todayFormatted = formatCompletionDate(today.day, today.monthName, today.year);
+                  onChange({
+                    ...task,
+                    status: 'completed',
+                    completionDate: task.completionDate || todayFormatted
+                  });
+                }}
                 className={`flex-1 text-xs py-2 px-1 font-semibold rounded-lg border text-center transition-all cursor-pointer ${
                   task.status === 'completed'
                     ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
@@ -120,7 +129,7 @@ export default function DailyTaskModal({
               </button>
               <button
                 type="button"
-                onClick={() => onChange({ ...task, status: 'failed' })}
+                onClick={() => onChange({ ...task, status: 'failed', completionDate: undefined })}
                 className={`flex-1 text-xs py-2 px-1 font-semibold rounded-lg border text-center transition-all cursor-pointer ${
                   task.status === 'failed'
                     ? 'bg-rose-50 text-rose-800 border-rose-300'

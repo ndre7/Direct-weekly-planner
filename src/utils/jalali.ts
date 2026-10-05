@@ -1,3 +1,5 @@
+import { getNow } from './networkTime';
+
 export const YEARS_1400_TO_1430 = Array.from({ length: 31 }, (_, i) => 1400 + i);
 
 export const JALALI_MONTHS = [
@@ -20,13 +22,10 @@ export const JALALI_WEEKDAYS = [
   { fa: 'جمعه', en: 'Friday', key: 'friday' }
 ];
 
-export const LEAP_YEARS_1400_1430 = new Set([1403, 1407, 1411, 1415, 1419, 1423, 1428]);
+export const LEAP_YEARS_1400_1430 = [1403, 1408, 1412, 1416, 1420, 1424, 1428];
 
 export const isLeapJalali = (jy: number): boolean => {
-  if (jy >= 1400 && jy <= 1430) {
-    return LEAP_YEARS_1400_1430.has(jy);
-  }
-  // Standard Birashk Jalali algorithm for other years
+  // Always use Standard Birashk Jalali algorithm (E1)
   const breaks = [-61, 9, 38, 199, 426, 686, 756, 818, 1111, 1181, 1210, 1635, 2060, 2097, 2192, 2262, 2324, 2394, 2456, 3178];
   let bl = breaks.length;
   let jp = breaks[0];
@@ -114,11 +113,11 @@ export function gregorianToJalali(gy: number, gm: number, gd: number) {
   return { jy, jm, jd };
 }
 
-export function getTodayJalali(date: Date = new Date()) {
+export function getTodayJalali(date: Date = getNow()) {
   try {
-    const gy = date.getFullYear();
-    const gm = date.getMonth() + 1;
-    const gd = date.getDate();
+    const gy = date.getUTCFullYear();
+    const gm = date.getUTCMonth() + 1;
+    const gd = date.getUTCDate();
     const { jy, jm, jd } = gregorianToJalali(gy, gm, gd);
     const monthName = JALALI_MONTHS[jm - 1] || 'فروردین';
     return { year: jy, monthIdx: jm - 1, monthName, day: jd };
@@ -153,7 +152,7 @@ export function addJalaliDays(year: number, monthIdx: number, day: number, offse
   return { year: y, monthIdx: m, monthName: JALALI_MONTHS[m], day: d };
 }
 
-export function getCurrentJalaliWeekRange(date: Date = new Date()) {
+export function getCurrentJalaliWeekRange(date: Date = getNow()) {
   const today = getTodayJalali(date);
   const { index: todayWeekdayIdx } = getJalaliWeekday(today.year, today.monthIdx + 1, today.day);
 
@@ -193,4 +192,13 @@ export function getNextWeekRangeFromEnd(endYear: number, endMonthName: string, e
     weekYear: start.year
   };
 }
+
+// Centralized completion date formatting: formatCompletionDate(day, monthName, year) -> 'YYYY/MM/DD'
+export const formatCompletionDate = (day: number, monthName: string, year: number): string => {
+  const mIndex = JALALI_MONTHS.indexOf(monthName);
+  const m = mIndex !== -1 ? mIndex + 1 : 1;
+  const mm = m < 10 ? `0${m}` : `${m}`;
+  const dd = day < 10 ? `0${day}` : `${day}`;
+  return `${year}/${mm}/${dd}`;
+};
 

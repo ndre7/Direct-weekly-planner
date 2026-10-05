@@ -14,6 +14,7 @@ import {
   Brain,
   Sparkles,
   ChevronLeft,
+  ChevronRight,
   Info,
   CalendarCheck,
   Check,
@@ -25,7 +26,7 @@ import { collection, getDocs } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase.ts';
 import { PlannerData, Category } from '../types';
 import { safeParseJson } from '../lib/auth.ts';
-import { isLeapJalali, jalaliToGregorian, getTodayJalali, JALALI_MONTHS } from '../utils/jalali.ts';
+import { isLeapJalali, jalaliToGregorian, getTodayJalali, JALALI_MONTHS, getDaysInJalaliMonth, getJalaliWeekday } from '../utils/jalali.ts';
 
 const iconMap: Record<string, any> = {
   AlertTriangle,
@@ -133,6 +134,94 @@ function isSameDate(completionDate: string | undefined, jYear: number, jMonthIdx
   return false;
 }
 
+const DEFAULT_CATEGORY_COLORS = [
+  '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899',
+  '#06b6d4', '#f97316', '#14b8a6', '#6366f1', '#84cc16'
+];
+
+const TAILWIND_COLOR_MAP: Record<string, string> = {
+  blue: '#3b82f6',
+  sky: '#0284c7',
+  indigo: '#6366f1',
+  violet: '#8b5cf6',
+  purple: '#a855f7',
+  emerald: '#10b981',
+  green: '#22c55e',
+  teal: '#14b8a6',
+  cyan: '#06b6d4',
+  amber: '#f59e0b',
+  yellow: '#eab308',
+  orange: '#f97316',
+  red: '#ef4444',
+  rose: '#f43f5e',
+  pink: '#ec4899',
+  slate: '#64748b',
+  gray: '#6b7280',
+  zinc: '#71717a',
+};
+
+// P1: Robust color extractor for categories
+function getCategoryHexColor(colorStr?: string, defaultIndex: number = 0): string {
+  if (!colorStr) return DEFAULT_CATEGORY_COLORS[defaultIndex % DEFAULT_CATEGORY_COLORS.length];
+  const trimmed = colorStr.trim();
+  if (trimmed.startsWith('#') || trimmed.startsWith('rgb')) return trimmed;
+
+  const match = trimmed.match(/bg-([a-z]+)(?:-(\d+))?/);
+  if (match) {
+    const colorName = match[1];
+    if (TAILWIND_COLOR_MAP[colorName]) {
+      return TAILWIND_COLOR_MAP[colorName];
+    }
+  }
+  return DEFAULT_CATEGORY_COLORS[defaultIndex % DEFAULT_CATEGORY_COLORS.length];
+}
+
+// P5: Automatically find the month and year with the latest activity
+function findLatestActivityMonth(data: PlannerData): { year: number; monthName: string } {
+  let latestDate: { year: number; monthName: string } | null = null;
+  let maxWeight = -1;
+
+  const checkDateStr = (dateStr?: string) => {
+    if (!dateStr) return;
+    const clean = toEnglishDigits(dateStr.trim());
+    const match = clean.match(/^(\d{4})[/.-](\d{1,2})/);
+    if (match) {
+      const y = parseInt(match[1], 10);
+      const mNum = parseInt(match[2], 10);
+      if (y >= 1300 && y <= 1500 && mNum >= 1 && mNum <= 12) {
+        const weight = y * 100 + mNum;
+        if (weight > maxWeight) {
+          maxWeight = weight;
+          latestDate = { year: y, monthName: JALALI_MONTHS[mNum - 1] };
+        }
+      }
+    }
+  };
+
+  (data.coreTasks || []).forEach(t => {
+    if (t.status === 'completed') checkDateStr(t.completionDate);
+  });
+  (data.secondaryTasks || []).forEach(t => {
+    if (t.status === 'completed') checkDateStr(t.completionDate);
+  });
+  Object.values(data.dailyTasks || {}).forEach(tasks => {
+    tasks.forEach(t => {
+      if (t.status === 'completed') checkDateStr(t.completionDate);
+    });
+  });
+  (data.detailsColumns || []).forEach(col => {
+    (col.items || []).forEach(item => {
+      if (item.completed) checkDateStr(item.date);
+    });
+  });
+
+  if (latestDate) return latestDate;
+
+  // Fallback to today's real Jalali month
+  const today = getTodayJalali();
+  return { year: today.year, monthName: today.monthName };
+}
+
 export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) {
   const [timeframe, setTimeframe] = useState<Timeframe>('weekly');
   const [viewType, setViewType] = useState<'calendar' | 'semester'>('calendar');
@@ -142,6 +231,19 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
   const [donutType, setDonutType] = useState<'success' | 'failed'>('success');
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
   const [clickedActions, setClickedActions] = useState<Record<string, boolean>>({});
+
+  // P5 & Capability 1: Dynamic Heatmap Month and Day Inspector
+  const defaultHeatmapMonth = useMemo(() => findLatestActivityMonth(data), [data]);
+  const [currentHeatmapMonth, setCurrentHeatmapMonth] = useState<{ year: number; monthName: string }>(defaultHeatmapMonth);
+  const [selectedHeatmapDay, setSelectedHeatmapDay] = useState<{
+    date: string;
+    count: number;
+    tasks: Array<{ id: string; title: string; category: string; type: string }>;
+  } | null>(null);
+
+  useEffect(() => {
+    setCurrentHeatmapMonth(defaultHeatmapMonth);
+  }, [defaultHeatmapMonth]);
 
   const [aiInsights, setAiInsights] = useState<any[] | null>(() => {
     const saved = localStorage.getItem(`ai_insights_${data.month}_${data.weekStartDay || 'default'}`);
@@ -346,23 +448,55 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
       ? (totalCancellations / (actualTotalTasks + totalCancellations)) * 100 
       : 0;
 
-    // Real weekday productivity trend
-    const weekdayLabels = [
-      { key: 'saturday', label: 'ش' },
-      { key: 'sunday', label: 'ی' },
-      { key: 'monday', label: 'د' },
-      { key: 'tuesday', label: 'س' },
-      { key: 'wednesday', label: 'چ' },
-      { key: 'thursday', label: 'پ' },
-      { key: 'friday', label: 'ج' },
+    // P2: Real weekday productivity trend (real date labels, null instead of fake 0/70)
+    const weekdayNames = [
+      { key: 'saturday', name: 'شنبه' },
+      { key: 'sunday', name: 'یکشنبه' },
+      { key: 'monday', name: 'دوشنبه' },
+      { key: 'tuesday', name: 'سه‌شنبه' },
+      { key: 'wednesday', name: 'چهارشنبه' },
+      { key: 'thursday', name: 'پنج‌شنبه' },
+      { key: 'friday', name: 'جمعه' },
     ];
 
-    const weeklyTrend = weekdayLabels.map(({ key, label }) => {
+    const weekStart = data.weekStartDay || 1;
+    const weekMonthName = data.weekMonth || 'خرداد';
+    const weekYearNum = data.weekYear || getTodayJalali().year;
+    const daysInCurMonth = getDaysInJalaliMonth(weekMonthName, weekYearNum);
+
+    const weeklyTrend = weekdayNames.map(({ key, name }, idx) => {
+      let dayNumber = weekStart + idx;
+      let mName = weekMonthName;
+      if (dayNumber > daysInCurMonth) {
+        dayNumber = dayNumber - daysInCurMonth;
+        const curMIdx = JALALI_MONTHS.indexOf(weekMonthName);
+        if (curMIdx !== -1) {
+          mName = JALALI_MONTHS[(curMIdx + 1) % 12];
+        }
+      }
+      const label = `${name} ${dayNumber}`;
+      const mIdx = JALALI_MONTHS.indexOf(mName);
+
       const dayTasks = (data.dailyTasks && data.dailyTasks[key]) || [];
-      const total = dayTasks.length;
-      const completed = dayTasks.filter(t => t.status === 'completed').length;
-      const val = total > 0 ? Math.round((completed / total) * 100) : (actualCompletedTasks > 0 ? 70 : 0);
-      return { label, value: val };
+      const compDaily = dayTasks.filter(t => t.status === 'completed').length;
+      let tot = dayTasks.length;
+      let comp = compDaily;
+
+      (data.coreTasks || []).forEach(t => {
+        if (t.status === 'completed' && isSameDate(t.completionDate, weekYearNum, mIdx, dayNumber)) {
+          comp++;
+          tot++;
+        }
+      });
+      (data.secondaryTasks || []).forEach(t => {
+        if (t.status === 'completed' && isSameDate(t.completionDate, weekYearNum, mIdx, dayNumber)) {
+          comp++;
+          tot++;
+        }
+      });
+
+      const value = tot > 0 ? Math.round((comp / tot) * 100) : null;
+      return { label, value };
     });
 
     const weeklyProcrastinationCauses = [
@@ -373,38 +507,84 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
       { period: 'چهارشنبه', dayKey: 'wednesday' },
       { period: 'پنج‌شنبه', dayKey: 'thursday' },
       { period: 'جمعه', dayKey: 'friday' },
-    ].map(({ period, dayKey }) => {
+    ].map(({ period, dayKey }, idx) => {
+      let dayNumber = weekStart + idx;
+      let mName = weekMonthName;
+      if (dayNumber > daysInCurMonth) {
+        dayNumber = dayNumber - daysInCurMonth;
+      }
+      const label = `${period} ${dayNumber}`;
       const dayTasks = (data.dailyTasks && data.dailyTasks[dayKey]) || [];
       const failedCount = dayTasks.filter(t => t.status === 'failed').length;
+      const postponedCount = (data.postponedEvents || []).filter(e => {
+        return e.date && isSameDate(e.date, weekYearNum, JALALI_MONTHS.indexOf(mName), dayNumber);
+      }).length;
+      const totFail = failedCount + postponedCount;
       return {
-        period,
-        timeLimit: Math.ceil(failedCount / 2),
-        fatigue: Math.floor(failedCount / 4),
-        distraction: Math.floor(failedCount / 4),
+        period: label,
+        timeLimit: Math.ceil(totFail / 2),
+        fatigue: Math.floor(totFail / 4),
+        distraction: Math.floor(totFail / 4),
+        totalFailed: totFail
       };
     });
 
-    // Real weekly category share
-    const catMap: Record<string, number> = {};
-    (data.coreTasks || []).forEach(t => {
-      if (t.status === 'completed' && t.categoryId) catMap[t.categoryId] = (catMap[t.categoryId] || 0) + 1;
+    // P1: Real dynamic category share from data.categories with deduplication
+    const rawCategories = (data.categories || []).filter(c => c.id !== 'done' && c.id !== 'not_done');
+    const validCategoriesMap = new Map<string, Category>();
+    rawCategories.forEach((c, i) => {
+      const k = c.id || `cat_${i}`;
+      if (!validCategoriesMap.has(k)) {
+        validCategoriesMap.set(k, c);
+      }
     });
-    (data.secondaryTasks || []).forEach(t => {
-      if (t.status === 'completed' && t.categoryId) catMap[t.categoryId] = (catMap[t.categoryId] || 0) + 1;
-    });
-    Object.values(data.dailyTasks || {}).forEach(tasks => {
-      tasks.forEach(t => {
-        if (t.status === 'completed' && t.categoryId) catMap[t.categoryId] = (catMap[t.categoryId] || 0) + 1;
+    const validCategories = Array.from(validCategoriesMap.values());
+
+    const categoryShareMap = new Map<string, { categoryId: string; name: string; count: number; color: string }>();
+
+    validCategories.forEach((cat, idx) => {
+      const segKey = cat.id || `cat_${idx}`;
+      let count = 0;
+      (data.coreTasks || []).forEach(t => {
+        if (t.status === 'completed' && t.categoryId === cat.id) count++;
       });
+      (data.secondaryTasks || []).forEach(t => {
+        if (t.status === 'completed' && t.categoryId === cat.id) count++;
+      });
+      Object.values(data.dailyTasks || {}).forEach(tasks => {
+        tasks.forEach(t => {
+          if (t.status === 'completed' && t.categoryId === cat.id) count++;
+        });
+      });
+
+      if (categoryShareMap.has(segKey)) {
+        categoryShareMap.get(segKey)!.count += count;
+      } else {
+        categoryShareMap.set(segKey, {
+          categoryId: segKey,
+          name: cat.nameFa || cat.nameEn || segKey,
+          count,
+          color: getCategoryHexColor(cat.color, idx)
+        });
+      }
     });
 
-    const weeklyCategoryShare = [
-      ...(!isUniversityInactive ? [{ categoryId: 'university', name: 'دانشگاه', count: catMap['university'] || 0, color: '#3b82f6' }] : []),
-      { categoryId: 'programming', name: 'برنامه نویسی', count: catMap['programming'] || 0, color: '#f59e0b' },
-      ...(!isLanguageInactive ? [{ categoryId: 'language', name: 'آموزش زبان', count: catMap['language'] || 0, color: '#10b981' }] : []),
-      { categoryId: 'sport', name: 'ورزش و سلامت', count: catMap['sport'] || 0, color: '#8b5cf6' },
-      { categoryId: 'other', name: 'سایر موارد', count: catMap['other'] || 0, color: '#ec4899' },
-    ];
+    const sumKnown = Array.from(categoryShareMap.values()).reduce((s, c) => s + c.count, 0);
+    const otherCount = Math.max(0, actualCompletedTasks - sumKnown);
+    if (otherCount > 0) {
+      if (categoryShareMap.has('other')) {
+        categoryShareMap.get('other')!.count += otherCount;
+      } else {
+        categoryShareMap.set('other', {
+          categoryId: 'other',
+          name: 'سایر موارد',
+          count: otherCount,
+          color: '#ec4899'
+        });
+      }
+    }
+
+    const weeklyCategoryShare = Array.from(categoryShareMap.values());
 
     // Real dynamic weekly insights
     const weeklyInsights = [
@@ -546,10 +726,15 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
           weeksTrend[weekIdx].count += (ds.tasksCompleted || 0);
           weeksTrend[weekIdx].total += (ds.tasksTotal || 0);
         });
-        const mTrend = weeksTrend.map(w => ({
-          label: w.label,
-          value: w.total > 0 ? Math.round((w.count / w.total) * 100) : 0
-        }));
+        const mTrend = (firestoreDailyStats && firestoreDailyStats.length > 0)
+          ? firestoreDailyStats.slice(0, 30).reverse().map((ds: any) => ({
+              label: ds.date || '',
+              value: ds.tasksTotal > 0 ? Math.round(((ds.tasksCompleted || 0) / ds.tasksTotal) * 100) : null
+            }))
+          : weeksTrend.map(w => ({
+              label: w.label,
+              value: w.total > 0 ? Math.round((w.count / w.total) * 100) : null
+            }));
 
         return {
           tcr: mTCR,
@@ -557,13 +742,12 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
           totalTasks: mTot,
           habitConsistency: mHCI,
           procrastinationRate: Math.round(actualProcrastinationRate),
-          categoryShare: [
-            ...(!isUniversityInactive ? [{ categoryId: 'university', name: 'دانشگاه', count: mCatMap['university'] || 0, color: '#3b82f6' }] : []),
-            { categoryId: 'programming', name: 'برنامه نویسی', count: mCatMap['programming'] || 0, color: '#f59e0b' },
-            ...(!isLanguageInactive ? [{ categoryId: 'language', name: 'آموزش زبان', count: mCatMap['language'] || 0, color: '#10b981' }] : []),
-            { categoryId: 'sport', name: 'ورزش و سلامت', count: mCatMap['sport'] || 0, color: '#8b5cf6' },
-            { categoryId: 'other', name: 'سایر موارد', count: mCatMap['other'] || 0, color: '#ec4899' },
-          ],
+          categoryShare: validCategories.map((cat, idx) => ({
+            categoryId: cat.id,
+            name: cat.nameFa || cat.nameEn || cat.id,
+            count: mCatMap[cat.id] || (weeklyCategoryShare.find(w => w.categoryId === cat.id)?.count || 0),
+            color: getCategoryHexColor(cat.color, idx)
+          })),
           radarBalance: { study: 75, coding: 70, language: 65, sport: 60, leisure: 55 },
           procrastinationCauses: weeksTrend.map(w => ({
             period: w.label,
@@ -626,10 +810,12 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
             fatigue: Math.max(0, Math.floor(((m.tasksTotal || 0) - (m.tasksCompleted || 0)) / 4)),
             distraction: Math.max(0, Math.floor(((m.tasksTotal || 0) - (m.tasksCompleted || 0)) / 4))
           })),
-          productivityTrend: slice6.map((m: any) => ({
-            label: m.month || '',
-            value: m.tasksTotal > 0 ? Math.round((m.tasksCompleted / m.tasksTotal) * 100) : 0
-          })),
+          productivityTrend: slice6
+            .filter((m: any) => m && (m.month || m.date))
+            .map((m: any) => ({
+              label: m.month || '',
+              value: m.tasksTotal > 0 ? Math.round((m.tasksCompleted / m.tasksTotal) * 100) : null
+            })),
           insights: [
             {
               type: 'info' as const,
@@ -684,10 +870,12 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
             fatigue: Math.max(0, Math.floor(((m.tasksTotal || 0) - (m.tasksCompleted || 0)) / 4)),
             distraction: Math.max(0, Math.floor(((m.tasksTotal || 0) - (m.tasksCompleted || 0)) / 4))
           })),
-          productivityTrend: slice12.map((m: any) => ({
-            label: m.month || '',
-            value: m.tasksTotal > 0 ? Math.round((m.tasksCompleted / m.tasksTotal) * 100) : 0
-          })),
+          productivityTrend: slice12
+            .filter((m: any) => m && (m.month || m.date))
+            .map((m: any) => ({
+              label: m.month || '',
+              value: m.tasksTotal > 0 ? Math.round((m.tasksCompleted / m.tasksTotal) * 100) : null
+            })),
           insights: [
             {
               type: 'success' as const,
@@ -703,13 +891,14 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
   }, [data, timeframe, viewType, selectedSemester, firestoreDailyStats, firestoreMonthlyStats]);
 
   // ----------------------------------------------------
-  // HEATMAP GENERATOR (SOLAR JALALI CALENDAR STYLE) - D2 & D3
+  // HEATMAP GENERATOR (SOLAR JALALI CALENDAR STYLE) - P5 & Capabilities
   // ----------------------------------------------------
   const heatmapData = useMemo(() => {
     const days = ['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'جمعه'];
 
-    // D2: Parse data.month («1405 خرداد») safely with fallback
-    const { year: activeYear, monthName: activeMonthName } = parseMonthYear(data);
+    // P5: Use user-navigated or auto-detected active month & year
+    const activeYear = currentHeatmapMonth.year;
+    const activeMonthName = currentHeatmapMonth.monthName;
     const jalaliMonths = JALALI_MONTHS;
 
     let monthsInOrder: Array<{ name: string; year: number; index: number }> = [];
@@ -750,28 +939,39 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
       if (m.index >= 6 && m.index <= 10) {
         daysCount = 30;
       } else if (m.index === 11) {
-        // D3: Use imported isLeapJalali from utils/jalali.ts
         daysCount = isLeapJalali(m.year) ? 30 : 29;
       }
       return { ...m, days: daysCount };
     });
 
     const monthsData = monthsWithDays.map((m) => {
-      const colCount = Math.ceil(m.days / 7);
+      // Find the weekday of day 1 of this month (0 = Saturday, ..., 6 = Friday)
+      const firstDayWeekday = getJalaliWeekday(m.year, m.index + 1, 1).index;
+      const totalSlots = firstDayWeekday + m.days;
+      const colCount = Math.ceil(totalSlots / 7);
       const grid: any[][] = [];
 
       for (let c = 0; c < colCount; c++) {
         const colData = [];
         for (let r = 0; r < 7; r++) {
-          const dayNumber = c * 7 + r + 1;
-          if (dayNumber <= m.days) {
+          const slotIndex = c * 7 + r;
+          const dayNumber = slotIndex - firstDayWeekday + 1;
+          if (dayNumber >= 1 && dayNumber <= m.days) {
             let count = 0;
+            const tasks: Array<{ id: string; title: string; category: string; type: string }> = [];
 
             // 1. Daily tasks
             Object.values(data.dailyTasks || {}).forEach(taskList => {
               (taskList || []).forEach(t => {
                 if (t.status === 'completed' && isSameDate(t.completionDate, m.year, m.index, dayNumber)) {
                   count++;
+                  const catObj = (data.categories || []).find(c => c.id === t.categoryId);
+                  tasks.push({
+                    id: t.id,
+                    title: t.textFa || t.textEn || 'کار روزانه',
+                    category: catObj?.nameFa || 'دسته‌بندی نشده',
+                    type: 'کار روزانه'
+                  });
                 }
               });
             });
@@ -780,21 +980,41 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
             (data.secondaryTasks || []).forEach(t => {
               if (t.status === 'completed' && isSameDate(t.completionDate, m.year, m.index, dayNumber)) {
                 count++;
+                const catObj = (data.categories || []).find(c => c.id === t.categoryId);
+                tasks.push({
+                  id: t.id,
+                  title: t.textFa || t.textEn || 'کار فرعی',
+                  category: catObj?.nameFa || 'دسته‌بندی نشده',
+                  type: 'کار فرعی'
+                });
               }
             });
 
-            // 3. Core tasks (D2: ONLY count if completed AND completionDate matches day!)
+            // 3. Core tasks
             (data.coreTasks || []).forEach(t => {
               if (t.status === 'completed' && isSameDate(t.completionDate, m.year, m.index, dayNumber)) {
                 count++;
+                const catObj = (data.categories || []).find(c => c.id === t.categoryId);
+                tasks.push({
+                  id: t.id,
+                  title: t.title || 'کار اصلی',
+                  category: catObj?.nameFa || 'دسته‌بندی نشده',
+                  type: 'کار اصلی'
+                });
               }
             });
 
             // 4. Exams and Presentations
-            (data.examColumns || []).forEach(col => {
-              col.items.forEach(item => {
+            (data.detailsColumns || []).forEach(col => {
+              (col.items || []).forEach(item => {
                 if (item.completed && isSameDate(item.date, m.year, m.index, dayNumber)) {
                   count++;
+                  tasks.push({
+                    id: item.id,
+                    title: item.text || 'ددلاین / آزمون',
+                    category: col.titleFa || 'آیتم',
+                    type: 'رویداد تفکیک‌شده'
+                  });
                 }
               });
             });
@@ -804,7 +1024,8 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
               dayName: days[r],
               count,
               date: `${days[r]}، ${dayNumber} ${m.name} ${m.year}`,
-              dayOfMonth: dayNumber
+              dayOfMonth: dayNumber,
+              tasks
             });
           } else {
             colData.push(null);
@@ -821,161 +1042,217 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
     });
 
     return { monthsData, days };
-  }, [data, timeframe]);
+  }, [data, timeframe, currentHeatmapMonth]);
 
-  // Calculate coordinates for Donut Chart (D4: other = totalFailed - sumKnown)
+  // P1: Calculate coordinates for Donut Chart dynamically from user's categories
   const donutData = useMemo(() => {
-    const baseShare = stats.categoryShare;
-    
-    if (donutType === 'success') {
-      const total = baseShare.reduce((sum, item) => sum + item.count, 0);
-      let accumulatedAngle = 0;
-      return baseShare.map(item => {
-        const percentage = total > 0 ? (item.count / total) * 100 : 0;
-        const angle = (percentage / 100) * 360;
-        const startAngle = accumulatedAngle;
-        const endAngle = accumulatedAngle + angle;
-        accumulatedAngle += angle;
+    const rawCategories = (data.categories || []).filter(c => c.id !== 'done' && c.id !== 'not_done');
+    let total = 0;
+    let sumKnown = 0;
 
-        const radius = 60;
-        const x1 = 100 + radius * Math.cos((startAngle - 90) * Math.PI / 180);
-        const y1 = 100 + radius * Math.sin((startAngle - 90) * Math.PI / 180);
-        const x2 = 100 + radius * Math.cos((endAngle - 90) * Math.PI / 180);
-        const y2 = 100 + radius * Math.sin((endAngle - 90) * Math.PI / 180);
-        const largeArcFlag = angle > 180 ? 1 : 0;
-        const pathData = `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArcFlag} 1 ${x2} ${y2}`;
+    const categoryMap = new Map<string, { categoryId: string; name: string; count: number; color: string }>();
 
-        return {
-          ...item,
-          percentage: Math.round(percentage),
-          pathData,
-          angle,
-          startAngle,
-          endAngle,
-        };
-      });
-    } else {
-      // D4: Count totalFailed and subtract recognized categories
-      let totalFailed = 0;
-      Object.values(data.dailyTasks || {}).forEach(taskList => {
-        (taskList || []).forEach(t => {
-          if (t.status === 'failed') totalFailed++;
-        });
-      });
-      (data.secondaryTasks || []).forEach(t => {
-        if (t.status === 'failed') totalFailed++;
-      });
-      (data.coreTasks || []).forEach(t => {
-        if ((t.status as string) === 'failed') totalFailed++;
-      });
-      totalFailed += (data.postponedEvents || []).length;
-
-      let sumKnown = 0;
-      const itemsWithCounts = baseShare.map(item => {
-        if (item.categoryId === 'other') {
-          return { ...item, count: 0 };
-        }
-        let count = 0;
-        Object.values(data.dailyTasks || {}).forEach(taskList => {
-          (taskList || []).forEach(t => {
-            if (t.categoryId === item.categoryId && t.status === 'failed') count++;
-          });
+    rawCategories.forEach((cat, idx) => {
+      const segKey = cat.id || `cat_${idx}`;
+      let count = 0;
+      if (donutType === 'success') {
+        (data.coreTasks || []).forEach(t => {
+          if (t.status === 'completed' && t.categoryId === cat.id) count++;
         });
         (data.secondaryTasks || []).forEach(t => {
-          if (t.categoryId === item.categoryId && t.status === 'failed') count++;
+          if (t.status === 'completed' && t.categoryId === cat.id) count++;
         });
+        Object.values(data.dailyTasks || {}).forEach(tasks => {
+          tasks.forEach(t => {
+            if (t.status === 'completed' && t.categoryId === cat.id) count++;
+          });
+        });
+      } else {
         (data.coreTasks || []).forEach(t => {
-          if (t.categoryId === item.categoryId && (t.status as string) === 'failed') count++;
+          if (t.status === 'failed' && t.categoryId === cat.id) count++;
         });
-        sumKnown += count;
-        return { ...item, count };
-      });
+        (data.secondaryTasks || []).forEach(t => {
+          if (t.status === 'failed' && t.categoryId === cat.id) count++;
+        });
+        Object.values(data.dailyTasks || {}).forEach(tasks => {
+          tasks.forEach(t => {
+            if (t.status === 'failed' && t.categoryId === cat.id) count++;
+          });
+        });
+      }
+      sumKnown += count;
 
-      // Slice for other = totalFailed - sumKnown
-      const otherSlice = Math.max(0, totalFailed - sumKnown);
-      const activeShare = itemsWithCounts.map(item => {
-        if (item.categoryId === 'other') {
-          return { ...item, count: otherSlice };
+      if (categoryMap.has(segKey)) {
+        categoryMap.get(segKey)!.count += count;
+      } else {
+        categoryMap.set(segKey, {
+          categoryId: segKey,
+          name: cat.nameFa || cat.nameEn || segKey,
+          count,
+          color: getCategoryHexColor(cat.color, idx)
+        });
+      }
+    });
+
+    if (donutType === 'success') {
+      let totalCompleted = 0;
+      (data.coreTasks || []).forEach(t => { if (t.status === 'completed') totalCompleted++; });
+      (data.secondaryTasks || []).forEach(t => { if (t.status === 'completed') totalCompleted++; });
+      Object.values(data.dailyTasks || {}).forEach(tasks => {
+        tasks.forEach(t => { if (t.status === 'completed') totalCompleted++; });
+      });
+      const otherCount = Math.max(0, totalCompleted - sumKnown);
+      if (otherCount > 0) {
+        if (categoryMap.has('other')) {
+          categoryMap.get('other')!.count += otherCount;
+        } else {
+          categoryMap.set('other', {
+            categoryId: 'other',
+            name: 'سایر موارد',
+            count: otherCount,
+            color: '#ec4899'
+          });
         }
-        return item;
+      }
+      total = totalCompleted;
+    } else {
+      let totalFailed = 0;
+      (data.coreTasks || []).forEach(t => { if (t.status === 'failed') totalFailed++; });
+      (data.secondaryTasks || []).forEach(t => { if (t.status === 'failed') totalFailed++; });
+      Object.values(data.dailyTasks || {}).forEach(tasks => {
+        tasks.forEach(t => { if (t.status === 'failed') totalFailed++; });
       });
+      totalFailed += (data.postponedEvents || []).length;
+      const otherCount = Math.max(0, totalFailed - sumKnown);
+      if (otherCount > 0) {
+        if (categoryMap.has('other')) {
+          categoryMap.get('other')!.count += otherCount;
+        } else {
+          categoryMap.set('other', {
+            categoryId: 'other',
+            name: 'سایر موارد',
+            count: otherCount,
+            color: '#ec4899'
+          });
+        }
+      }
+      total = totalFailed;
+    }
 
-      const total = activeShare.reduce((sum, item) => sum + item.count, 0);
-      let accumulatedAngle = 0;
-      return activeShare.map(item => {
-        const percentage = total > 0 ? (item.count / total) * 100 : 0;
-        const angle = (percentage / 100) * 360;
-        const startAngle = accumulatedAngle;
-        const endAngle = accumulatedAngle + angle;
-        accumulatedAngle += angle;
+    const baseItems = Array.from(categoryMap.values());
 
-        const radius = 60;
+    // Legend items: include all categories user has with unique keys
+    const legendItems = baseItems.map((item, idx) => ({
+      ...item,
+      key: `seg_${item.categoryId}_${idx}`,
+      percentage: total > 0 ? Math.round((item.count / total) * 100) : 0
+    }));
+
+    // Slices for SVG Donut: sorted descending by count, excluding count === 0
+    const nonZeroItems = baseItems
+      .filter(item => item.count > 0)
+      .sort((a, b) => b.count - a.count);
+
+    let accumulatedAngle = 0;
+    const slices = nonZeroItems.map((item, idx) => {
+      const percentage = total > 0 ? (item.count / total) * 100 : 0;
+      const angle = (percentage / 100) * 360;
+      const startAngle = accumulatedAngle;
+      const endAngle = accumulatedAngle + angle;
+      accumulatedAngle += angle;
+
+      const radius = 60;
+      let pathData = '';
+      if (angle >= 359.9) {
+        pathData = `M 100 ${100 - radius} A ${radius} ${radius} 0 1 1 100 ${100 + radius} A ${radius} ${radius} 0 1 1 100 ${100 - radius}`;
+      } else {
         const x1 = 100 + radius * Math.cos((startAngle - 90) * Math.PI / 180);
         const y1 = 100 + radius * Math.sin((startAngle - 90) * Math.PI / 180);
         const x2 = 100 + radius * Math.cos((endAngle - 90) * Math.PI / 180);
         const y2 = 100 + radius * Math.sin((endAngle - 90) * Math.PI / 180);
         const largeArcFlag = angle > 180 ? 1 : 0;
-        const pathData = `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArcFlag} 1 ${x2} ${y2}`;
-
-        return {
-          ...item,
-          percentage: Math.round(percentage),
-          pathData,
-          angle,
-          startAngle,
-          endAngle,
-        };
-      });
-    }
-  }, [stats, donutType, data]);
-
-  // Calculate active categories and values for Radar Chart dynamically
-  const activeCats = useMemo(() => {
-    const classStatus = data.activeClassStatus || "همه کلاس ها فعال";
-    const isUniversityInactive = (classStatus === "همه کلاس ها غیر فعال" || classStatus === "فقط کلاس زبان فعال");
-    const isLanguageInactive = (classStatus === "همه کلاس ها غیر فعال" || classStatus === "فقط کلاس دانشگاه فعال");
-
-    // Dynamic categories based on user list or standard fallbacks
-    const baseCategories = (data.categories && data.categories.length > 0)
-      ? data.categories
-      : [
-          { id: 'university', nameFa: 'تحصیل' },
-          { id: 'programming', nameFa: 'برنامه‌نویسی' },
-          { id: 'language', nameFa: 'زبان' },
-          { id: 'sport', nameFa: 'ورزش' },
-          { id: 'leisure', nameFa: 'تفریح' }
-        ];
-
-    // Filter categories based on class activation status
-    return baseCategories.filter(cat => {
-      if (cat.id === 'university' && isUniversityInactive) return false;
-      if (cat.id === 'language' && isLanguageInactive) return false;
-      return true;
-    }).map(cat => {
-      // Determine value from stats
-      let val = 70;
-      if (cat.id === 'university' || cat.id === 'study') {
-        val = stats.radarBalance.study || 80;
-      } else if (cat.id === 'programming' || cat.id === 'coding') {
-        val = stats.radarBalance.coding || 75;
-      } else if (cat.id === 'language') {
-        val = stats.radarBalance.language || 70;
-      } else if (cat.id === 'sport') {
-        val = stats.radarBalance.sport || 60;
-      } else if (cat.id === 'leisure') {
-        val = stats.radarBalance.leisure || 65;
+        pathData = `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArcFlag} 1 ${x2} ${y2}`;
       }
+
       return {
-        id: cat.id,
-        label: cat.nameFa || cat.id,
-        value: val
+        ...item,
+        key: `slice_${item.categoryId}_${idx}`,
+        percentage: Math.round(percentage),
+        pathData,
+        angle,
+        startAngle,
+        endAngle,
       };
     });
-  }, [data.categories, data.activeClassStatus, stats]);
+
+    return {
+      slices,
+      legendItems,
+      total,
+      topCategory: nonZeroItems[0] ? nonZeroItems[0].name : ''
+    };
+  }, [data, donutType]);
+
+  // P3: Calculate active categories and values for Radar Chart dynamically from real data
+  const activeCats = useMemo(() => {
+    const validCategories = (data.categories || []).filter(c => c.id !== 'done' && c.id !== 'not_done');
+    
+    let baseCategories = [...validCategories];
+    if (baseCategories.length < 3) {
+      const defaultDimensions = [
+        { id: 'university', nameFa: 'تحصیل / کار', nameEn: 'Study/Work', color: 'bg-blue-500' },
+        { id: 'programming', nameFa: 'برنامه‌نویسی / مهارت', nameEn: 'Skill/Coding', color: 'bg-amber-500' },
+        { id: 'sport', nameFa: 'ورزش و سلامت', nameEn: 'Health/Sport', color: 'bg-purple-500' },
+        { id: 'language', nameFa: 'زبان / مطالعه', nameEn: 'Language', color: 'bg-emerald-500' },
+        { id: 'leisure', nameFa: 'تفریح و زندگی', nameEn: 'Leisure', color: 'bg-pink-500' },
+      ];
+      for (const def of defaultDimensions) {
+        if (!baseCategories.some(c => c.id === def.id || c.nameFa === def.nameFa)) {
+          baseCategories.push(def as any);
+        }
+        if (baseCategories.length >= 5) break;
+      }
+    }
+
+    return baseCategories.map((cat) => {
+      let total = 0;
+      let completed = 0;
+
+      (data.coreTasks || []).forEach(t => {
+        if (t.categoryId === cat.id) {
+          total++;
+          if (t.status === 'completed') completed++;
+        }
+      });
+      (data.secondaryTasks || []).forEach(t => {
+        if (t.categoryId === cat.id) {
+          total++;
+          if (t.status === 'completed') completed++;
+        }
+      });
+      Object.values(data.dailyTasks || {}).forEach(tasks => {
+        tasks.forEach(t => {
+          if (t.categoryId === cat.id) {
+            total++;
+            if (t.status === 'completed') completed++;
+          }
+        });
+      });
+
+      const value = total > 0 ? Math.round((completed / total) * 100) : 0;
+      return {
+        id: cat.id,
+        label: cat.nameFa || cat.nameEn || cat.id,
+        value,
+        total,
+        completed
+      };
+    });
+  }, [data.categories, data.coreTasks, data.secondaryTasks, data.dailyTasks]);
 
   // Effect to manage Radar Chart lifecycle via Chart.js
   useEffect(() => {
-    if (!radarCanvasRef.current) return;
+    if (!radarCanvasRef.current || activeCats.every(c => c.total === 0)) return;
 
     if (radarChartRef.current) {
       radarChartRef.current.destroy();
@@ -1035,7 +1312,9 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
             max: 100,
             ticks: {
               stepSize: 20,
-              display: false
+              display: true,
+              backdropColor: 'transparent',
+              font: { size: 8 }
             },
             grid: {
               color: '#e2e8f0',
@@ -1096,6 +1375,7 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
             pointBorderWidth: 2,
             pointRadius: 4,
             pointHoverRadius: 6,
+            spanGaps: false,
           }
         ]
       },
@@ -1111,7 +1391,7 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
             titleFont: { family: 'Vazirmatn, Inter, sans-serif' },
             bodyFont: { family: 'Vazirmatn, Inter, sans-serif' },
             callbacks: {
-              label: (context) => `بهره‌وری: ${context.raw}٪`
+              label: (context) => (context.raw === null || context.raw === undefined) ? 'بدون داده' : `راندمان: ${context.raw}٪`
             }
           }
         },
@@ -1240,11 +1520,11 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
                 { id: 'monthly', name: 'ماهانه' },
                 { id: '6months', name: '۶ ماهه' },
                 { id: 'annual', name: 'یکساله' },
-              ].map((item) => {
+              ].map((item, idx) => {
                 const isActive = timeframe === item.id;
                 return (
                   <button
-                    key={item.id}
+                    key={`tf_${item.id}_${idx}`}
                     onClick={() => setTimeframe(item.id as Timeframe)}
                     className={`px-3.5 py-1.5 rounded-lg text-[10px] font-black transition-all cursor-pointer ${
                       isActive
@@ -1263,11 +1543,11 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
                 { id: 'current', name: semesterNames.current },
                 { id: 'prev1', name: semesterNames.prev1 },
                 { id: 'prev2', name: semesterNames.prev2 },
-              ].map((item) => {
+              ].map((item, idx) => {
                 const isActive = selectedSemester === item.id;
                 return (
                   <button
-                    key={item.id}
+                    key={`sem_${item.id}_${idx}`}
                     onClick={() => setSelectedSemester(item.id as 'current' | 'prev1' | 'prev2')}
                     className={`px-3.5 py-1.5 rounded-lg text-[10px] font-black transition-all cursor-pointer ${
                       isActive
@@ -1445,14 +1725,14 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
             <div className="sm:col-span-5 flex justify-center relative">
               <svg className="w-40 h-40" viewBox="0 0 200 200">
                 <circle cx="100" cy="100" r="60" fill="none" stroke="#f1f5f9" strokeWidth="22" />
-                {donutData.map((seg, i) => (
+                {donutData.slices.map((seg, idx) => (
                   <path
-                    key={seg.categoryId}
+                    key={seg.key || `slice_${seg.categoryId}_${idx}`}
                     d={seg.pathData}
                     fill="none"
                     stroke={seg.color}
                     strokeWidth={hoveredSegment === seg.categoryId ? '28' : '22'}
-                    strokeDasharray={`${(seg.angle / 360) * (2 * Math.PI * 60)} 1000`}
+                    strokeDasharray={seg.angle >= 359.9 ? undefined : `${(seg.angle / 360) * (2 * Math.PI * 60)} 1000`}
                     className="transition-all duration-300 cursor-pointer"
                     onMouseEnter={() => setHoveredSegment(seg.categoryId)}
                     onMouseLeave={() => setHoveredSegment(null)}
@@ -1464,16 +1744,16 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
                   {donutType === 'success' ? 'تمرکز اصلی' : 'بیشترین تداخل'}
                 </text>
                 <text x="100" y="114" textAnchor="middle" className="text-sm font-black fill-slate-800">
-                  {donutData.length > 0 ? [...donutData].sort((a, b) => b.count - a.count)[0]?.name : ''}
+                  {donutData.total > 0 ? donutData.topCategory : 'بدون داده'}
                 </text>
               </svg>
             </div>
 
             {/* Custom Interactive Legend */}
-            <div className="sm:col-span-7 space-y-2">
-              {donutData.map((seg) => (
+            <div className="sm:col-span-7 space-y-2 max-h-48 overflow-y-auto pr-1">
+              {donutData.legendItems.map((seg, idx) => (
                 <div
-                  key={seg.categoryId}
+                  key={seg.key || `legend_${seg.categoryId}_${idx}`}
                   className={`flex items-center justify-between p-2 rounded-xl border transition-all duration-250 cursor-pointer ${
                     hoveredSegment === seg.categoryId 
                       ? 'bg-slate-50 border-slate-200 shadow-2xs' 
@@ -1512,7 +1792,15 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
           </div>
 
           <div className="mt-6 h-[220px] relative w-full flex items-center justify-center">
-            <canvas ref={radarCanvasRef} />
+            {activeCats.every(c => c.total === 0) ? (
+              <div className="flex flex-col items-center justify-center py-6 text-center">
+                <Brain className="w-8 h-8 text-slate-300 mb-2" />
+                <span className="text-xs font-bold text-slate-500">داده کافی نیست</span>
+                <span className="text-[10px] text-slate-400 mt-1">هنوز وظیفه‌ای در دسته‌بندی‌ها برای سنجش تعادل ثبت نشده است.</span>
+              </div>
+            ) : (
+              <canvas ref={radarCanvasRef} />
+            )}
           </div>
           <div className="flex justify-center items-center gap-4 text-[8px] font-black text-slate-400 mt-2">
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> وضعیت واقعی شما</span>
@@ -1535,70 +1823,78 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
             <p className="text-[9px] text-slate-400 font-bold">تحلیل ریشه‌ای و مکرر لغو کارها (کمبود وقت در مقابل خستگی یا عدم تمرکز)</p>
           </div>
 
-          <div className="mt-4 w-full overflow-x-auto pb-2 scrollbar-thin">
-            <div className={`flex items-end justify-around h-44 border-b border-slate-100 pb-2 ${
-              stats.procrastinationCauses.length > 7 ? 'min-w-[480px] gap-1 px-1' : 'w-full gap-3 px-2'
-            }`}>
-              {stats.procrastinationCauses.map((c, i) => {
-                const sum = c.timeLimit + c.fatigue + c.distraction;
-                const heightPct = sum > 0 ? (sum / maxBarSum) * 100 : 0;
-                const hTime = sum > 0 ? (c.timeLimit / sum) * heightPct : 0;
-                const hFatigue = sum > 0 ? (c.fatigue / sum) * heightPct : 0;
-                const hDistraction = sum > 0 ? (c.distraction / sum) * heightPct : 0;
-
-                // Determine topmost block for dynamic rounded corners
-                const isDistractionTop = c.distraction > 0;
-                const isFatigueTop = !isDistractionTop && c.fatigue > 0;
-                const isTimeTop = !isDistractionTop && !isFatigueTop && c.timeLimit > 0;
-
-                const isMany = stats.procrastinationCauses.length > 7;
-                const barWidthClass = isMany ? 'w-3 sm:w-4' : 'w-6 sm:w-8';
-                const labelTextSize = isMany ? 'text-[7px] sm:text-[8px]' : 'text-[8px] sm:text-[9px]';
-
-                return (
-                  <div key={i} className="flex flex-col items-center flex-1 group relative h-full justify-end min-w-0">
-                    {/* Tooltip on hover */}
-                    <div className="absolute bottom-full mb-1 opacity-0 group-hover:opacity-100 bg-slate-800 text-white text-[7px] font-bold p-1.5 rounded-lg pointer-events-none z-10 transition-opacity whitespace-nowrap shadow-md">
-                      <div>{c.period}</div>
-                      <div>کمبود وقت: {c.timeLimit}</div>
-                      <div>خستگی: {c.fatigue}</div>
-                      <div>عدم تمرکز: {c.distraction}</div>
-                    </div>
-
-                    {/* Stacked bar */}
-                    <div className={`${barWidthClass} flex flex-col justify-end h-full`}>
-                      <div className="rounded-t-md overflow-hidden flex flex-col justify-end h-full max-h-full" style={{ height: `${heightPct}%` }}>
-                        {/* Distraction block */}
-                        {hDistraction > 0 && (
-                          <div
-                            className={`bg-rose-400 transition-all hover:brightness-95 ${isDistractionTop ? 'rounded-t-md' : ''}`}
-                            style={{ height: `${(hDistraction / heightPct) * 100}%` }}
-                          />
-                        )}
-                        {/* Fatigue block */}
-                        {hFatigue > 0 && (
-                          <div
-                            className={`bg-amber-400 transition-all hover:brightness-95 ${isFatigueTop ? 'rounded-t-md' : ''}`}
-                            style={{ height: `${(hFatigue / heightPct) * 100}%` }}
-                          />
-                        )}
-                        {/* TimeLimit block */}
-                        {hTime > 0 && (
-                          <div
-                            className={`bg-indigo-400 transition-all hover:brightness-95 ${isTimeTop ? 'rounded-t-md' : ''}`}
-                            style={{ height: `${(hTime / heightPct) * 100}%` }}
-                          />
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Label */}
-                    <span className={`${labelTextSize} font-black text-slate-500 mt-2 truncate max-w-full text-center`}>{c.period}</span>
-                  </div>
-                );
-              })}
+          {stats.procrastinationRate === 0 || maxBarSum === 0 || stats.procrastinationCauses.every(c => (c.timeLimit + c.fatigue + c.distraction) === 0) ? (
+            <div className="flex flex-col items-center justify-center py-10 bg-emerald-50/50 rounded-2xl border border-emerald-100 my-4 text-center">
+              <CheckCircle2 className="w-10 h-10 text-emerald-600 mb-2 stroke-[2.2]" />
+              <span className="text-xs font-black text-emerald-800">هیچ کار معوق یا لغوشده‌ای ثبت نشده است</span>
+              <span className="text-[10px] text-emerald-600 font-bold mt-1">عملکرد عالی و تمرکز کامل بر اجرای برنامه‌ها بدون اهمال‌کاری (۰٪)</span>
             </div>
-          </div>
+          ) : (
+            <div className="mt-4 w-full overflow-x-auto pb-2 scrollbar-thin">
+              <div className={`flex items-end justify-around h-44 border-b border-slate-100 pb-2 ${
+                stats.procrastinationCauses.length > 7 ? 'min-w-[480px] gap-1 px-1' : 'w-full gap-3 px-2'
+              }`}>
+                {stats.procrastinationCauses.map((c, i) => {
+                  const sum = c.timeLimit + c.fatigue + c.distraction;
+                  const heightPct = sum > 0 ? (sum / maxBarSum) * 100 : 0;
+                  const hTime = sum > 0 ? (c.timeLimit / sum) * heightPct : 0;
+                  const hFatigue = sum > 0 ? (c.fatigue / sum) * heightPct : 0;
+                  const hDistraction = sum > 0 ? (c.distraction / sum) * heightPct : 0;
+
+                  // Determine topmost block for dynamic rounded corners
+                  const isDistractionTop = c.distraction > 0;
+                  const isFatigueTop = !isDistractionTop && c.fatigue > 0;
+                  const isTimeTop = !isDistractionTop && !isFatigueTop && c.timeLimit > 0;
+
+                  const isMany = stats.procrastinationCauses.length > 7;
+                  const barWidthClass = isMany ? 'w-3 sm:w-4' : 'w-6 sm:w-8';
+                  const labelTextSize = isMany ? 'text-[7px] sm:text-[8px]' : 'text-[8px] sm:text-[9px]';
+
+                  return (
+                    <div key={`proc_bar_${c.period}_${i}`} className="flex flex-col items-center flex-1 group relative h-full justify-end min-w-0">
+                      {/* Tooltip on hover */}
+                      <div className="absolute bottom-full mb-1 opacity-0 group-hover:opacity-100 bg-slate-800 text-white text-[7px] font-bold p-1.5 rounded-lg pointer-events-none z-10 transition-opacity whitespace-nowrap shadow-md">
+                        <div>{c.period}</div>
+                        <div>کمبود وقت: {c.timeLimit}</div>
+                        <div>خستگی: {c.fatigue}</div>
+                        <div>عدم تمرکز: {c.distraction}</div>
+                      </div>
+
+                      {/* Stacked bar */}
+                      <div className={`${barWidthClass} flex flex-col justify-end h-full`}>
+                        <div className="rounded-t-md overflow-hidden flex flex-col justify-end h-full max-h-full" style={{ height: `${heightPct}%` }}>
+                          {/* Distraction block */}
+                          {hDistraction > 0 && (
+                            <div
+                              className={`bg-rose-400 transition-all hover:brightness-95 ${isDistractionTop ? 'rounded-t-md' : ''}`}
+                              style={{ height: `${(hDistraction / heightPct) * 100}%` }}
+                            />
+                          )}
+                          {/* Fatigue block */}
+                          {hFatigue > 0 && (
+                            <div
+                              className={`bg-amber-400 transition-all hover:brightness-95 ${isFatigueTop ? 'rounded-t-md' : ''}`}
+                              style={{ height: `${(hFatigue / heightPct) * 100}%` }}
+                            />
+                          )}
+                          {/* TimeLimit block */}
+                          {hTime > 0 && (
+                            <div
+                              className={`bg-indigo-400 transition-all hover:brightness-95 ${isTimeTop ? 'rounded-t-md' : ''}`}
+                              style={{ height: `${(hTime / heightPct) * 100}%` }}
+                            />
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Label */}
+                      <span className={`${labelTextSize} font-black text-slate-500 mt-2 truncate max-w-full text-center`}>{c.period}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Stacked Bar Legend */}
           <div className="flex justify-center items-center gap-4 text-[8px] font-black text-slate-400 mt-4">
@@ -1653,14 +1949,64 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
             </div>
             <p className="text-[9px] text-slate-400 font-bold">نمای کلی حجم کارهای تکمیل‌شده شما به تفکیک روز و هفته در قالب الگوهای گیت‌هاب</p>
           </div>
-          <div className="flex items-center gap-1 text-[8px] font-black text-slate-400">
-            <span>کمتر</span>
-            <span className="w-2.5 h-2.5 rounded-sm bg-slate-100" />
-            <span className="w-2.5 h-2.5 rounded-sm bg-emerald-100" />
-            <span className="w-2.5 h-2.5 rounded-sm bg-emerald-300" />
-            <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" />
-            <span className="w-2.5 h-2.5 rounded-sm bg-emerald-700" />
-            <span>بیشتر</span>
+          
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Heatmap Month Navigator (Capability 1) */}
+            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200/80 rounded-xl px-2 py-1 shadow-2xs">
+              <button
+                type="button"
+                onClick={() => {
+                  const curIdx = JALALI_MONTHS.indexOf(currentHeatmapMonth.monthName);
+                  const nextIdx = (curIdx + 1) % 12;
+                  const nextYear = nextIdx === 0 ? currentHeatmapMonth.year + 1 : currentHeatmapMonth.year;
+                  setCurrentHeatmapMonth({ year: nextYear, monthName: JALALI_MONTHS[nextIdx] });
+                }}
+                className="p-1 hover:bg-slate-200 rounded text-slate-600 transition-colors cursor-pointer"
+                title="ماه بعد"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+
+              <span className="text-[10px] font-black text-slate-700 px-1 min-w-[70px] text-center">
+                {currentHeatmapMonth.monthName} {currentHeatmapMonth.year}
+              </span>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const curIdx = JALALI_MONTHS.indexOf(currentHeatmapMonth.monthName);
+                  const prevIdx = (curIdx - 1 + 12) % 12;
+                  const prevYear = prevIdx === 11 ? currentHeatmapMonth.year - 1 : currentHeatmapMonth.year;
+                  setCurrentHeatmapMonth({ year: prevYear, monthName: JALALI_MONTHS[prevIdx] });
+                }}
+                className="p-1 hover:bg-slate-200 rounded text-slate-600 transition-colors cursor-pointer"
+                title="ماه قبل"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const today = getTodayJalali();
+                  setCurrentHeatmapMonth({ year: today.year, monthName: today.monthName });
+                }}
+                className="text-[9px] font-black px-2 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition-colors cursor-pointer mr-1"
+              >
+                امروز
+              </button>
+            </div>
+
+            {/* Heatmap Legend */}
+            <div className="flex items-center gap-1 text-[8px] font-black text-slate-400">
+              <span>کمتر</span>
+              <span className="w-2.5 h-2.5 rounded-sm bg-slate-100" />
+              <span className="w-2.5 h-2.5 rounded-sm bg-emerald-100" />
+              <span className="w-2.5 h-2.5 rounded-sm bg-emerald-300" />
+              <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" />
+              <span className="w-2.5 h-2.5 rounded-sm bg-emerald-700" />
+              <span>بیشتر</span>
+            </div>
           </div>
         </div>
 
@@ -1680,8 +2026,8 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
 
             {/* Months Row */}
             <div className="flex gap-3 items-end">
-              {heatmapData.monthsData.map((month) => (
-                <div key={month.name} className="flex flex-col items-center gap-1.5">
+              {heatmapData.monthsData.map((month, mIdx) => (
+                <div key={`m_${month.year}_${month.name}_${mIdx}`} className="flex flex-col items-center gap-1.5">
                   {/* Centered Month Title above its columns */}
                   <div className="text-[8px] font-black text-slate-400 select-none text-center">
                     {month.name}
@@ -1690,13 +2036,13 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
                   {/* Grid columns of this month */}
                   <div className="flex gap-[3px]">
                     {month.grid.map((col, cIdx) => (
-                      <div key={cIdx} className="flex flex-col gap-[3px] shrink-0">
+                      <div key={`col_${month.year}_${month.name}_${cIdx}`} className="flex flex-col gap-[3px] shrink-0">
                         {col.map((day, rIdx) => {
                           if (!day) {
                             // Empty placeholder of the exact same size to maintain layout
                             return (
                               <div 
-                                key={rIdx} 
+                                key={`empty_${month.year}_${month.name}_${cIdx}_${rIdx}`} 
                                 className="w-3 h-3 min-w-[12px] min-h-[12px] opacity-0 pointer-events-none" 
                               />
                             );
@@ -1708,12 +2054,17 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
                           else if (day.count > 5 && day.count <= 8) bgClass = 'bg-emerald-500 text-white';
                           else if (day.count > 8) bgClass = 'bg-emerald-700 text-white';
 
+                          const isSelected = selectedHeatmapDay?.date === day.date;
+
                           return (
                             <div
-                              key={day.dayOfMonth}
-                              className={`w-3 h-3 min-w-[12px] min-h-[12px] rounded-[2px] cursor-pointer transition-all hover:ring-2 hover:ring-indigo-400/50 hover:scale-110 ${bgClass}`}
+                              key={`day_${month.year}_${month.name}_${day.dayOfMonth}_${cIdx}_${rIdx}`}
+                              className={`w-3 h-3 min-w-[12px] min-h-[12px] rounded-[2px] cursor-pointer transition-all hover:ring-2 hover:ring-indigo-400/50 hover:scale-110 ${bgClass} ${
+                                isSelected ? 'ring-2 ring-indigo-600 scale-125 z-10' : ''
+                              }`}
                               onMouseEnter={() => setHoveredHeatmapDay({ date: day.date, count: day.count })}
                               onMouseLeave={() => setHoveredHeatmapDay(null)}
+                              onClick={() => setSelectedHeatmapDay(isSelected ? null : { date: day.date, count: day.count, tasks: day.tasks })}
                             />
                           );
                         })}
@@ -1726,14 +2077,56 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
           </div>
 
           {/* Floating Tooltip info bar */}
-          <div dir="rtl" className="mt-4 min-h-6 bg-slate-50 border border-slate-200/40 rounded-xl px-3 py-1.5 text-[9px] font-bold text-slate-500 flex items-center gap-1.5 transition-all text-right">
-            <Info className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-            {hoveredHeatmapDay ? (
-              <span>داده روز: <strong className="text-slate-800">{hoveredHeatmapDay.date}</strong> با <strong className="text-indigo-600">{hoveredHeatmapDay.count} تسک تکمیل‌شده</strong></span>
-            ) : (
-              <span>برای دیدن تعداد کارهای انجام‌شده هر روز، نشانگر موس را روی خانه‌ها نگه دارید.</span>
+          <div dir="rtl" className="mt-4 min-h-6 bg-slate-50 border border-slate-200/40 rounded-xl px-3 py-1.5 text-[9px] font-bold text-slate-500 flex items-center justify-between gap-1.5 transition-all text-right">
+            <div className="flex items-center gap-1.5">
+              <Info className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+              {hoveredHeatmapDay ? (
+                <span>داده روز: <strong className="text-slate-800">{hoveredHeatmapDay.date}</strong> با <strong className="text-indigo-600">{hoveredHeatmapDay.count} تسک تکمیل‌شده</strong></span>
+              ) : (
+                <span>برای مشاهده جزئیات کارهای هر روز، روی خانه مورد نظر کلیک کنید.</span>
+              )}
+            </div>
+            {selectedHeatmapDay && (
+              <button
+                onClick={() => setSelectedHeatmapDay(null)}
+                className="text-[9px] text-slate-400 hover:text-slate-600 font-bold cursor-pointer"
+              >
+                بستن جزئیات
+              </button>
             )}
           </div>
+
+          {/* Interactive Day Inspector (Capability 3) */}
+          {selectedHeatmapDay && (
+            <div className="mt-3 p-3.5 bg-indigo-50/50 border border-indigo-100 rounded-2xl animate-in fade-in slide-in-from-top-2 duration-150">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <CalendarCheck className="w-4 h-4 text-indigo-600" />
+                  <span className="text-xs font-black text-slate-800">
+                    کارهای تکمیل‌شده در {selectedHeatmapDay.date}
+                  </span>
+                  <span className="text-[10px] font-black text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded-full">
+                    {selectedHeatmapDay.count} کار
+                  </span>
+                </div>
+              </div>
+              {selectedHeatmapDay.tasks.length === 0 ? (
+                <p className="text-[10px] text-slate-400 font-bold py-1">هیچ کار مشخصی در این روز ثبت نشده است.</p>
+              ) : (
+                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                  {selectedHeatmapDay.tasks.map((t, idx) => (
+                    <div key={`dt_${t.id || 'task'}_${idx}`} className="flex items-center justify-between bg-white p-2 rounded-xl border border-indigo-100/60 text-[10px] shadow-2xs">
+                      <span className="font-bold text-slate-800">{t.title}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[9px] font-bold text-slate-400">{t.type}</span>
+                        <span className="text-[9px] font-black text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">{t.category}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

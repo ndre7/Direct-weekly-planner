@@ -68,9 +68,11 @@ import AnalyticsTab from './components/AnalyticsTab';
 import GoalsTab from './components/GoalsTab';
 import UserProfileModal from './components/UserProfileModal';
 import { YEARS_1400_TO_1430, JALALI_WEEKDAYS, JALALI_MONTHS, getJalaliWeekday, getDaysInJalaliMonth, getCurrentJalaliWeekRange, getTodayJalali, getNextWeekRangeFromEnd } from './utils/jalali';
+import { initNetworkTime, getNow, refreshNetworkTime, timeSyncFetch } from './utils/networkTime';
 import SettingsPage from './components/SettingsPage';
 import { SessionManager, verifyAndRepairPlannerData } from './components/SessionManager';
 import DayInspectorModal from './components/DayInspectorModal';
+import { DateTimeSelect } from './components/DateTimeSelect';
 
 // Month-to-Number map for exact date formatting
 const MONTHS_MAP: { [key: string]: string } = {
@@ -179,7 +181,16 @@ const parsePersianDate = (dateStr: string): { day: number; month: string } | nul
   return null;
 };
 
-const getDaysInMonthStatic = (monthName: string, year: number = 1405): number => {
+// F1: Centralized completion date formatting: formatCompletionDate(day, monthName, year) -> 'YYYY/MM/DD'
+export const formatCompletionDate = (day: number, monthName: string, year: number): string => {
+  const mIndex = JALALI_MONTHS.indexOf(monthName);
+  const m = mIndex !== -1 ? mIndex + 1 : 1;
+  const mm = m < 10 ? `0${m}` : `${m}`;
+  const dd = day < 10 ? `0${day}` : `${day}`;
+  return `${year}/${mm}/${dd}`;
+};
+
+const getDaysInMonthStatic = (monthName: string, year: number = getTodayJalali().year): number => {
   return getDaysInJalaliMonth(monthName, year);
 };
 
@@ -189,7 +200,7 @@ const getWeekDatesForData = (plannerData: PlannerData): string[] => {
   const end = plannerData.weekEndDay || 7;
   const startMonth = plannerData.weekMonth || 'خرداد';
   const endMonth = plannerData.weekEndMonth || startMonth;
-  const year = plannerData.weekYear || 1405;
+  const year = plannerData.weekYear || getTodayJalali().year;
 
   const daysInStartMonth = getDaysInJalaliMonth(startMonth, year);
 
@@ -207,25 +218,13 @@ const getWeekDatesForData = (plannerData: PlannerData): string[] => {
   return list;
 };
 
+// F2: Real Jalali weekday calculation using getJalaliWeekday (UTC-safe, no timezone shift)
 const getWeekdayOfPersianDate = (year: number, monthName: string, day: number): string => {
-  const mIndex = [
-    'فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور',
-    'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'
-  ].indexOf(monthName);
+  const mIndex = JALALI_MONTHS.indexOf(monthName);
   if (mIndex === -1) return '';
   const jm = mIndex + 1;
-  const gDate = jalaliToGregorian(year, jm, day);
-  const gDay = gDate.getDay();
-  const weekdayMap: { [key: number]: string } = {
-    6: 'شنبه',
-    0: 'یکشنبه',
-    1: 'دوشنبه',
-    2: 'سه‌شنبه',
-    3: 'چهارشنبه',
-    4: 'پنج‌شنبه',
-    5: 'جمعه'
-  };
-  return weekdayMap[gDay] || '';
+  const jw = getJalaliWeekday(year, jm, day);
+  return jw.weekday.fa;
 };
 
 const getTaskDeadlineCompleteDisplay = (deadline: any, weekDates: string[], year: number): string => {
@@ -456,8 +455,9 @@ export default function App() {
   const [isCriticalAuthFailure, setIsCriticalAuthFailure] = useState<boolean>(false);
   const [isDayInspectorOpen, setIsDayInspectorOpen] = useState(false);
 
-  // Load and apply theme on startup
+  // Load and apply theme and initialize real-time network clock on startup
   useEffect(() => {
+    initNetworkTime();
     const savedTheme = localStorage.getItem('theme');
     if (savedTheme === 'dark') {
       document.documentElement.classList.add('dark');
@@ -481,7 +481,7 @@ export default function App() {
 
     if (!targetCol) return prev;
 
-    const year = prev.weekYear || 1405;
+    const year = prev.weekYear || getTodayJalali().year;
 
     // Set of active synced item IDs
     const activeSyncedIds = new Set<string>();
@@ -600,6 +600,13 @@ export default function App() {
       const dataToSync = customData || data;
       try {
         localStorage.setItem('planner_data', JSON.stringify(dataToSync));
+        if (user && user.id) {
+          localStorage.setItem('planner_user', JSON.stringify({
+            id: user.id,
+            email: user.email || '',
+            username: user.username || ''
+          }));
+        }
       } catch (lsErr) {
         console.warn('LocalStorage error:', lsErr);
       }
@@ -627,7 +634,7 @@ export default function App() {
         if (activeToken) {
           headers['Authorization'] = `Bearer ${activeToken}`;
         }
-        const res = await fetch('/api/planner/sync', {
+        const res = await timeSyncFetch('/api/planner/sync', {
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -663,7 +670,7 @@ export default function App() {
       if (activeToken) {
         headers['Authorization'] = `Bearer ${activeToken}`;
       }
-      const res = await fetch(`/api/planner/load`, {
+      const res = await timeSyncFetch(`/api/planner/load`, {
         headers
       });
       if (!res.ok) {
@@ -714,6 +721,15 @@ export default function App() {
             token
           };
           setCurrentUser(userObj);
+          try {
+            localStorage.setItem('planner_user', JSON.stringify({
+              id: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              username
+            }));
+          } catch (lsErr) {
+            console.warn('LocalStorage write planner_user error:', lsErr);
+          }
         } catch (err) {
           console.error("Auth state listener error:", err);
         }
@@ -809,6 +825,18 @@ export default function App() {
           }
           const updated = syncAllTasksToDetails(merged);
           lastSavedDataJsonRef.current = JSON.stringify(updated);
+          try {
+            localStorage.setItem('planner_data', JSON.stringify(updated));
+            if (currentUser) {
+              localStorage.setItem('planner_user', JSON.stringify({
+                id: currentUser.id,
+                email: currentUser.email || '',
+                username: currentUser.username || ''
+              }));
+            }
+          } catch (lsErr) {
+            console.warn('LocalStorage write error during initial subcollection sync:', lsErr);
+          }
           return updated;
         });
       } else {
@@ -821,12 +849,26 @@ export default function App() {
           const updatedJson = JSON.stringify(updated);
           if (JSON.stringify(prev) !== updatedJson) {
             lastSavedDataJsonRef.current = updatedJson;
+            try {
+              localStorage.setItem('planner_data', updatedJson);
+              if (currentUser) {
+                localStorage.setItem('planner_user', JSON.stringify({
+                  id: currentUser.id,
+                  email: currentUser.email || '',
+                  username: currentUser.username || ''
+                }));
+              }
+            } catch (lsErr) {
+              console.warn('LocalStorage write error during subcollection sync:', lsErr);
+            }
             return updated;
           }
           return prev;
         });
       }
-    }, () => {});
+    }, (subErr) => {
+      console.warn('[Firestore Subscription Error]', subErr);
+    });
 
     return () => unsub();
   }, [currentUser?.id, firebaseUserUid, syncAllTasksToDetails]);
@@ -838,8 +880,8 @@ export default function App() {
     if (!token || !currentUser?.email) return;
 
     const checkAndSendReminders = async () => {
-      const now = Date.now();
-      const todayISO = new Date().toISOString().split('T')[0];
+      const now = getNow().getTime();
+      const todayISO = getNow().toISOString().split('T')[0];
       let hasUpdates = false;
       const updatedData = { ...data };
 
@@ -854,7 +896,7 @@ export default function App() {
         let colChanged = false;
         const updatedItems = col.items.map((item) => {
           if (item.emailReminder && !item.completed && item.lastSentDate !== todayISO) {
-            const deadlineMs = parseItemDeadlineMs(item, data.weekYear || 1405);
+            const deadlineMs = parseItemDeadlineMs(item, data.weekYear || getTodayJalali().year);
             if (deadlineMs) {
               const offsetMs = getOffsetMs(item.reminderOffset || data.emailReminderDefaultOffset || '1day');
               const reminderTime = deadlineMs - offsetMs;
@@ -896,7 +938,7 @@ export default function App() {
         let colChanged = false;
         const updatedItems = col.items.map((item) => {
           if (item.emailReminder && !item.completed && item.lastSentDate !== todayISO) {
-            const deadlineMs = parseItemDeadlineMs(item, data.weekYear || 1405);
+            const deadlineMs = parseItemDeadlineMs(item, data.weekYear || getTodayJalali().year);
             if (deadlineMs) {
               const offsetMs = getOffsetMs(item.reminderOffset || data.emailReminderDefaultOffset || '1day');
               const reminderTime = deadlineMs - offsetMs;
@@ -936,7 +978,7 @@ export default function App() {
       let remindersChanged = false;
       const updatedReminders = (updatedData.reminders || []).map((item) => {
         if (item.emailReminder && item.lastSentDate !== todayISO) {
-          const deadlineMs = parseItemDeadlineMs(item, data.weekYear || 1405);
+          const deadlineMs = parseItemDeadlineMs(item, data.weekYear || getTodayJalali().year);
           if (deadlineMs) {
             const offsetMs = getOffsetMs(item.reminderOffset || data.emailReminderDefaultOffset || '1day');
             const reminderTime = deadlineMs - offsetMs;
@@ -1181,7 +1223,7 @@ export default function App() {
   // Calendar Range Modal State
   const [isCalendarRangeOpen, setIsCalendarRangeOpen] = useState<boolean>(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState<boolean>(false);
-  const [tempYear, setTempYear] = useState<number>(data.weekYear || 1405);
+  const [tempYear, setTempYear] = useState<number>(data.weekYear || getTodayJalali().year);
   const [tempMonth, setTempMonth] = useState<string>(data.weekMonth || 'خرداد');
   const [tempStartDay, setTempStartDay] = useState<number | null>(data.weekStartDay || 1);
   const [tempStartMonth, setTempStartMonth] = useState<string | null>(data.weekMonth || 'خرداد');
@@ -1190,7 +1232,7 @@ export default function App() {
 
   // Completion Date Selector state (for selecting date when checkmarking a task)
   const [completionTarget, setCompletionTarget] = useState<{
-    type: 'daily' | 'secondary';
+    type: 'daily' | 'secondary' | 'core';
     dayKey?: string;
     taskIndex?: number;
     taskId?: string;
@@ -1256,14 +1298,14 @@ export default function App() {
     if (!autoLoad && !autoUpdateCal) return;
 
     try {
-      const currentWeek = getCurrentJalaliWeekRange(new Date());
+      const currentWeek = getCurrentJalaliWeekRange(getNow());
 
       // Saved week info
       const savedStartDay = data.weekStartDay || 1;
       const savedStartMonth = data.weekMonth || 'خرداد';
       const savedEndDay = data.weekEndDay || 7;
       const savedEndMonth = data.weekEndMonth || data.weekMonth || 'خرداد';
-      const savedYear = data.weekYear || 1405;
+      const savedYear = data.weekYear || getTodayJalali().year;
 
       const savedWeekKey = `${savedYear}_${savedStartMonth}_${savedStartDay}_${savedEndMonth}_${savedEndDay}`;
       const currentWeekKey = `${currentWeek.startYear}_${currentWeek.startMonth}_${currentWeek.startDay}_${currentWeek.endMonth}_${currentWeek.endDay}`;
@@ -1273,7 +1315,7 @@ export default function App() {
       if (endMIdx !== -1) {
         const endGregDate = jalaliToGregorian(savedYear, endMIdx + 1, savedEndDay);
         const weekEndMs = endGregDate.getTime() + 86400000 - 1; // End of Friday (23:59:59)
-        const nowMs = Date.now();
+        const nowMs = getNow().getTime();
 
         if (nowMs > weekEndMs || savedWeekKey !== currentWeekKey) {
           // 1. Auto download JSON backup for ended week if autoLoad setting enabled
@@ -1284,7 +1326,7 @@ export default function App() {
 
               const exportBundle = {
                 ...data,
-                __exportedAt: new Date().toISOString(),
+                __exportedAt: getNow().toISOString(),
                 __autoWeekEndExport: true
               };
               const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportBundle, null, 2));
@@ -1486,7 +1528,7 @@ export default function App() {
   const handleReset = () => {
     if (window.confirm('آیا مایلید تمام تغییرات خود را حذف کرده و به قالب پیش‌فرض بازگردید؟')) {
       setData(INITIAL_PLANNER_DATA);
-      setTempYear(INITIAL_PLANNER_DATA.weekYear || 1405);
+      setTempYear(INITIAL_PLANNER_DATA.weekYear || getTodayJalali().year);
       setTempMonth(INITIAL_PLANNER_DATA.weekMonth || 'خرداد');
       setTempStartDay(INITIAL_PLANNER_DATA.weekStartDay || 1);
       setTempEndDay(INITIAL_PLANNER_DATA.weekEndDay || 7);
@@ -1783,7 +1825,7 @@ export default function App() {
         }
       }
 
-      pdf.save(`weekly-planner-${data.weekYear || 1405}-${data.weekMonth || 'khordad'}.pdf`);
+      pdf.save(`weekly-planner-${data.weekYear || getTodayJalali().year}-${data.weekMonth || 'khordad'}.pdf`);
       showToast('فایل PDF با موفقیت دانلود شد!');
     } catch (error) {
       console.error('PDF Generation Error:', error);
@@ -2201,18 +2243,57 @@ export default function App() {
   };
 
   const handleSetCoreTaskStatus = (taskId: string, nextStatus: 'completed' | 'failed' | 'pending') => {
+    const currentTask = (data.coreTasks || []).find((ct) => ct.id === taskId);
+    if (!currentTask) return;
+
+    if (currentTask.status === nextStatus || nextStatus === 'pending') {
+      setData((prev) => {
+        const updated = (prev.coreTasks || []).map((ct) => {
+          if (ct.id === taskId) {
+            return { ...ct, status: 'pending', completionDate: undefined };
+          }
+          return ct;
+        });
+        return { ...prev, coreTasks: updated };
+      });
+      showToast('کار اصلی به وضعیت در حال انتظار بازگشت');
+      return;
+    }
+
+    if (nextStatus === 'completed') {
+      setCompletionTarget({
+        type: 'core',
+        taskId
+      });
+    } else {
+      setData((prev) => {
+        const updated = (prev.coreTasks || []).map((ct) => {
+          if (ct.id === taskId) {
+            return { ...ct, status: 'failed', completionDate: undefined };
+          }
+          return ct;
+        });
+        return { ...prev, coreTasks: updated };
+      });
+      showToast('کار اصلی لغو/ناموفق ثبت شد');
+    }
+  };
+
+  const saveCoreTaskCompletion = (exactDate: string) => {
+    if (!completionTarget || !completionTarget.taskId) return;
+    const { taskId } = completionTarget;
+
     setData((prev) => {
       const updated = (prev.coreTasks || []).map((ct) => {
         if (ct.id === taskId) {
-          const currentStatus = ct.status;
-          const status = currentStatus === nextStatus ? 'pending' : nextStatus;
-          return { ...ct, status };
+          return { ...ct, status: 'completed', completionDate: exactDate };
         }
         return ct;
       });
       return { ...prev, coreTasks: updated };
     });
-    showToast('وضعیت کار اصلی تغییر کرد');
+    setCompletionTarget(null);
+    showToast('کار اصلی به عنوان انجام شده ثبت شد');
   };
 
   const saveDailyTaskCompletion = (exactDate: string) => {
@@ -2346,7 +2427,7 @@ export default function App() {
     const newItem = {
       id: `ex_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       text: itemData.text.trim(),
-      date: itemData.date || `${data.weekYear || 1405}/03/15 10:00`,
+      date: itemData.date || `${data.weekYear || getTodayJalali().year}/03/15 10:00`,
       type: itemData.type || 'امتحان',
       description: itemData.description,
       completed: false,
@@ -2525,7 +2606,7 @@ export default function App() {
     });
   };
 
-  const handleEditDeadlineItem = (colId: string, itemId: string, textValue: string, dateValue?: string) => {
+  const handleEditDeadlineItem = (colId: string, itemId: string, textValue: string, dateValue?: string, descriptionValue?: string) => {
     setData((prev) => {
       const columns = prev.detailsColumns.map((col) => {
         if (col.id === colId) {
@@ -2534,7 +2615,8 @@ export default function App() {
               return {
                 ...item,
                 text: textValue,
-                date: dateValue !== undefined ? dateValue : item.date
+                date: dateValue !== undefined ? dateValue : item.date,
+                description: descriptionValue !== undefined ? descriptionValue : item.description
               };
             }
             return item;
@@ -2587,17 +2669,28 @@ export default function App() {
 
   const handleUpdateSyncedTaskDeadline = (taskId: string, type: 'core' | 'sec', field: 'day' | 'month' | 'weekday', value: string) => {
     setData((prev) => {
+      const year = prev.weekYear || getTodayJalali().year;
       if (type === 'core') {
         const updated = (prev.coreTasks || []).map((task) => {
           if (task.id === taskId) {
             const currentDeadline = task.deadline || {};
-            let val: any = value;
+            let val: any = value === '' ? undefined : value;
+            let newDay = currentDeadline.day;
             if (field === 'day') {
-              val = value ? parseInt(value, 10) : undefined;
+              val = value ? parseInt(value, 10) || undefined : undefined;
+              newDay = val;
+            } else if (field === 'month') {
+              if (val && newDay) {
+                const maxDays = getDaysInJalaliMonth(val, year);
+                if (newDay > maxDays) {
+                  newDay = undefined;
+                }
+              }
             }
             const updatedDeadline = {
               ...currentDeadline,
-              [field]: val === '' ? undefined : val
+              day: newDay,
+              [field]: val
             };
             return { ...task, deadline: updatedDeadline };
           }
@@ -2608,13 +2701,23 @@ export default function App() {
         const updated = (prev.secondaryTasks || []).map((task) => {
           if (task.id === taskId) {
             const currentDeadline = task.deadline || {};
-            let val: any = value;
+            let val: any = value === '' ? undefined : value;
+            let newDay = currentDeadline.day;
             if (field === 'day') {
-              val = value ? parseInt(value, 10) : undefined;
+              val = value ? parseInt(value, 10) || undefined : undefined;
+              newDay = val;
+            } else if (field === 'month') {
+              if (val && newDay) {
+                const maxDays = getDaysInJalaliMonth(val, year);
+                if (newDay > maxDays) {
+                  newDay = undefined;
+                }
+              }
             }
             const updatedDeadline = {
               ...currentDeadline,
-              [field]: val === '' ? undefined : val
+              day: newDay,
+              [field]: val
             };
             return { ...task, deadline: updatedDeadline };
           }
@@ -2752,17 +2855,26 @@ export default function App() {
 
   // --- Core Tasks (Tab 6) Actions ---
   const handleToggleCoreTaskStatus = (taskId: string) => {
-    setData((prev) => {
-      const updated = (prev.coreTasks || []).map((ct) => {
-        if (ct.id === taskId) {
-          const isCompleted = ct.status === 'completed';
-          return { ...ct, status: isCompleted ? 'pending' : 'completed' as const };
-        }
-        return ct;
+    const currentTask = (data.coreTasks || []).find((ct) => ct.id === taskId);
+    if (!currentTask) return;
+
+    if (currentTask.status === 'completed') {
+      setData((prev) => {
+        const updated = (prev.coreTasks || []).map((ct) => {
+          if (ct.id === taskId) {
+            return { ...ct, status: 'pending', completionDate: undefined };
+          }
+          return ct;
+        });
+        return { ...prev, coreTasks: updated };
       });
-      return { ...prev, coreTasks: updated };
-    });
-    showToast('وضعیت کار اصلی تغییر کرد');
+      showToast('کار اصلی به وضعیت در حال انتظار بازگشت');
+    } else {
+      setCompletionTarget({
+        type: 'core',
+        taskId
+      });
+    }
   };
 
   const handleAddCoreTask = (categoryId: string) => {
@@ -2838,17 +2950,31 @@ export default function App() {
 
   const handleEditCoreTaskDeadline = (taskId: string, field: 'day' | 'month' | 'weekday', value: any) => {
     setData((prev) => {
+      const year = prev.weekYear || getTodayJalali().year;
       const updated = (prev.coreTasks || []).map((ct) => {
         if (ct.id === taskId) {
           const currentDeadline = ct.deadline || {};
           let nextVal = value;
+          let newDay = currentDeadline.day;
+
           if (field === 'day') {
             nextVal = value ? parseInt(value) || undefined : undefined;
+            newDay = nextVal;
+          } else if (field === 'month') {
+            nextVal = value || undefined;
+            if (nextVal && newDay) {
+              const maxDays = getDaysInJalaliMonth(nextVal, year);
+              if (newDay > maxDays) {
+                newDay = undefined;
+              }
+            }
           }
+
           return {
             ...ct,
             deadline: {
               ...currentDeadline,
+              day: newDay,
               [field]: nextVal || undefined,
             },
           };
@@ -2897,17 +3023,31 @@ export default function App() {
 
   const handleEditSecondaryTaskDeadline = (taskId: string, field: 'day' | 'month' | 'weekday', value: any) => {
     setData((prev) => {
+      const year = prev.weekYear || getTodayJalali().year;
       const tasks = prev.secondaryTasks.map((t) => {
         if (t.id === taskId) {
           const currentDeadline = t.deadline || {};
           let nextVal = value;
+          let newDay = currentDeadline.day;
+
           if (field === 'day') {
             nextVal = value ? parseInt(value) || undefined : undefined;
+            newDay = nextVal;
+          } else if (field === 'month') {
+            nextVal = value || undefined;
+            if (nextVal && newDay) {
+              const maxDays = getDaysInJalaliMonth(nextVal, year);
+              if (newDay > maxDays) {
+                newDay = undefined;
+              }
+            }
           }
+
           return {
             ...t,
             deadline: {
               ...currentDeadline,
+              day: newDay,
               [field]: nextVal || undefined,
             },
           };
@@ -3064,11 +3204,12 @@ export default function App() {
           const target = r.targetCount || 1;
           const currentProgress = (r.dayProgress && r.dayProgress[dayKey]) || 0;
           
+          const currentChecked = r.checkedDays || [];
           if (target <= 1) {
-            const isChecked = r.checkedDays.includes(dayKey);
+            const isChecked = currentChecked.includes(dayKey);
             const nextDays = isChecked
-              ? r.checkedDays.filter((d) => d !== dayKey)
-              : [...r.checkedDays, dayKey];
+              ? currentChecked.filter((d) => d !== dayKey)
+              : [...currentChecked, dayKey];
             return {
               ...r,
               checkedDays: nextDays,
@@ -3076,7 +3217,7 @@ export default function App() {
             };
           } else {
             const nextProgress = currentProgress + 1;
-            let nextDays = r.checkedDays.filter((d) => d !== dayKey);
+            let nextDays = currentChecked.filter((d) => d !== dayKey);
             let updatedProgressMap = { ...(r.dayProgress || {}) };
             
             if (nextProgress > target) {
@@ -3134,7 +3275,7 @@ export default function App() {
     const end = data.weekEndDay || 7;
     const startMonth = data.weekMonth || 'خرداد';
     const endMonth = data.weekEndMonth || startMonth;
-    const year = data.weekYear || 1405;
+    const year = data.weekYear || getTodayJalali().year;
 
     const daysInStartMonth = getDaysInMonth(startMonth, year);
 
@@ -3318,7 +3459,7 @@ export default function App() {
                 data={data}
                 setData={setData}
                 onOpenCalendarRange={() => {
-                  setTempYear(data.weekYear || 1405);
+                  setTempYear(data.weekYear || getTodayJalali().year);
                   setTempMonth(data.weekMonth || 'خرداد');
                   setTempStartDay(data.weekStartDay || 1);
                   setTempStartMonth(data.weekMonth || 'خرداد');
@@ -3960,7 +4101,7 @@ export default function App() {
                                                       className="text-[9px] bg-amber-50 border border-amber-200 rounded p-1 font-bold text-slate-700 focus:outline-none"
                                                     >
                                                       <option value="" className="text-center">روز</option>
-                                                      {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+                                                      {Array.from({ length: task.deadline?.month ? getDaysInJalaliMonth(task.deadline.month, data.weekYear || getTodayJalali().year) : 31 }, (_, i) => i + 1).map(d => (
                                                         <option key={d} value={d}>{d}</option>
                                                       ))}
                                                     </select>
@@ -4339,7 +4480,7 @@ export default function App() {
                                                 className="text-[9px] bg-white border border-slate-200 rounded p-1 font-bold text-slate-700 focus:outline-none"
                                               >
                                                 <option value="" className="text-center">روز</option>
-                                                {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+                                                {Array.from({ length: ((isCore ? coreTask?.deadline?.month : secTask?.deadline?.month) ? getDaysInJalaliMonth((isCore ? coreTask?.deadline?.month : secTask?.deadline?.month)!, data.weekYear || getTodayJalali().year) : 31) }, (_, i) => i + 1).map(d => (
                                                   <option key={d} value={d}>{d}</option>
                                                 ))}
                                               </select>
@@ -4382,34 +4523,38 @@ export default function App() {
                                       ) : (
                                         // Standard manual details item editor
                                         <div className="space-y-2 w-full text-right">
-                                          <textarea
-                                            value={item.text}
-                                            onChange={(e) => handleEditDeadlineItem(col.id, itemId, e.target.value)}
-                                            className="w-full text-[10px] bg-amber-50 border border-amber-200 rounded p-1 font-bold focus:outline-none"
-                                            rows={2}
-                                          />
-                                          {isDeadlineCol && (
-                                            <div className="flex flex-col gap-1">
-                                              <label className="text-[8px] text-slate-400 font-bold">ددلاین (روز):</label>
-                                              <select
-                                                value={item.date || ''}
-                                                onChange={(e) => handleEditDeadlineItem(col.id, itemId, item.text, e.target.value)}
-                                                className="text-[10px] bg-amber-50 border border-amber-200 rounded p-1 text-slate-800 focus:outline-none font-bold"
-                                              >
-                                                <option value="">نامشخص</option>
-                                                {Array.from({ length: currentDaysCount }, (_, i) => i + 1).map((d) => {
-                                                  const monthNum = MONTHS_MAP[tempMonth] || '03';
-                                                  const formatted = `${tempYear}/${monthNum}/${String(d).padStart(2, '0')}`;
-                                                  const displayStr = `${d} ${tempMonth}`;
-                                                  return <option key={d} value={formatted}>{displayStr}</option>;
-                                                })}
-                                              </select>
-                                            </div>
-                                          )}
+                                          <div>
+                                            <label className="text-[9px] text-slate-500 font-bold block mb-1">عنوان آیتم:</label>
+                                            <textarea
+                                              value={item.text}
+                                              onChange={(e) => handleEditDeadlineItem(col.id, itemId, e.target.value)}
+                                              className="w-full text-[10px] bg-amber-50 border border-amber-200 rounded p-1.5 font-bold focus:outline-none"
+                                              rows={2}
+                                            />
+                                          </div>
+                                          <div>
+                                            <label className="text-[9px] text-slate-500 font-bold block mb-1">توضیحات تکمیلی (اختیاری):</label>
+                                            <textarea
+                                              value={item.description || ''}
+                                              placeholder="توضیحات یا جزئیات ددلاین..."
+                                              onChange={(e) => handleEditDeadlineItem(col.id, itemId, item.text, undefined, e.target.value)}
+                                              className="w-full text-[10px] bg-slate-50 border border-slate-200 rounded p-1.5 font-medium focus:outline-none resize-none"
+                                              rows={2}
+                                            />
+                                          </div>
+                                          <div className="flex flex-col gap-1">
+                                            <label className="text-[9px] text-slate-500 font-bold">تاریخ و زمان ددلاین:</label>
+                                            <DateTimeSelect
+                                              value={item.date || ''}
+                                              onChange={(val) => handleEditDeadlineItem(col.id, itemId, item.text, val)}
+                                              showTime={true}
+                                              className="text-[10px]"
+                                            />
+                                          </div>
                                           <button
                                             type="button"
                                             onClick={() => handleDeleteDeadlineItem(col.id, itemId)}
-                                            className="text-rose-600 hover:text-rose-800 text-[10px] font-bold block self-start cursor-pointer"
+                                            className="text-rose-600 hover:text-rose-800 text-[10px] font-bold block self-start cursor-pointer pt-1"
                                           >
                                             حذف یادداشت
                                           </button>
@@ -4425,16 +4570,23 @@ export default function App() {
 
                                       const handleToggleTab2Item = () => {
                                         if (isCore) {
-                                          setData((prev) => {
-                                            const updated = (prev.coreTasks || []).map((ct) => {
-                                              if (ct.id === taskId) {
-                                                return { ...ct, status: ct.status === 'completed' ? 'pending' : 'completed' as const };
-                                              }
-                                              return ct;
+                                          if (coreTask?.status === 'completed') {
+                                            setData((prev) => {
+                                              const updated = (prev.coreTasks || []).map((ct) => {
+                                                if (ct.id === taskId) {
+                                                  return { ...ct, status: 'pending', completionDate: undefined };
+                                                }
+                                                return ct;
+                                              });
+                                              return { ...prev, coreTasks: updated };
                                             });
-                                            return { ...prev, coreTasks: updated };
-                                          });
-                                          showToast('وضعیت کار اصلی تغییر کرد');
+                                            showToast('کار اصلی به وضعیت در حال انتظار بازگشت');
+                                          } else {
+                                            setCompletionTarget({
+                                              type: 'core',
+                                              taskId
+                                            });
+                                          }
                                         } else if (isSec) {
                                           if (secTask?.status === 'completed') {
                                             setData((prev) => {
@@ -4446,19 +4598,12 @@ export default function App() {
                                               });
                                               return { ...prev, secondaryTasks: updated };
                                             });
-                                            showToast('وضعیت کار فرعی تغییر کرد');
+                                            showToast('کار فرعی به وضعیت در حال انتظار بازگشت');
                                           } else {
-                                            const startDayStr = data.weekStartDay && data.weekMonth ? `${data.weekYear || 1405}/${MONTHS_MAP[data.weekMonth] || '01'}/${String(data.weekStartDay).padStart(2, '0')}` : 'ثبت شده';
-                                            setData((prev) => {
-                                              const updated = (prev.secondaryTasks || []).map((st) => {
-                                                if (st.id === taskId) {
-                                                  return { ...st, status: 'completed', completionDate: startDayStr };
-                                                }
-                                                return st;
-                                              });
-                                              return { ...prev, secondaryTasks: updated };
+                                            setCompletionTarget({
+                                              type: 'secondary',
+                                              taskId
                                             });
-                                            showToast('وضعیت کار فرعی تغییر کرد');
                                           }
                                         } else {
                                           // Manual/custom note item
@@ -4529,9 +4674,9 @@ export default function App() {
                                           </div>
 
                                           {/* Description if present */}
-                                          {((isCore && coreTask?.description) || (isSec && secTask?.description)) && (
+                                          {((isCore && coreTask?.description) || (isSec && secTask?.description) || (!isCore && !isSec && item.description)) && (
                                             <p className={`text-[10px] font-medium leading-relaxed bg-slate-50/50 p-1.5 rounded-lg border border-slate-100 ${isCompleted ? 'line-through opacity-50 text-slate-400' : 'text-slate-500'}`}>
-                                              {isCore ? coreTask?.description : secTask?.description}
+                                              {isCore ? coreTask?.description : isSec ? secTask?.description : item.description}
                                             </p>
                                           )}
 
@@ -4799,7 +4944,7 @@ export default function App() {
                                                       className="text-[9px] bg-amber-50 border border-amber-200 rounded p-1 font-bold text-slate-700 focus:outline-none"
                                                     >
                                                       <option value="" className="text-center">روز</option>
-                                                      {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+                                                      {Array.from({ length: task.deadline?.month ? getDaysInJalaliMonth(task.deadline.month, data.weekYear || getTodayJalali().year) : 31 }, (_, i) => i + 1).map(d => (
                                                         <option key={d} value={d}>{d}</option>
                                                       ))}
                                                     </select>
@@ -5048,7 +5193,7 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {data.reminders.map((reminder) => (
+                      {(data.reminders || []).map((reminder) => (
                         <tr key={reminder.id} className="border-b border-slate-100 hover:bg-slate-50/50 bg-white">
                           <td className="p-3 text-right font-bold text-xs">
                             <div className="flex items-center gap-2">
@@ -5203,7 +5348,7 @@ export default function App() {
                           </td>
 
                           {DAYS_OF_WEEK.filter(d => activeDaysList.includes(d.key)).map((day) => {
-                            const isChecked = reminder.checkedDays.includes(day.key);
+                            const isChecked = (reminder.checkedDays || []).includes(day.key);
                             const target = reminder.targetCount || 1;
                             const progress = (reminder.dayProgress && reminder.dayProgress[day.key]) || 0;
                             const pct = target > 1 ? progress / target : (isChecked ? 1 : 0);
@@ -5326,7 +5471,7 @@ export default function App() {
                     </div>
 
                     {/* Type & Date */}
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-3">
                       <div>
                         <label className="block text-[10px] font-black text-slate-500 mb-1">نوع</label>
                         <select
@@ -5343,12 +5488,10 @@ export default function App() {
 
                       <div>
                         <label className="block text-[10px] font-black text-slate-500 mb-1">تاریخ و ساعت (جلالی)</label>
-                        <input
-                          type="text"
-                          placeholder="1405/03/20 10:00"
+                        <DateTimeSelect
                           value={newExamItem.date}
-                          onChange={(e) => setNewExamItem({ ...newExamItem, date: e.target.value })}
-                          className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition-all font-semibold text-slate-800 text-center"
+                          onChange={(val) => setNewExamItem({ ...newExamItem, date: val })}
+                          showTime={true}
                         />
                       </div>
                     </div>
@@ -5638,27 +5781,21 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className={newEvent.action === 'به تعویق افتاده' ? "grid grid-cols-2 gap-3" : ""}>
+                    <div className="space-y-3">
                       <div>
                         <label className="block text-[10px] font-black text-slate-500 mb-1">تاریخ رویداد</label>
-                        <input
-                          type="text"
-                          placeholder="مثال: ۱۴۰۵/۰۳/۱۲"
+                        <DateTimeSelect
                           value={newEvent.date}
-                          onChange={(e) => setNewEvent({ ...newEvent, date: e.target.value })}
-                          className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-semibold text-slate-800 text-center"
+                          onChange={(val) => setNewEvent({ ...newEvent, date: val })}
                         />
                       </div>
 
                       {newEvent.action === 'به تعویق افتاده' && (
                         <div>
                           <label className="block text-[10px] font-black text-slate-500 mb-1">تاریخ جدید</label>
-                          <input
-                            type="text"
-                            placeholder="مثال: ۱۴۰۵/۰۳/۱۹"
-                            value={newEvent.newDate}
-                            onChange={(e) => setNewEvent({ ...newEvent, newDate: e.target.value })}
-                            className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-semibold text-slate-800 text-center"
+                          <DateTimeSelect
+                            value={newEvent.newDate || ''}
+                            onChange={(val) => setNewEvent({ ...newEvent, newDate: val })}
                           />
                         </div>
                       )}
@@ -6018,7 +6155,7 @@ export default function App() {
           {/* Tab 7: Completed/Incomplete Tasks ("کارهای انجام شده/نشده") */}
           {activeTab === 7 && (() => {
             const weekDates = getWeekDatesForData(data);
-            const tempYear = data.weekYear || 1405;
+            const tempYear = data.weekYear || getTodayJalali().year;
 
             const completedCore = (data.coreTasks || []).filter(t => t.status === 'completed');
             const completedSec = (data.secondaryTasks || []).filter(t => t.status === 'completed');
@@ -6463,7 +6600,7 @@ export default function App() {
                   <label className="text-[10px] text-slate-400 font-bold">سال هجری شمسی</label>
                   <select
                     value={tempYear}
-                    onChange={(e) => setTempYear(parseInt(e.target.value) || 1405)}
+                    onChange={(e) => setTempYear(parseInt(e.target.value) || getTodayJalali().year)}
                     className="p-2 border border-slate-200 rounded-xl bg-slate-50 text-xs font-black"
                   >
                     {YEARS_1400_TO_1430.map(y => (
@@ -6678,8 +6815,16 @@ export default function App() {
 
             <div className="flex flex-col gap-2 mb-6">
               {weekDates.map((dateStr, idx) => {
-                const weekdays = ['شنبه', 'یکشنبه', 'دوشنبه', 'سه شنبه', 'چهارشنبه', 'پنجشنبه', 'جمعه'];
-                const weekdayName = weekdays[idx] || 'روز هفته';
+                const parsed = parsePersianDate(dateStr);
+                const curYear = (parsed && parsed.month === data.weekEndMonth && data.weekEndYear)
+                  ? data.weekEndYear
+                  : (data.weekYear || getTodayJalali().year);
+                const weekdayName = parsed
+                  ? getWeekdayOfPersianDate(curYear, parsed.month, parsed.day)
+                  : 'روز هفته';
+                const formattedDate = parsed
+                  ? formatCompletionDate(parsed.day, parsed.month, curYear)
+                  : dateStr;
 
                 return (
                   <button
@@ -6687,9 +6832,11 @@ export default function App() {
                     type="button"
                     onClick={() => {
                       if (completionTarget.type === 'daily') {
-                        saveDailyTaskCompletion(dateStr);
-                      } else {
-                        saveSecondaryTaskCompletion(dateStr);
+                        saveDailyTaskCompletion(formattedDate);
+                      } else if (completionTarget.type === 'secondary') {
+                        saveSecondaryTaskCompletion(formattedDate);
+                      } else if (completionTarget.type === 'core') {
+                        saveCoreTaskCompletion(formattedDate);
                       }
                     }}
                     className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-900 border border-slate-200 hover:border-indigo-300 rounded-xl text-xs font-black text-slate-700 text-right transition-all flex items-center justify-between cursor-pointer"
@@ -6700,21 +6847,28 @@ export default function App() {
                 );
               })}
 
-              <button
-                type="button"
-                onClick={() => {
-                  const today = `${new Date().toLocaleDateString('fa-IR', { day: 'numeric', month: 'long' })}`;
-                  if (completionTarget.type === 'daily') {
-                    saveDailyTaskCompletion(today);
-                  } else {
-                    saveSecondaryTaskCompletion(today);
-                  }
-                }}
-                className="p-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-950 border border-emerald-200 rounded-xl text-xs font-black text-right transition-all flex items-center justify-between cursor-pointer"
-              >
-                <span>امروز ({new Date().toLocaleDateString('fa-IR', { day: 'numeric', month: 'long' })})</span>
-                <ChevronLeft className="w-4 h-4 text-emerald-600" />
-              </button>
+              {(() => {
+                const today = getTodayJalali();
+                const todayFormatted = formatCompletionDate(today.day, today.monthName, today.year);
+                return (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (completionTarget.type === 'daily') {
+                        saveDailyTaskCompletion(todayFormatted);
+                      } else if (completionTarget.type === 'secondary') {
+                        saveSecondaryTaskCompletion(todayFormatted);
+                      } else if (completionTarget.type === 'core') {
+                        saveCoreTaskCompletion(todayFormatted);
+                      }
+                    }}
+                    className="p-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-950 border border-emerald-200 rounded-xl text-xs font-black text-right transition-all flex items-center justify-between cursor-pointer"
+                  >
+                    <span>امروز ({toPersianDigits(todayFormatted)})</span>
+                    <ChevronLeft className="w-4 h-4 text-emerald-600" />
+                  </button>
+                );
+              })()}
             </div>
 
             <div className="flex items-center justify-end">

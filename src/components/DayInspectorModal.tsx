@@ -22,7 +22,16 @@ interface DayInspectorModalProps {
   lang: 'fa' | 'en';
 }
 
-import { JALALI_MONTHS, JALALI_WEEKDAYS, YEARS_1400_TO_1430, getJalaliWeekday, getDaysInJalaliMonth } from '../utils/jalali';
+import { 
+  JALALI_MONTHS, 
+  JALALI_WEEKDAYS, 
+  YEARS_1400_TO_1430, 
+  getJalaliWeekday, 
+  getDaysInJalaliMonth,
+  jalaliToGregorian,
+  getTodayJalali,
+  isLeapJalali
+} from '../utils/jalali';
 
 const JALALI_MONTHS_EN = [
   'Farvardin', 'Ordibehesht', 'Khordad', 'Tir', 'Mordad', 'Shahrivar',
@@ -49,49 +58,43 @@ const getDaysInMonth = (monthName: string, year: number): number => {
   return getDaysInJalaliMonth(monthName, year);
 };
 
-// Convert Jalali date to standard Gregorian Date to find weekday
-function jalaliToGregorian(jy: number, jm: number, jd: number): Date {
-  const jalaliToJulianDay = (y: number, m: number, d: number): number => {
-    const epochJalali = 1948320.5;
-    let julianYear = y - ((y >= 0) ? 474 : 473);
-    let jalaliEpochCycle = 474 + (julianYear % 2820);
-    return d + ((m <= 7) ? (m - 1) * 31 : ((m - 7) * 30) + 186) +
-           Math.floor((jalaliEpochCycle * 682 - 110) / 2816) +
-           (jalaliEpochCycle - 1) * 365 +
-           Math.floor(julianYear / 2820) * 1029983 +
-           (epochJalali - 1);
-  };
-
-  const julianToGregorian = (jdn: number): Date => {
-    const w = Math.floor(jdn + 0.5);
-    const z = w - 1721119;
-    const g = Math.floor((z - 0.25) / 36524.25);
-    const b = z + g - Math.floor(g / 4);
-    const c = Math.floor((b - 0.25) / 365.25);
-    const d = b - Math.floor(c * 365.25);
-    const month = Math.floor((5 * d + 456) / 153);
-    const mDay = d - Math.floor((153 * month - 457) / 5);
-    const m = (month > 12) ? month - 12 : month;
-    const y = (month > 12) ? c + 1 : c;
-    const date = new Date(Date.UTC(y, m - 1, mDay));
-    return date;
-  };
-
-  const jdn = jalaliToJulianDay(jy, jm, jd);
-  return julianToGregorian(jdn);
-}
-
 export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayInspectorModalProps) {
   const isRtl = lang === 'fa';
 
-  // Extract current default month/year from data
-  const defaultMonthName = data.weekMonth || (data.month ? data.month.split(' ')[0] : 'خرداد');
-  const defaultYear = data.weekYear || (data.month && parseInt(data.month.split(' ')[1]) ? parseInt(data.month.split(' ')[1]) : 1406);
+  // E2 & E7: Extract current default month/year from data with correct token indexing:
+  // In data.month («1405 خرداد»), year is tokens[0], month is tokens[1]
+  const todayJalali = getTodayJalali();
+
+  let initialYear = data.weekYear;
+  let initialMonthName = data.weekMonth;
+
+  if ((!initialYear || !initialMonthName) && data.month) {
+    const parts = data.month.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      const p0Num = parseInt(PERS_TO_ENG_DIGITS(parts[0]), 10);
+      const p1Num = parseInt(PERS_TO_ENG_DIGITS(parts[1]), 10);
+      if (!isNaN(p0Num) && p0Num >= 1300 && p0Num <= 1500) {
+        initialYear = initialYear || p0Num;
+        if (JALALI_MONTHS.includes(parts[1])) {
+          initialMonthName = initialMonthName || parts[1];
+        }
+      } else if (!isNaN(p1Num) && p1Num >= 1300 && p1Num <= 1500) {
+        initialYear = initialYear || p1Num;
+        if (JALALI_MONTHS.includes(parts[0])) {
+          initialMonthName = initialMonthName || parts[0];
+        }
+      }
+    }
+  }
+
+  const defaultYear = (initialYear && initialYear >= 1300 && initialYear <= 1500) ? initialYear : todayJalali.year;
+  const defaultMonthName = (initialMonthName && JALALI_MONTHS.includes(initialMonthName)) ? initialMonthName : todayJalali.monthName;
+  const defaultDay = (data.weekStartDay && data.weekStartDay >= 1 && data.weekStartDay <= 31) ? data.weekStartDay : todayJalali.day;
 
   // States
   const [selectedYear, setSelectedYear] = useState<number>(defaultYear);
   const [selectedMonth, setSelectedMonth] = useState<string>(defaultMonthName);
-  const [selectedDay, setSelectedDay] = useState<number>(data.weekStartDay || 15);
+  const [selectedDay, setSelectedDay] = useState<number>(defaultDay);
   const [typedDate, setTypedDate] = useState<string>('');
   const [inputError, setInputError] = useState<string | null>(null);
 
@@ -111,7 +114,7 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
     monthLabel: isRtl ? 'ماه' : 'Month',
     dayLabel: isRtl ? 'روز' : 'Day',
     typeOrSelect: isRtl ? 'یا وارد کردن دستی تاریخ:' : 'Or enter manually (YYYY/MM/DD):',
-    invalidFormat: isRtl ? 'فرمت تاریخ ناهمخوان است (مثال: ۱۴۰۶/۰۳/۱۵)' : 'Invalid date format (e.g., 1406/03/15)',
+    invalidFormat: isRtl ? 'فرمت تاریخ ناهمخوان است (مثال: ۱۴۰۵/۰۳/۱۵)' : 'Invalid date format (e.g., 1405/03/15)',
     summaryTitle: isRtl ? `خلاصه وضعیت روز: ${dateString}` : `Day Summary: ${dateString}`,
     weekdayLabel: isRtl ? 'روز هفته:' : 'Day of Week:',
     classesTitle: isRtl ? 'کلاس‌های ثبت‌شده امروز' : "Today's Scheduled Classes",
@@ -122,8 +125,8 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
     noSec: isRtl ? 'هیچ کار فرعی برای امروز یافت نشد.' : 'No secondary tasks for today.',
     coreDeadlinesTitle: isRtl ? 'ددلاین کارهای اصلی' : 'Core Task Deadlines',
     noCore: isRtl ? 'هیچ ددلاین اصلی برای امروز وجود ندارد.' : 'No core task deadlines today.',
-    habitsTitle: isRtl ? 'عادت‌ها و روتین‌های فعال امروز' : "Today's Active Habits",
-    noHabits: isRtl ? 'هیچ عادتی برای این روز هفته فعال نیست.' : 'No active habits for this day.',
+    habitsTitle: isRtl ? 'عادت‌ها و روتین‌های روز' : "Habits & Routines",
+    noHabits: isRtl ? 'هیچ عادتی ثبت نشده است.' : 'No habits registered.',
     closeBtn: isRtl ? 'بستن' : 'Close',
     completed: isRtl ? 'انجام شده' : 'Completed',
     pending: isRtl ? 'در حال انجام' : 'Pending',
@@ -137,24 +140,13 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
     return isRtl ? mName : JALALI_MONTHS_EN[idx];
   };
 
-  // Calculate corresponding weekday
+  // E3: Calculate corresponding weekday using UTC-safe getJalaliWeekday (no timezone shift)
   const calculatedWeekdayKey = useMemo(() => {
     try {
       const monthIdx = JALALI_MONTHS.indexOf(selectedMonth) + 1;
       if (monthIdx === 0) return null;
-      const gDate = jalaliToGregorian(selectedYear, monthIdx, selectedDay);
-      const gDay = gDate.getDay(); // 0 is Sunday, 1 is Monday ... 6 is Saturday
-      
-      const weekdayIndexMap: { [key: number]: string } = {
-        0: 'sunday',
-        1: 'monday',
-        2: 'tuesday',
-        3: 'wednesday',
-        4: 'thursday',
-        5: 'friday',
-        6: 'saturday'
-      };
-      return weekdayIndexMap[gDay];
+      const jw = getJalaliWeekday(selectedYear, monthIdx, selectedDay);
+      return jw.weekday.key;
     } catch {
       return null;
     }
@@ -191,6 +183,33 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
     }
   };
 
+  // Helper: Match normalized Jalali date string (YYYY/MM/DD, YYYY-MM-DD, Persian/English digits)
+  const matchesTargetDate = (dateStr?: string) => {
+    if (!dateStr) return false;
+    const clean = PERS_TO_ENG_DIGITS(dateStr).trim();
+    const match = clean.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+    if (match) {
+      const y = parseInt(match[1], 10);
+      const m = parseInt(match[2], 10);
+      const d = parseInt(match[3], 10);
+      const monthIdx = JALALI_MONTHS.indexOf(selectedMonth) + 1;
+      return y === selectedYear && m === monthIdx && d === selectedDay;
+    }
+    // Also match "DD MonthName" or "MonthName DD"
+    if (selectedMonth && clean.includes(selectedMonth)) {
+      const leadingDay = clean.match(/^(\d{1,2})\s+/);
+      const trailingDay = clean.match(/(\d{1,2})\s*$/);
+      const dayNum = leadingDay ? parseInt(leadingDay[1], 10) : trailingDay ? parseInt(trailingDay[1], 10) : NaN;
+      if (dayNum === selectedDay) {
+        const yearMatch = clean.match(/(\d{4})/);
+        if (!yearMatch || parseInt(yearMatch[1], 10) === selectedYear) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
   // 1. Gather Classes on this weekday
   const todayClasses = useMemo(() => {
     if (!calculatedWeekdayKey) return [];
@@ -207,7 +226,7 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
   const todaySecondaryTasks = useMemo(() => {
     return (data.secondaryTasks || []).filter(task => {
       // Completed on this date
-      const isCompletedToday = task.status === 'completed' && task.completionDate === dateString;
+      const isCompletedToday = task.status === 'completed' && (task.completionDate === dateString || matchesTargetDate(task.completionDate));
       
       // Deadline matches today
       const hasDeadlineToday = task.deadline && 
@@ -216,7 +235,7 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
 
       return isCompletedToday || hasDeadlineToday;
     });
-  }, [data.secondaryTasks, dateString, selectedDay, selectedMonth]);
+  }, [data.secondaryTasks, dateString, selectedDay, selectedMonth, selectedYear]);
 
   // 4. Gather Core tasks with deadline today
   const todayCoreTasks = useMemo(() => {
@@ -232,9 +251,9 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
     const list: Array<{ id: string; text: string; columnTitle?: string; date?: string; type?: string; description?: string; completed?: boolean; time?: string }> = [];
     (data.examColumns || []).forEach(col => {
       col.items.forEach(item => {
-        if (item.deadline && item.deadline.day === selectedDay && item.deadline.month === selectedMonth) {
-          list.push({ ...item, columnTitle: col.titleFa });
-        } else if (item.date && item.date.includes(`${selectedYear}/${(JALALI_MONTHS.indexOf(selectedMonth)+1).toString().padStart(2, '0')}/${selectedDay.toString().padStart(2, '0')}`)) {
+        const matchesDate = matchesTargetDate(item.date);
+        const matchesDeadline = item.deadline && item.deadline.day === selectedDay && item.deadline.month === selectedMonth;
+        if (matchesDate || matchesDeadline) {
           list.push({ ...item, columnTitle: col.titleFa });
         }
       });
@@ -242,24 +261,25 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
     return list;
   }, [data.examColumns, selectedDay, selectedMonth, selectedYear]);
 
-  // 4.6 Gather Deadlines on this day from Details tab
+  // 4.6 Gather Deadlines on this day from Details tab (E4: matching item.date normalized)
   const todayDeadlines = useMemo(() => {
-    const list: Array<{ id: string; text: string; columnTitle?: string; completed?: boolean }> = [];
+    const list: Array<{ id: string; text: string; columnTitle?: string; completed?: boolean; date?: string }> = [];
     (data.detailsColumns || []).forEach(col => {
       col.items.forEach(item => {
-        if (item.deadline && item.deadline.day === selectedDay && item.deadline.month === selectedMonth) {
+        const matchesDate = matchesTargetDate(item.date);
+        const matchesDeadlineObj = item.deadline && item.deadline.day === selectedDay && item.deadline.month === selectedMonth;
+        if (matchesDate || matchesDeadlineObj) {
           list.push({ ...item, columnTitle: col.titleFa });
         }
       });
     });
     return list;
-  }, [data.detailsColumns, selectedDay, selectedMonth]);
+  }, [data.detailsColumns, selectedDay, selectedMonth, selectedYear]);
 
-  // 5. Gather Habits active on this weekday
+  // E5 & E8: Show ALL reminders (with check status for selected day and guarded checkedDays)
   const todayHabits = useMemo(() => {
-    if (!calculatedWeekdayKey) return [];
-    return (data.reminders || []).filter(r => r.checkedDays.includes(calculatedWeekdayKey));
-  }, [data.reminders, calculatedWeekdayKey]);
+    return data.reminders || [];
+  }, [data.reminders]);
 
   if (!isOpen) return null;
 
@@ -305,7 +325,14 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
                 <label className="text-[10px] text-slate-400 font-black block text-right">{t.yearLabel}</label>
                 <select
                   value={selectedYear}
-                  onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+                  onChange={(e) => {
+                    const y = parseInt(e.target.value);
+                    setSelectedYear(y);
+                    const maxD = getDaysInMonth(selectedMonth, y);
+                    if (selectedDay > maxD) {
+                      setSelectedDay(maxD);
+                    }
+                  }}
                   className="w-full text-xs p-2.5 border border-slate-200 rounded-xl bg-white font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 >
                   {YEARS_1400_TO_1430.map(y => (
@@ -435,7 +462,6 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
                   <button
                     type="button"
                     onClick={() => {
-                      const maxD = getDaysInMonth(selectedMonth, selectedYear);
                       if (selectedDay > 1) {
                         setSelectedDay(prev => prev - 1);
                       } else {
@@ -444,6 +470,13 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
                           const prevMonth = JALALI_MONTHS[mIdx - 1];
                           setSelectedMonth(prevMonth);
                           setSelectedDay(getDaysInMonth(prevMonth, selectedYear));
+                        } else {
+                          // E6: 1 Farvardin -> Esfand of previous year with leap year length
+                          const prevYear = selectedYear - 1;
+                          const prevMonth = JALALI_MONTHS[11]; // 'اسفند'
+                          setSelectedYear(prevYear);
+                          setSelectedMonth(prevMonth);
+                          setSelectedDay(getDaysInMonth(prevMonth, prevYear));
                         }
                       }
                     }}
@@ -457,7 +490,7 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
                     onClick={() => {
                       setSelectedYear(defaultYear);
                       setSelectedMonth(defaultMonthName);
-                      setSelectedDay(data.weekStartDay || 15);
+                      setSelectedDay(defaultDay);
                     }}
                     className="px-2.5 py-1 bg-white text-indigo-700 hover:bg-indigo-50 text-[10px] font-black rounded-lg transition-all cursor-pointer shadow-2xs"
                   >
@@ -476,6 +509,12 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
                           const nextMonth = JALALI_MONTHS[mIdx + 1];
                           setSelectedMonth(nextMonth);
                           setSelectedDay(1);
+                        } else {
+                          // Last day of Esfand -> 1 Farvardin of next year
+                          const nextYear = selectedYear + 1;
+                          setSelectedYear(nextYear);
+                          setSelectedMonth(JALALI_MONTHS[0]);
+                          setSelectedDay(1);
                         }
                       }
                     }}
@@ -493,7 +532,7 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
               {/* Productivity Overview Cards */}
               {(() => {
                 const totalItems = todayClasses.length + todayTasks.length + todayExams.length + todayDeadlines.length + todayCoreTasks.length + todayHabits.length + todaySecondaryTasks.length;
-                const completedTasks = todayTasks.filter(t => t.status === 'completed' && t.completionDate === dateString).length;
+                const completedTasks = todayTasks.filter(t => t.status === 'completed' && (t.completionDate === dateString || matchesTargetDate(t.completionDate))).length;
                 const completedCore = todayCoreTasks.filter(t => t.status === 'completed').length;
                 const completedSec = todaySecondaryTasks.filter(t => t.status === 'completed').length;
                 const totalCompleted = completedTasks + completedCore + completedSec;
@@ -700,7 +739,7 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
               </div>
             </div>
 
-            {/* 4. Habits active on this day */}
+            {/* 4. Habits active on this day (E5: show all reminders with check status for selected day and counter X of Y) */}
             <div className="border border-slate-200/80 p-5 rounded-2xl space-y-3 flex flex-col justify-between">
               <div>
                 <div className="flex items-center gap-2 border-b border-slate-100 pb-2 mb-2">
@@ -709,16 +748,55 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
                 </div>
                 {todayHabits.length > 0 ? (
                   <div className="space-y-2 max-h-48 overflow-y-auto">
-                    {todayHabits.map(h => (
-                      <div key={h.id} className="p-2.5 bg-slate-50 border border-slate-150 rounded-xl flex items-center justify-between text-xs font-bold text-slate-800">
-                        <span>{isRtl ? h.textFa : (h.textEn || h.textFa)}</span>
-                        <div className="flex items-center gap-1">
-                          <span className="text-[9px] text-slate-400">
-                            {h.checkedDays.length} {isRtl ? 'روز در هفته' : 'days/week'}
-                          </span>
+                    {todayHabits.map(h => {
+                      const isCheckedToday = calculatedWeekdayKey ? (h.checkedDays || []).includes(calculatedWeekdayKey) : false;
+                      const target = h.targetCount || 1;
+                      const checkedCount = (h.checkedDays || []).length;
+
+                      let progressCount = checkedCount;
+                      let targetGoal = target;
+                      let periodText = isRtl ? 'در هفته' : '/ week';
+
+                      if (h.frequency === 'times_per_week') {
+                        progressCount = checkedCount;
+                        targetGoal = target;
+                        periodText = isRtl ? 'در هفته' : '/ week';
+                      } else if (h.frequency === 'times_per_month') {
+                        progressCount = checkedCount;
+                        targetGoal = target;
+                        periodText = isRtl ? 'در ماه' : '/ month';
+                      } else if (target > 1) {
+                        const dayProg = (calculatedWeekdayKey && h.dayProgress && h.dayProgress[calculatedWeekdayKey]) || (isCheckedToday ? target : 0);
+                        progressCount = dayProg;
+                        targetGoal = target;
+                        periodText = isRtl ? 'امروز' : 'today';
+                      } else {
+                        progressCount = checkedCount;
+                        targetGoal = 7;
+                        periodText = isRtl ? 'روز در هفته' : 'days/week';
+                      }
+
+                      return (
+                        <div key={h.id} className="p-2.5 bg-slate-50 border border-slate-150 rounded-xl flex items-center justify-between text-xs font-bold text-slate-800">
+                          <div className="flex items-center gap-2">
+                            <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${isCheckedToday ? 'bg-emerald-500 ring-2 ring-emerald-200' : 'bg-slate-300'}`} />
+                            <span className={isCheckedToday ? 'text-slate-900 font-bold' : 'text-slate-600'}>
+                              {isRtl ? h.textFa : (h.textEn || h.textFa)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[9px] text-slate-500 font-medium">
+                              {progressCount} {isRtl ? 'از' : 'of'} {targetGoal} {periodText}
+                            </span>
+                            <span className={`text-[8px] px-1.5 py-0.5 rounded-md font-black ${
+                              isCheckedToday ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
+                            }`}>
+                              {isCheckedToday ? (isRtl ? '✓ انجام شده' : '✓ Done') : (isRtl ? 'انجام نشده' : 'Pending')}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <p className="text-[10px] text-slate-400 font-bold py-3">{t.noHabits}</p>

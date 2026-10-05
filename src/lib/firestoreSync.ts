@@ -831,8 +831,33 @@ export function subscribeToPlannerSubcollections(
   const goalPhasesMap = new Map<string, GoalPhase[]>();
 
   const allUnsubs: (() => void)[] = [];
+  const listenerRetries = new Map<string, number>();
+  const retryTimers = new Set<ReturnType<typeof setTimeout>>();
+  let isUnsubscribed = false;
   let wave2Timer: ReturnType<typeof setTimeout> | null = null;
   let notifyTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const handleListenerError = (colName: string, err: any, retryFn: () => void) => {
+    if (isUnsubscribed) return;
+    const count = listenerRetries.get(colName) || 0;
+    console.warn(`[Firestore Listener Resilience] Error on '${colName}' (attempt ${count + 1}/5):`, err);
+    if (count < 5) {
+      listenerRetries.set(colName, count + 1);
+      const delay = 2000 * Math.pow(2, count); // 2s, 4s, 8s, 16s, 32s
+      const timer = setTimeout(() => {
+        retryTimers.delete(timer);
+        if (!isUnsubscribed) {
+          retryFn();
+        }
+      }, delay);
+      retryTimers.add(timer);
+    } else {
+      console.error(`[Firestore Listener Resilience] '${colName}' exceeded max retries (5). Notifying consumer.`);
+      if (onError) {
+        onError(err instanceof Error ? err : new Error(String(err)));
+      }
+    }
+  };
 
   // B2: Debounced notify (trailing 300ms) with mirror sync
   const scheduleNotify = () => {
@@ -920,13 +945,21 @@ export function subscribeToPlannerSubcollections(
   };
 
   // ---------------------------------------------------------
-  // WAVE 1: Immediate Listeners
+  // WAVE 1: Immediate Listeners (7 listeners with resilience)
   // settings(parent), categories, classesSchedule, dailyTasks, coreTasks, secondaryTasks, reminders
   // ---------------------------------------------------------
 
   // 1. Parent settings
-  allUnsubs.push(
-    onSnapshot(doc(db, 'planners', userId), { includeMetadataChanges: true }, (snap) => {
+  let parentUnsub: (() => void) | null = null;
+  const startParentListener = () => {
+    if (isUnsubscribed) return;
+    if (parentUnsub) {
+      const idx = allUnsubs.indexOf(parentUnsub);
+      if (idx !== -1) allUnsubs.splice(idx, 1);
+      try { parentUnsub(); } catch (_) {}
+    }
+    parentUnsub = onSnapshot(doc(db, 'planners', userId), { includeMetadataChanges: true }, (snap) => {
+      listenerRetries.delete('parent');
       if (snap.metadata.hasPendingWrites) return;
       settingsReady = true;
       if (snap.exists()) {
@@ -934,36 +967,66 @@ export function subscribeToPlannerSubcollections(
         settingsData = cleanSettings;
         scheduleNotify();
       }
-    }, onError)
-  );
+    }, (err) => handleListenerError('parent', err, startParentListener));
+    allUnsubs.push(parentUnsub);
+  };
+  startParentListener();
 
   // 2. Categories
-  allUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'categories'), { includeMetadataChanges: true }, (snap) => {
+  let categoriesUnsub: (() => void) | null = null;
+  const startCategoriesListener = () => {
+    if (isUnsubscribed) return;
+    if (categoriesUnsub) {
+      const idx = allUnsubs.indexOf(categoriesUnsub);
+      if (idx !== -1) allUnsubs.splice(idx, 1);
+      try { categoriesUnsub(); } catch (_) {}
+    }
+    categoriesUnsub = onSnapshot(collection(db, 'planners', userId, 'categories'), { includeMetadataChanges: true }, (snap) => {
+      listenerRetries.delete('categories');
       if (snap.metadata.hasPendingWrites) return;
       const isFirst = !readyCollections.has('categories');
       readyCollections.add('categories');
       if (!isFirst && snap.docChanges().length === 0) return;
       categoriesList = snap.docs.map(d => d.data() as Category);
       scheduleNotify();
-    }, onError)
-  );
+    }, (err) => handleListenerError('categories', err, startCategoriesListener));
+    allUnsubs.push(categoriesUnsub);
+  };
+  startCategoriesListener();
 
   // 3. Classes Schedule
-  allUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'classesSchedule'), { includeMetadataChanges: true }, (snap) => {
+  let classesScheduleUnsub: (() => void) | null = null;
+  const startClassesScheduleListener = () => {
+    if (isUnsubscribed) return;
+    if (classesScheduleUnsub) {
+      const idx = allUnsubs.indexOf(classesScheduleUnsub);
+      if (idx !== -1) allUnsubs.splice(idx, 1);
+      try { classesScheduleUnsub(); } catch (_) {}
+    }
+    classesScheduleUnsub = onSnapshot(collection(db, 'planners', userId, 'classesSchedule'), { includeMetadataChanges: true }, (snap) => {
+      listenerRetries.delete('classesSchedule');
       if (snap.metadata.hasPendingWrites) return;
       const isFirst = !readyCollections.has('classesSchedule');
       readyCollections.add('classesSchedule');
       if (!isFirst && snap.docChanges().length === 0) return;
       classesScheduleList = snap.docs.map(d => d.data() as ClassSlot);
       scheduleNotify();
-    }, onError)
-  );
+    }, (err) => handleListenerError('classesSchedule', err, startClassesScheduleListener));
+    allUnsubs.push(classesScheduleUnsub);
+  };
+  startClassesScheduleListener();
 
   // 4. Daily Tasks
-  allUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'dailyTasks'), { includeMetadataChanges: true }, (snap) => {
+  let dailyTasksUnsub: (() => void) | null = null;
+  const startDailyTasksListener = () => {
+    if (isUnsubscribed) return;
+    if (dailyTasksUnsub) {
+      const idx = allUnsubs.indexOf(dailyTasksUnsub);
+      if (idx !== -1) allUnsubs.splice(idx, 1);
+      try { dailyTasksUnsub(); } catch (_) {}
+    }
+    dailyTasksUnsub = onSnapshot(collection(db, 'planners', userId, 'dailyTasks'), { includeMetadataChanges: true }, (snap) => {
+      listenerRetries.delete('dailyTasks');
       if (snap.metadata.hasPendingWrites) return;
       const isFirst = !readyCollections.has('dailyTasks');
       readyCollections.add('dailyTasks');
@@ -979,91 +1042,189 @@ export function subscribeToPlannerSubcollections(
       });
       dailyTasksMap = newMap;
       scheduleNotify();
-    }, onError)
-  );
+    }, (err) => handleListenerError('dailyTasks', err, startDailyTasksListener));
+    allUnsubs.push(dailyTasksUnsub);
+  };
+  startDailyTasksListener();
 
   // 5. Core Tasks
-  allUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'coreTasks'), { includeMetadataChanges: true }, (snap) => {
+  let coreTasksUnsub: (() => void) | null = null;
+  const startCoreTasksListener = () => {
+    if (isUnsubscribed) return;
+    if (coreTasksUnsub) {
+      const idx = allUnsubs.indexOf(coreTasksUnsub);
+      if (idx !== -1) allUnsubs.splice(idx, 1);
+      try { coreTasksUnsub(); } catch (_) {}
+    }
+    coreTasksUnsub = onSnapshot(collection(db, 'planners', userId, 'coreTasks'), { includeMetadataChanges: true }, (snap) => {
+      listenerRetries.delete('coreTasks');
       if (snap.metadata.hasPendingWrites) return;
       const isFirst = !readyCollections.has('coreTasks');
       readyCollections.add('coreTasks');
       if (!isFirst && snap.docChanges().length === 0) return;
       coreTasksList = snap.docs.map(d => d.data() as CoreTask);
       scheduleNotify();
-    }, onError)
-  );
+    }, (err) => handleListenerError('coreTasks', err, startCoreTasksListener));
+    allUnsubs.push(coreTasksUnsub);
+  };
+  startCoreTasksListener();
 
   // 6. Secondary Tasks
-  allUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'secondaryTasks'), { includeMetadataChanges: true }, (snap) => {
+  let secondaryTasksUnsub: (() => void) | null = null;
+  const startSecondaryTasksListener = () => {
+    if (isUnsubscribed) return;
+    if (secondaryTasksUnsub) {
+      const idx = allUnsubs.indexOf(secondaryTasksUnsub);
+      if (idx !== -1) allUnsubs.splice(idx, 1);
+      try { secondaryTasksUnsub(); } catch (_) {}
+    }
+    secondaryTasksUnsub = onSnapshot(collection(db, 'planners', userId, 'secondaryTasks'), { includeMetadataChanges: true }, (snap) => {
+      listenerRetries.delete('secondaryTasks');
       if (snap.metadata.hasPendingWrites) return;
       const isFirst = !readyCollections.has('secondaryTasks');
       readyCollections.add('secondaryTasks');
       if (!isFirst && snap.docChanges().length === 0) return;
       secondaryTasksList = snap.docs.map(d => d.data() as SecondaryTask);
       scheduleNotify();
-    }, onError)
-  );
+    }, (err) => handleListenerError('secondaryTasks', err, startSecondaryTasksListener));
+    allUnsubs.push(secondaryTasksUnsub);
+  };
+  startSecondaryTasksListener();
 
   // 7. Reminders
-  allUnsubs.push(
-    onSnapshot(collection(db, 'planners', userId, 'reminders'), { includeMetadataChanges: true }, (snap) => {
+  let remindersUnsub: (() => void) | null = null;
+  const startRemindersListener = () => {
+    if (isUnsubscribed) return;
+    if (remindersUnsub) {
+      const idx = allUnsubs.indexOf(remindersUnsub);
+      if (idx !== -1) allUnsubs.splice(idx, 1);
+      try { remindersUnsub(); } catch (_) {}
+    }
+    remindersUnsub = onSnapshot(collection(db, 'planners', userId, 'reminders'), { includeMetadataChanges: true }, (snap) => {
+      listenerRetries.delete('reminders');
       if (snap.metadata.hasPendingWrites) return;
       const isFirst = !readyCollections.has('reminders');
       readyCollections.add('reminders');
       if (!isFirst && snap.docChanges().length === 0) return;
       remindersList = snap.docs.map(d => d.data() as ReminderItem);
       scheduleNotify();
-    }, onError)
-  );
+    }, (err) => handleListenerError('reminders', err, startRemindersListener));
+    allUnsubs.push(remindersUnsub);
+  };
+  startRemindersListener();
 
   // ---------------------------------------------------------
   // WAVE 2: Deferred Listeners (setTimeout 3000ms after Wave 1)
-  // detailsColumns, examColumns, goals (+ phases), secondaryColumns, postponedEvents,
-  // todoList, weeklyEvents, dailyThoughts, pomodoroHistory, waterTrackerHistory, habitTracking
+  // detailsColumns, examColumns, secondaryColumns, goals (+ phases), postponedEvents,
+  // todoList, weeklyEvents, dailyThoughts, pomodoroHistory, waterTrackerHistory, habitTracking, timebox
   // ---------------------------------------------------------
 
   wave2Timer = setTimeout(() => {
+    if (isUnsubscribed) return;
+
     // 8. Details Columns
-    allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'detailsColumns'), { includeMetadataChanges: true }, (snap) => {
+    let detailsColumnsUnsub: (() => void) | null = null;
+    const startDetailsColumnsListener = () => {
+      if (isUnsubscribed) return;
+      if (detailsColumnsUnsub) {
+        const idx = allUnsubs.indexOf(detailsColumnsUnsub);
+        if (idx !== -1) allUnsubs.splice(idx, 1);
+        try { detailsColumnsUnsub(); } catch (_) {}
+      }
+      detailsColumnsUnsub = onSnapshot(collection(db, 'planners', userId, 'detailsColumns'), { includeMetadataChanges: true }, (snap) => {
+        listenerRetries.delete('detailsColumns');
         if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('detailsColumns');
         readyCollections.add('detailsColumns');
         if (!isFirst && snap.docChanges().length === 0) return;
         detailsColumnsList = snap.docs.map(d => d.data() as DetailsColumn);
         scheduleNotify();
-      }, onError)
-    );
+      }, (err) => handleListenerError('detailsColumns', err, startDetailsColumnsListener));
+      allUnsubs.push(detailsColumnsUnsub);
+    };
+    startDetailsColumnsListener();
 
     // 9. Exam Columns
-    allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'examColumns'), { includeMetadataChanges: true }, (snap) => {
+    let examColumnsUnsub: (() => void) | null = null;
+    const startExamColumnsListener = () => {
+      if (isUnsubscribed) return;
+      if (examColumnsUnsub) {
+        const idx = allUnsubs.indexOf(examColumnsUnsub);
+        if (idx !== -1) allUnsubs.splice(idx, 1);
+        try { examColumnsUnsub(); } catch (_) {}
+      }
+      examColumnsUnsub = onSnapshot(collection(db, 'planners', userId, 'examColumns'), { includeMetadataChanges: true }, (snap) => {
+        listenerRetries.delete('examColumns');
         if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('examColumns');
         readyCollections.add('examColumns');
         if (!isFirst && snap.docChanges().length === 0) return;
         examColumnsList = snap.docs.map(d => d.data() as DetailsColumn);
         scheduleNotify();
-      }, onError)
-    );
+      }, (err) => handleListenerError('examColumns', err, startExamColumnsListener));
+      allUnsubs.push(examColumnsUnsub);
+    };
+    startExamColumnsListener();
 
     // 10. Secondary Columns
-    allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'secondaryColumns'), { includeMetadataChanges: true }, (snap) => {
+    let secondaryColumnsUnsub: (() => void) | null = null;
+    const startSecondaryColumnsListener = () => {
+      if (isUnsubscribed) return;
+      if (secondaryColumnsUnsub) {
+        const idx = allUnsubs.indexOf(secondaryColumnsUnsub);
+        if (idx !== -1) allUnsubs.splice(idx, 1);
+        try { secondaryColumnsUnsub(); } catch (_) {}
+      }
+      secondaryColumnsUnsub = onSnapshot(collection(db, 'planners', userId, 'secondaryColumns'), { includeMetadataChanges: true }, (snap) => {
+        listenerRetries.delete('secondaryColumns');
         if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('secondaryColumns');
         readyCollections.add('secondaryColumns');
         if (!isFirst && snap.docChanges().length === 0) return;
         secondaryTaskColumnsList = snap.docs.map(d => d.data() as SecondaryTaskColumn);
         scheduleNotify();
-      }, onError)
-    );
+      }, (err) => handleListenerError('secondaryColumns', err, startSecondaryColumnsListener));
+      allUnsubs.push(secondaryColumnsUnsub);
+    };
+    startSecondaryColumnsListener();
 
     // 11. Goals & Subcollection Phases
-    allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'goals'), { includeMetadataChanges: true }, (snap) => {
+    const startGoalPhaseListener = (goalId: string, currentGoalIds: Set<string>) => {
+      if (isUnsubscribed) return;
+      const colKey = `goalPhase_${goalId}`;
+      const phasesCol = collection(db, 'planners', userId, 'goals', goalId, 'phases');
+      const unsubPhase = onSnapshot(phasesCol, { includeMetadataChanges: true }, (phaseSnap) => {
+        listenerRetries.delete(colKey);
+        if (phaseSnap.metadata.hasPendingWrites) return;
+        const phasesList: GoalPhase[] = [];
+        phaseSnap.forEach(pDoc => {
+          const pData = pDoc.data() as GoalPhase;
+          if (pData.weeks && pData.weeks.length > 0) {
+            pData.tasks = pData.weeks.flatMap(w => w.tasks || []);
+          }
+          phasesList.push(pData);
+        });
+        phasesList.sort((a, b) => (a.phase_number || 0) - (b.phase_number || 0));
+        goalPhasesMap.set(goalId, phasesList);
+        scheduleNotify();
+      }, (err) => {
+        if (currentGoalIds.has(goalId)) {
+          handleListenerError(colKey, err, () => startGoalPhaseListener(goalId, currentGoalIds));
+        }
+      });
+      phaseUnsubs.set(goalId, unsubPhase);
+    };
+
+    let goalsUnsub: (() => void) | null = null;
+    const startGoalsListener = () => {
+      if (isUnsubscribed) return;
+      if (goalsUnsub) {
+        const idx = allUnsubs.indexOf(goalsUnsub);
+        if (idx !== -1) allUnsubs.splice(idx, 1);
+        try { goalsUnsub(); } catch (_) {}
+      }
+      goalsUnsub = onSnapshot(collection(db, 'planners', userId, 'goals'), { includeMetadataChanges: true }, (snap) => {
+        listenerRetries.delete('goals');
         if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('goals');
         readyCollections.add('goals');
@@ -1076,110 +1237,166 @@ export function subscribeToPlannerSubcollections(
             unsub();
             phaseUnsubs.delete(goalId);
             goalPhasesMap.delete(goalId);
+            listenerRetries.delete(`goalPhase_${goalId}`);
           }
         }
 
         snap.docs.forEach(goalDoc => {
           const goalId = goalDoc.id;
           if (!phaseUnsubs.has(goalId)) {
-            const phasesCol = collection(db, 'planners', userId, 'goals', goalId, 'phases');
-            const unsubPhase = onSnapshot(phasesCol, { includeMetadataChanges: true }, (phaseSnap) => {
-              if (phaseSnap.metadata.hasPendingWrites) return;
-              const phasesList: GoalPhase[] = [];
-              phaseSnap.forEach(pDoc => {
-                const pData = pDoc.data() as GoalPhase;
-                if (pData.weeks && pData.weeks.length > 0) {
-                  pData.tasks = pData.weeks.flatMap(w => w.tasks || []);
-                }
-                phasesList.push(pData);
-              });
-              phasesList.sort((a, b) => (a.phase_number || 0) - (b.phase_number || 0));
-              goalPhasesMap.set(goalId, phasesList);
-              scheduleNotify();
-            }, onError);
-            phaseUnsubs.set(goalId, unsubPhase);
+            startGoalPhaseListener(goalId, currentGoalIds);
           }
         });
 
         scheduleNotify();
-      }, onError)
-    );
+      }, (err) => handleListenerError('goals', err, startGoalsListener));
+      allUnsubs.push(goalsUnsub);
+    };
+    startGoalsListener();
 
     // 12. Postponed Events
-    allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'postponedEvents'), { includeMetadataChanges: true }, (snap) => {
+    let postponedEventsUnsub: (() => void) | null = null;
+    const startPostponedEventsListener = () => {
+      if (isUnsubscribed) return;
+      if (postponedEventsUnsub) {
+        const idx = allUnsubs.indexOf(postponedEventsUnsub);
+        if (idx !== -1) allUnsubs.splice(idx, 1);
+        try { postponedEventsUnsub(); } catch (_) {}
+      }
+      postponedEventsUnsub = onSnapshot(collection(db, 'planners', userId, 'postponedEvents'), { includeMetadataChanges: true }, (snap) => {
+        listenerRetries.delete('postponedEvents');
         if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('postponedEvents');
         readyCollections.add('postponedEvents');
         if (!isFirst && snap.docChanges().length === 0) return;
         postponedEventsList = snap.docs.map(d => d.data() as PostponedEvent);
         scheduleNotify();
-      }, onError)
-    );
+      }, (err) => handleListenerError('postponedEvents', err, startPostponedEventsListener));
+      allUnsubs.push(postponedEventsUnsub);
+    };
+    startPostponedEventsListener();
 
     // 13. Todo List
-    allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'todoList'), { includeMetadataChanges: true }, (snap) => {
+    let todoListUnsub: (() => void) | null = null;
+    const startTodoListListener = () => {
+      if (isUnsubscribed) return;
+      if (todoListUnsub) {
+        const idx = allUnsubs.indexOf(todoListUnsub);
+        if (idx !== -1) allUnsubs.splice(idx, 1);
+        try { todoListUnsub(); } catch (_) {}
+      }
+      todoListUnsub = onSnapshot(collection(db, 'planners', userId, 'todoList'), { includeMetadataChanges: true }, (snap) => {
+        listenerRetries.delete('todoList');
         if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('todoList');
         readyCollections.add('todoList');
         if (!isFirst && snap.docChanges().length === 0) return;
         todoListItems = snap.docs.map(d => d.data() as NoteItem);
         scheduleNotify();
-      }, onError)
-    );
+      }, (err) => handleListenerError('todoList', err, startTodoListListener));
+      allUnsubs.push(todoListUnsub);
+    };
+    startTodoListListener();
 
     // 14. Weekly Events
-    allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'weeklyEvents'), { includeMetadataChanges: true }, (snap) => {
+    let weeklyEventsUnsub: (() => void) | null = null;
+    const startWeeklyEventsListener = () => {
+      if (isUnsubscribed) return;
+      if (weeklyEventsUnsub) {
+        const idx = allUnsubs.indexOf(weeklyEventsUnsub);
+        if (idx !== -1) allUnsubs.splice(idx, 1);
+        try { weeklyEventsUnsub(); } catch (_) {}
+      }
+      weeklyEventsUnsub = onSnapshot(collection(db, 'planners', userId, 'weeklyEvents'), { includeMetadataChanges: true }, (snap) => {
+        listenerRetries.delete('weeklyEvents');
         if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('weeklyEvents');
         readyCollections.add('weeklyEvents');
         if (!isFirst && snap.docChanges().length === 0) return;
         weeklyEventsList = snap.docs.map(d => d.data() as NoteItem);
         scheduleNotify();
-      }, onError)
-    );
+      }, (err) => handleListenerError('weeklyEvents', err, startWeeklyEventsListener));
+      allUnsubs.push(weeklyEventsUnsub);
+    };
+    startWeeklyEventsListener();
 
     // 15. Daily Thoughts
-    allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'dailyThoughts'), { includeMetadataChanges: true }, (snap) => {
+    let dailyThoughtsUnsub: (() => void) | null = null;
+    const startDailyThoughtsListener = () => {
+      if (isUnsubscribed) return;
+      if (dailyThoughtsUnsub) {
+        const idx = allUnsubs.indexOf(dailyThoughtsUnsub);
+        if (idx !== -1) allUnsubs.splice(idx, 1);
+        try { dailyThoughtsUnsub(); } catch (_) {}
+      }
+      dailyThoughtsUnsub = onSnapshot(collection(db, 'planners', userId, 'dailyThoughts'), { includeMetadataChanges: true }, (snap) => {
+        listenerRetries.delete('dailyThoughts');
         if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('dailyThoughts');
         readyCollections.add('dailyThoughts');
         if (!isFirst && snap.docChanges().length === 0) return;
         dailyThoughtsList = snap.docs.map(d => d.data() as NoteItem);
         scheduleNotify();
-      }, onError)
-    );
+      }, (err) => handleListenerError('dailyThoughts', err, startDailyThoughtsListener));
+      allUnsubs.push(dailyThoughtsUnsub);
+    };
+    startDailyThoughtsListener();
 
     // 16. Pomodoro History
-    allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'pomodoroHistory'), { includeMetadataChanges: true }, (snap) => {
+    let pomodoroHistoryUnsub: (() => void) | null = null;
+    const startPomodoroHistoryListener = () => {
+      if (isUnsubscribed) return;
+      if (pomodoroHistoryUnsub) {
+        const idx = allUnsubs.indexOf(pomodoroHistoryUnsub);
+        if (idx !== -1) allUnsubs.splice(idx, 1);
+        try { pomodoroHistoryUnsub(); } catch (_) {}
+      }
+      pomodoroHistoryUnsub = onSnapshot(collection(db, 'planners', userId, 'pomodoroHistory'), { includeMetadataChanges: true }, (snap) => {
+        listenerRetries.delete('pomodoroHistory');
         if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('pomodoroHistory');
         readyCollections.add('pomodoroHistory');
         if (!isFirst && snap.docChanges().length === 0) return;
         pomodoroHistoryList = snap.docs.map(d => d.data());
         scheduleNotify();
-      }, onError)
-    );
+      }, (err) => handleListenerError('pomodoroHistory', err, startPomodoroHistoryListener));
+      allUnsubs.push(pomodoroHistoryUnsub);
+    };
+    startPomodoroHistoryListener();
 
     // 17. WaterTracker History
-    allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'waterTrackerHistory'), { includeMetadataChanges: true }, (snap) => {
+    let waterTrackerHistoryUnsub: (() => void) | null = null;
+    const startWaterTrackerHistoryListener = () => {
+      if (isUnsubscribed) return;
+      if (waterTrackerHistoryUnsub) {
+        const idx = allUnsubs.indexOf(waterTrackerHistoryUnsub);
+        if (idx !== -1) allUnsubs.splice(idx, 1);
+        try { waterTrackerHistoryUnsub(); } catch (_) {}
+      }
+      waterTrackerHistoryUnsub = onSnapshot(collection(db, 'planners', userId, 'waterTrackerHistory'), { includeMetadataChanges: true }, (snap) => {
+        listenerRetries.delete('waterTrackerHistory');
         if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('waterTrackerHistory');
         readyCollections.add('waterTrackerHistory');
         if (!isFirst && snap.docChanges().length === 0) return;
         waterTrackerHistoryList = snap.docs.map(d => d.data());
         scheduleNotify();
-      }, onError)
-    );
+      }, (err) => handleListenerError('waterTrackerHistory', err, startWaterTrackerHistoryListener));
+      allUnsubs.push(waterTrackerHistoryUnsub);
+    };
+    startWaterTrackerHistoryListener();
 
     // 18. Habit Tracking
-    allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'habitTracking'), { includeMetadataChanges: true }, (snap) => {
+    let habitTrackingUnsub: (() => void) | null = null;
+    const startHabitTrackingListener = () => {
+      if (isUnsubscribed) return;
+      if (habitTrackingUnsub) {
+        const idx = allUnsubs.indexOf(habitTrackingUnsub);
+        if (idx !== -1) allUnsubs.splice(idx, 1);
+        try { habitTrackingUnsub(); } catch (_) {}
+      }
+      habitTrackingUnsub = onSnapshot(collection(db, 'planners', userId, 'habitTracking'), { includeMetadataChanges: true }, (snap) => {
+        listenerRetries.delete('habitTracking');
         if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('habitTracking');
         readyCollections.add('habitTracking');
@@ -1190,32 +1407,53 @@ export function subscribeToPlannerSubcollections(
         });
         habitTrackingMap = map;
         scheduleNotify();
-      }, onError)
-    );
+      }, (err) => handleListenerError('habitTracking', err, startHabitTrackingListener));
+      allUnsubs.push(habitTrackingUnsub);
+    };
+    startHabitTrackingListener();
 
     // 19. Timebox
-    allUnsubs.push(
-      onSnapshot(collection(db, 'planners', userId, 'timebox'), { includeMetadataChanges: true }, (snap) => {
+    let timeboxUnsub: (() => void) | null = null;
+    const startTimeboxListener = () => {
+      if (isUnsubscribed) return;
+      if (timeboxUnsub) {
+        const idx = allUnsubs.indexOf(timeboxUnsub);
+        if (idx !== -1) allUnsubs.splice(idx, 1);
+        try { timeboxUnsub(); } catch (_) {}
+      }
+      timeboxUnsub = onSnapshot(collection(db, 'planners', userId, 'timebox'), { includeMetadataChanges: true }, (snap) => {
+        listenerRetries.delete('timebox');
         if (snap.metadata.hasPendingWrites) return;
         const isFirst = !readyCollections.has('timebox');
         readyCollections.add('timebox');
         if (!isFirst && snap.docChanges().length === 0) return;
         timeboxEntries = snap.docs.map(d => d.data());
         scheduleNotify();
-      }, onError)
-    );
+      }, (err) => handleListenerError('timebox', err, startTimeboxListener));
+      allUnsubs.push(timeboxUnsub);
+    };
+    startTimeboxListener();
   }, 3000);
 
   // Return master unsubscribe
   return () => {
+    isUnsubscribed = true;
     if (wave2Timer) clearTimeout(wave2Timer);
     if (notifyTimer) clearTimeout(notifyTimer);
+    retryTimers.forEach(t => clearTimeout(t));
+    retryTimers.clear();
     readyCollections.clear();
     settingsReady = false;
-    allUnsubs.forEach(unsub => unsub());
-    phaseUnsubs.forEach(unsub => unsub());
+    allUnsubs.forEach(unsub => {
+      try { unsub(); } catch (_) {}
+    });
+    allUnsubs.length = 0;
+    phaseUnsubs.forEach(unsub => {
+      try { unsub(); } catch (_) {}
+    });
     phaseUnsubs.clear();
     goalPhasesMap.clear();
+    listenerRetries.clear();
   };
 }
 

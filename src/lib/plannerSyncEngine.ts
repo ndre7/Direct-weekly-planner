@@ -156,6 +156,34 @@ export function hashContent(val: any): string {
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
 
+/**
+ * Recursively strips properties with undefined values from objects and arrays for safe Firestore writing.
+ * Preserves null, 0, '', false, Date instances, and other primitives.
+ */
+export function deepStripUndefined<T>(value: T): T {
+  if (value === undefined) {
+    return undefined as unknown as T;
+  }
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  if (value instanceof Date) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .filter((item) => item !== undefined)
+      .map((item) => deepStripUndefined(item)) as unknown as T;
+  }
+  const result: Record<string, any> = {};
+  for (const [k, v] of Object.entries(value as Record<string, any>)) {
+    if (v !== undefined) {
+      result[k] = deepStripUndefined(v);
+    }
+  }
+  return result as T;
+}
+
 export function sanitizePhaseForStorage(phase: GoalPhase): GoalPhase {
   const sanitized = { ...phase };
   if (sanitized.weeks && sanitized.weeks.length > 0) {
@@ -276,7 +304,8 @@ export function computeDiff(userId: string, state: Partial<PlannerData>): DiffRe
         if (!id) continue;
         presentIds.add(id);
 
-        const dataToSave = cleanData ? cleanData(item) : item;
+        const rawData = cleanData ? cleanData(item) : item;
+        const dataToSave = deepStripUndefined(rawData);
         const currentHash = hashContent(dataToSave);
         const cachedHash = colMirror.get(id);
 
@@ -336,9 +365,10 @@ export function computeDiff(userId: string, state: Partial<PlannerData>): DiffRe
 
       // Separate phases from goal doc
       const { phases, ...goalTopLevel } = goal;
-      const goalHash = hashContent(goalTopLevel);
+      const cleanGoal = deepStripUndefined(goalTopLevel);
+      const goalHash = hashContent(cleanGoal);
       if (goalsMirror.get(goal.goal_id) !== goalHash) {
-        toSet.push({ collection: 'goals', id: goal.goal_id, data: goalTopLevel });
+        toSet.push({ collection: 'goals', id: goal.goal_id, data: cleanGoal });
       }
 
       // Handle phases in subcollection
@@ -353,7 +383,7 @@ export function computeDiff(userId: string, state: Partial<PlannerData>): DiffRe
           const phaseNumStr = String(phase.phase_number);
           presentPhaseNums.add(phaseNumStr);
 
-          const sanitizedPhase = sanitizePhaseForStorage(phase);
+          const sanitizedPhase = deepStripUndefined(sanitizePhaseForStorage(phase));
           const phaseHash = hashContent(sanitizedPhase);
           if (phasesMirror.get(phaseNumStr) !== phaseHash) {
             phaseSets.push({ goalId: goal.goal_id, phaseNumber: phaseNumStr, data: sanitizedPhase });
@@ -389,7 +419,8 @@ export function computeDiff(userId: string, state: Partial<PlannerData>): DiffRe
   if (state.dailyTasks && typeof state.dailyTasks === 'object') {
     for (const [dayKey, tasks] of Object.entries(state.dailyTasks)) {
       presentDays.add(dayKey);
-      const tasksArr = Array.isArray(tasks) ? tasks : [];
+      const rawTasks = Array.isArray(tasks) ? tasks : [];
+      const tasksArr = deepStripUndefined(rawTasks);
       const currentTasksHash = hashContent(tasksArr);
       const cachedTasksHash = mirror.dailyTasks.get(dayKey);
 
@@ -416,8 +447,8 @@ export function computeDiff(userId: string, state: Partial<PlannerData>): DiffRe
   const presentPomoDates = new Set<string>();
   let skippedPomoCount = 0;
   if (state.pomodoro?.history && Array.isArray(state.pomodoro.history)) {
-    for (const entry of state.pomodoro.history) {
-      const rawDate = entry?.date || entry?.timestamp || entry?.dateKey;
+    for (const rawEntry of state.pomodoro.history) {
+      const rawDate = rawEntry?.date || rawEntry?.timestamp || rawEntry?.dateKey;
       if (!rawDate || !isValidDateValue(rawDate)) {
         skippedPomoCount++;
         continue;
@@ -425,6 +456,7 @@ export function computeDiff(userId: string, state: Partial<PlannerData>): DiffRe
       const dateISO = normalizeToDateISO(rawDate);
       presentPomoDates.add(dateISO);
 
+      const entry = deepStripUndefined(rawEntry);
       const { updatedAt: _up, ...contentToHash } = entry;
       const currentHash = hashContent({ ...contentToHash, date: dateISO });
       const cachedHash = mirror.pomoHistory.get(dateISO);
@@ -452,8 +484,8 @@ export function computeDiff(userId: string, state: Partial<PlannerData>): DiffRe
   const presentWaterDates = new Set<string>();
   let skippedWaterCount = 0;
   if (state.waterTracker?.history && Array.isArray(state.waterTracker.history)) {
-    for (const entry of state.waterTracker.history) {
-      const rawDate = entry?.date || entry?.timestamp || entry?.dateKey;
+    for (const rawEntry of state.waterTracker.history) {
+      const rawDate = rawEntry?.date || rawEntry?.timestamp || rawEntry?.dateKey;
       if (!rawDate || !isValidDateValue(rawDate)) {
         skippedWaterCount++;
         continue;
@@ -461,6 +493,7 @@ export function computeDiff(userId: string, state: Partial<PlannerData>): DiffRe
       const dateISO = normalizeToDateISO(rawDate);
       presentWaterDates.add(dateISO);
 
+      const entry = deepStripUndefined(rawEntry);
       const { updatedAt: _up, ...contentToHash } = entry;
       const currentHash = hashContent({ ...contentToHash, date: dateISO });
       const cachedHash = mirror.waterHistory.get(dateISO);
@@ -487,9 +520,10 @@ export function computeDiff(userId: string, state: Partial<PlannerData>): DiffRe
   // 7. Parent Document Scalars
   let parentData: Record<string, any> | undefined = undefined;
   const scalarSettings = extractScalarSettings(state);
-  const currentParentHash = hashContent(scalarSettings);
+  const cleanParentData = deepStripUndefined(scalarSettings);
+  const currentParentHash = hashContent(cleanParentData);
   if (mirror.parentHash !== currentParentHash) {
-    parentData = scalarSettings;
+    parentData = cleanParentData;
   }
 
   return {
@@ -580,7 +614,13 @@ export async function applyDiff(
       }
     }
 
-    await batch.commit();
+    try {
+      await batch.commit();
+    } catch (batchErr) {
+      const docPaths = chunk.map(op => op.path.join('/'));
+      console.warn(`[Firestore writeBatch Error] Failed committing batch of ${chunk.length} operations. Affected document paths:`, docPaths, batchErr);
+      throw batchErr;
+    }
   }
 
   // Commit was successful -> update mirror
@@ -601,7 +641,8 @@ export function updateMirrorFromSnapshot(userId: string, data: Partial<PlannerDa
       for (const item of items) {
         const id = getId(item);
         if (id) {
-          colMap.set(id, hashContent(cleanData ? cleanData(item) : item));
+          const raw = cleanData ? cleanData(item) : item;
+          colMap.set(id, hashContent(deepStripUndefined(raw)));
         }
       }
     }
@@ -640,12 +681,12 @@ export function updateMirrorFromSnapshot(userId: string, data: Partial<PlannerDa
       for (const g of data.goals) {
         if (g.goal_id) {
           const { phases, ...topLevel } = g;
-          goalsMap.set(g.goal_id, hashContent(topLevel));
+          goalsMap.set(g.goal_id, hashContent(deepStripUndefined(topLevel)));
 
           const phaseMap = new Map<string, string>();
           if (Array.isArray(phases)) {
             for (const p of phases) {
-              phaseMap.set(String(p.phase_number), hashContent(sanitizePhaseForStorage(p)));
+              phaseMap.set(String(p.phase_number), hashContent(deepStripUndefined(sanitizePhaseForStorage(p))));
             }
           }
           mirror.goalPhases.set(g.goal_id, phaseMap);
@@ -659,7 +700,7 @@ export function updateMirrorFromSnapshot(userId: string, data: Partial<PlannerDa
   if (data.dailyTasks !== undefined && typeof data.dailyTasks === 'object') {
     mirror.dailyTasks.clear();
     for (const [dayKey, tasks] of Object.entries(data.dailyTasks)) {
-      const arr = Array.isArray(tasks) ? tasks : [];
+      const arr = deepStripUndefined(Array.isArray(tasks) ? tasks : []);
       mirror.dailyTasks.set(dayKey, hashContent(arr));
       mirror.dayStatusSnapshot.set(dayKey, hashContent(arr.map(t => ({ i: t.id, s: t.status, d: t.completionDate }))));
     }
@@ -668,7 +709,8 @@ export function updateMirrorFromSnapshot(userId: string, data: Partial<PlannerDa
   // Pomodoro History
   if (data.pomodoro?.history !== undefined && Array.isArray(data.pomodoro.history)) {
     mirror.pomoHistory.clear();
-    for (const entry of data.pomodoro.history) {
+    for (const rawEntry of data.pomodoro.history) {
+      const entry = deepStripUndefined(rawEntry);
       const rawDate = entry?.date || entry?.timestamp || entry?.dateKey;
       if (!rawDate || !isValidDateValue(rawDate)) continue;
       const dateISO = normalizeToDateISO(rawDate);
@@ -680,7 +722,8 @@ export function updateMirrorFromSnapshot(userId: string, data: Partial<PlannerDa
   // WaterTracker History
   if (data.waterTracker?.history !== undefined && Array.isArray(data.waterTracker.history)) {
     mirror.waterHistory.clear();
-    for (const entry of data.waterTracker.history) {
+    for (const rawEntry of data.waterTracker.history) {
+      const entry = deepStripUndefined(rawEntry);
       const rawDate = entry?.date || entry?.timestamp || entry?.dateKey;
       if (!rawDate || !isValidDateValue(rawDate)) continue;
       const dateISO = normalizeToDateISO(rawDate);
@@ -690,7 +733,7 @@ export function updateMirrorFromSnapshot(userId: string, data: Partial<PlannerDa
   }
 
   // Parent scalars
-  const scalars = extractScalarSettings(data);
+  const scalars = deepStripUndefined(extractScalarSettings(data));
   if (Object.keys(scalars).length > 0) {
     mirror.parentHash = hashContent(scalars);
   }
