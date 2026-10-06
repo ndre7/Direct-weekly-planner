@@ -777,9 +777,26 @@ export async function syncHabitTrackingDoc(userId: string, data: Partial<Planner
 }
 
 /**
- * C5. Prunes dailySnapshots older than 400 days once per month
+ * K1-K5. Soft Dynamic FIFO Pruning for dailySnapshots
+ *
+ * Retention Policy (K1 & K4):
+ * - Multi-year data retention (2-3 years) is fully supported.
+ * - Firebase Firestore has no time expiration ceiling (3 years ≈ < 30MB of 1GiB free tier).
+ * - Hard 400-day TTL cutoff is replaced by dynamic soft FIFO threshold (SOFT_LIMIT_DOCS = 1500).
+ * - Users can export a complete JSON archive at any time via Settings.
+ *
+ * Cost Estimate (K5):
+ * - 3 years of daily snapshots for a single user, even with daily analytics read operations,
+ *   costs virtually $0.00 (Firebase rate: $0.06 per 100k reads; daily read is << 1k reads/month).
+ *
+ * Collections without pruning (K3):
+ * - dailyStats, monthlyStats, pomodoroHistory, waterHistory, dailyTasksHistory: NO pruning
+ *   (these documents are compact scalars; monthlyStats has at most ~12 docs/year).
  */
-export async function pruneOldSnapshots(userId: string): Promise<void> {
+const SOFT_LIMIT_DOCS = 1500; // ~4+ years of daily snapshots threshold
+const KEEP_DAYS = 400; // Always retain at least 400 days (1+ year)
+
+export async function pruneOldSnapshots(userId: string, batchDeleteCount = 14): Promise<void> {
   if (!userId || !isAuthValidForUser(userId, true)) return;
   try {
     const currentMonthKey = new Date().toISOString().slice(0, 7);
@@ -788,25 +805,35 @@ export async function pruneOldSnapshots(userId: string): Promise<void> {
       return;
     }
 
-    const cutoffISO = new Date(Date.now() - 400 * 86400000).toISOString().split('T')[0];
     const snap = await getDocs(collection(db, 'planners', userId, 'dailySnapshots'));
-    const deletions: Promise<void>[] = [];
+    const totalDocs = snap.size;
 
-    snap.forEach(d => {
-      const docDate = d.data().date || d.id;
-      if (typeof docDate === 'string' && docDate < cutoffISO) {
-        deletions.push(deleteDoc(d.ref));
+    // Condition K2: only prune if document count exceeds SOFT_LIMIT_DOCS
+    if (totalDocs > SOFT_LIMIT_DOCS) {
+      // Sort documents oldest first by date
+      const docsWithDate: { ref: any; date: string }[] = [];
+      snap.forEach(d => {
+        const docDate = d.data().date || d.id;
+        docsWithDate.push({ ref: d.ref, date: String(docDate) });
+      });
+
+      docsWithDate.sort((a, b) => a.date.localeCompare(b.date));
+
+      // Calculate how many docs to prune to reach target threshold while keeping >= KEEP_DAYS
+      const excessCount = totalDocs - Math.round(KEEP_DAYS * 1.2);
+      const pruneTarget = Math.min(excessCount, Math.max(batchDeleteCount, 14));
+
+      if (pruneTarget > 0) {
+        const toDelete = docsWithDate.slice(0, pruneTarget);
+        const deletions = toDelete.map(item => deleteDoc(item.ref));
+        await Promise.all(deletions);
+        console.log(`[Soft FIFO Pruning] Successfully pruned ${toDelete.length} oldest dailySnapshots (total was ${totalDocs})`);
       }
-    });
-
-    if (deletions.length > 0) {
-      await Promise.all(deletions);
-      console.log(`[Snapshot Pruning] Pruned ${deletions.length} old snapshots (< ${cutoffISO})`);
     }
 
     localStorage.setItem('planner_last_prune', currentMonthKey);
   } catch (err) {
-    console.warn('[Snapshot Pruning Warning] Failed to prune old snapshots:', err);
+    console.warn('[Soft FIFO Pruning Warning] Failed to run snapshot pruning:', err);
   }
 }
 

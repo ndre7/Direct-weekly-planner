@@ -25,15 +25,18 @@ import {
   Bell,
   Send,
   CheckCircle,
-  Clock
+  Clock,
+  FileText
 } from 'lucide-react';
 import CategoriesManagementPage from './CategoriesManagementPage';
 import FirebaseCloudBackup from './FirebaseCloudBackup';
 import { verifyAndRepairPlannerData } from './SessionManager';
 import GoogleCalendarSync from './GoogleCalendarSync';
 import { connectGmail, getCachedGmailToken } from '../lib/auth';
-import { sendGmailEmail, buildReminderEmailHtml, REMINDER_OFFSET_OPTIONS, ReminderOffset } from '../lib/gmailReminders';
+import { sendGmailEmail, buildReminderEmailHtml, buildAnalyticsEmailHtml, REMINDER_OFFSET_OPTIONS, ReminderOffset } from '../lib/gmailReminders';
 import { getTimeSourceLabel, getOffsetMs } from '../utils/networkTime';
+import { buildAnalyticsReport } from '../utils/reportBuilder';
+import { getTodayJalali } from '../utils/jalali';
 
 interface SettingsPageProps {
   data: PlannerData;
@@ -133,6 +136,48 @@ export default function SettingsPage({
       showToast(isRtl ? `خطا در ارسال ایمیل آزمایشی: ${e.message || e}` : `Test email failed: ${e.message || e}`, 'error');
     } finally {
       setIsSendingTestEmail(false);
+    }
+  };
+
+  // J4: Send monthly report from SettingsPage
+  const [isSendingMonthlyReport, setIsSendingMonthlyReport] = React.useState(false);
+
+  const handleSendMonthlyReport = async () => {
+    let targetEmail = (data.reminderEmailTargetType === 'custom' && data.reminderCustomEmail && data.reminderCustomEmail.trim())
+      ? data.reminderCustomEmail.trim()
+      : (currentUser?.email || '');
+    if (!targetEmail) {
+      const storedUser = localStorage.getItem('planner_user');
+      if (storedUser) {
+        try { targetEmail = JSON.parse(storedUser).email; } catch (_) {}
+      }
+    }
+
+    if (!targetEmail) {
+      showToast(isRtl ? 'آدرس ایمیلی برای دریافت گزارش مشخص نشده است!' : 'No target email specified!', 'error');
+      return;
+    }
+
+    try {
+      setIsSendingMonthlyReport(true);
+      let token = getCachedGmailToken();
+      if (!token) {
+        token = await connectGmail();
+      }
+
+      const report = await buildAnalyticsReport('user', data, 'month');
+      const html = buildAnalyticsEmailHtml(report);
+      const today = getTodayJalali();
+      const subject = isRtl
+        ? `📊 گزارش تحلیلی ماهانه — ${report.rangeLabelFa} — ${today.day} ${today.monthName} ${today.year}`
+        : `📊 Monthly Analytics Report — ${today.year}`;
+
+      await sendGmailEmail(token, targetEmail, subject, html);
+      showToast(isRtl ? `گزارش ماهانه با موفقیت به ${targetEmail} ارسال شد` : `Monthly report sent to ${targetEmail}!`, 'success');
+    } catch (e: any) {
+      showToast(isRtl ? `خطا در ارسال گزارش ماهانه: ${e.message || e}` : `Monthly report failed: ${e.message || e}`, 'error');
+    } finally {
+      setIsSendingMonthlyReport(false);
     }
   };
 
@@ -790,8 +835,8 @@ export default function SettingsPage({
                   )}
                 </div>
 
-                {/* Connect Gmail and Test Email Buttons */}
-                <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+                {/* Connect Gmail, Test Email, and Monthly Report Buttons */}
+                <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-2.5 flex-wrap">
                   <button
                     type="button"
                     onClick={handleConnectGmail}
@@ -802,15 +847,27 @@ export default function SettingsPage({
                     <span>{isConnectingGmail ? (isRtl ? 'در حال اتصال...' : 'Connecting...') : (isRtl ? 'اتصال یا تایید دسترسی جیمیل' : 'Connect / Authorize Gmail')}</span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={handleSendTestEmail}
-                    disabled={isSendingTestEmail}
-                    className="w-full sm:w-auto px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-3xs flex items-center justify-center gap-2"
-                  >
-                    <Send className="w-4 h-4 text-white" />
-                    <span>{isSendingTestEmail ? (isRtl ? 'در حال ارسال...' : 'Sending...') : (isRtl ? 'ارسال ایمیل آزمایشی' : 'Send Test Email')}</span>
-                  </button>
+                  <div className="flex flex-col sm:flex-row items-center gap-2.5 w-full sm:w-auto">
+                    <button
+                      type="button"
+                      onClick={handleSendTestEmail}
+                      disabled={isSendingTestEmail}
+                      className="w-full sm:w-auto px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-3xs flex items-center justify-center gap-2"
+                    >
+                      <Send className="w-4 h-4 text-white" />
+                      <span>{isSendingTestEmail ? (isRtl ? 'در حال ارسال...' : 'Sending...') : (isRtl ? 'ارسال ایمیل آزمایشی' : 'Send Test Email')}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleSendMonthlyReport}
+                      disabled={isSendingMonthlyReport}
+                      className="w-full sm:w-auto px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-3xs flex items-center justify-center gap-2"
+                    >
+                      <FileText className="w-4 h-4 text-white" />
+                      <span>{isSendingMonthlyReport ? (isRtl ? 'در حال ارسال گزارش...' : 'Sending Report...') : (isRtl ? 'ارسال گزارش ماهانه' : 'Send Monthly Report')}</span>
+                    </button>
+                  </div>
                 </div>
 
               </div>

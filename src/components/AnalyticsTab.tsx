@@ -20,13 +20,17 @@ import {
   Check,
   XCircle,
   RotateCcw,
-  Target
+  Target,
+  Mail,
+  Send
 } from 'lucide-react';
 import { collection, getDocs } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase.ts';
 import { PlannerData, Category } from '../types';
-import { safeParseJson } from '../lib/auth.ts';
+import { safeParseJson, getCachedGmailToken, connectGmail } from '../lib/auth.ts';
 import { isLeapJalali, jalaliToGregorian, getTodayJalali, JALALI_MONTHS, getDaysInJalaliMonth, getJalaliWeekday } from '../utils/jalali.ts';
+import { buildAnalyticsReport, ReportTimeframe } from '../utils/reportBuilder';
+import { buildAnalyticsEmailHtml, sendGmailEmail } from '../lib/gmailReminders';
 
 const iconMap: Record<string, any> = {
   AlertTriangle,
@@ -251,6 +255,64 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
   });
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [aiError, setAiError] = useState<string | null>(null);
+
+  // J3: Email Analytics Report state
+  const [reportRange, setReportRange] = useState<ReportTimeframe>('week');
+  const [isSendingReport, setIsSendingReport] = useState<boolean>(false);
+  const [reportStatus, setReportStatus] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const handleSendEmailReport = async () => {
+    try {
+      setIsSendingReport(true);
+      setReportStatus(null);
+
+      let token = getCachedGmailToken() || localStorage.getItem('gmail_token');
+      if (!token) {
+        try {
+          token = await connectGmail();
+        } catch (connErr: any) {
+          throw new Error('لطفاً ابتدا حساب جیمیل خود را از بخش تنظیمات متصل کنید.');
+        }
+      }
+
+      let userEmail = (data.reminderEmailTargetType === 'custom' && data.reminderCustomEmail && data.reminderCustomEmail.trim())
+        ? data.reminderCustomEmail.trim()
+        : '';
+      if (!userEmail) {
+        const savedUserStr = localStorage.getItem('planner_user');
+        if (savedUserStr) {
+          try {
+            userEmail = JSON.parse(savedUserStr)?.email || '';
+          } catch (_) {}
+        }
+      }
+      if (!userEmail && auth.currentUser?.email) {
+        userEmail = auth.currentUser.email;
+      }
+      if (!userEmail) {
+        userEmail = 'me';
+      }
+
+      const report = await buildAnalyticsReport(auth.currentUser?.uid || 'user', data, reportRange);
+      const htmlContent = buildAnalyticsEmailHtml(report);
+      const todayStr = getTodayJalali();
+      const subject = `📊 گزارش تحلیلی برنامه‌ریزی — ${report.rangeLabelFa} — ${todayStr.day} ${todayStr.monthName} ${todayStr.year}`;
+
+      await sendGmailEmail(token, userEmail, subject, htmlContent);
+      setReportStatus({
+        message: `گزارش تحلیلی ${report.rangeLabelFa} با موفقیت به ${userEmail === 'me' ? 'جیمیل شما' : userEmail} ارسال شد.`,
+        type: 'success'
+      });
+    } catch (err: any) {
+      console.error('Failed to send analytics report:', err);
+      setReportStatus({
+        message: err.message || 'خطا در ارسال گزارش تحلیلی به ایمیل',
+        type: 'error'
+      });
+    } finally {
+      setIsSendingReport(false);
+    }
+  };
 
   const radarCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lineCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -2275,6 +2337,83 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
             })}
           </AnimatePresence>
         </div>
+      </div>
+
+      {/* J3: Email Analytics Report Card */}
+      <div className="bg-white border border-slate-200/80 rounded-3xl p-5 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center shadow-3xs">
+              <Mail className="w-5 h-5" />
+            </div>
+            <div className="text-right">
+              <h3 className="text-xs font-black text-slate-800">ارسال گزارش تحلیلی به ایمیل</h3>
+              <p className="text-[10px] text-slate-400 font-bold mt-0.5">
+                دریافت خلاصه گزارش آماری دقیق عملکرد، پایداری عادت‌ها و ددلاین‌ها در صندوق ورودی جیمیل
+              </p>
+            </div>
+          </div>
+
+          {/* Timeframe Selectors */}
+          <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-2xl self-start sm:self-auto">
+            {(
+              [
+                { id: 'week', label: 'هفته جاری' },
+                { id: 'month', label: 'ماه جاری' },
+                { id: '6months', label: '۶ ماه' },
+                { id: 'year', label: 'سال کامل' }
+              ] as const
+            ).map(opt => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setReportRange(opt.id)}
+                className={`px-3 py-1.5 rounded-xl text-[10px] font-black transition-all cursor-pointer ${
+                  reportRange === opt.id
+                    ? 'bg-white text-indigo-700 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-1">
+          <div className="text-[10px] text-slate-500 font-bold text-right leading-relaxed">
+            💡 گزارش به همراه تحلیل شاخص‌های کلیدی (TCR)، تفکیک دسته‌بندی‌ها، پربازده‌ترین روزها و ددلاین‌های پیش‌رو به صورت ساختاریافته ایمیل می‌شود.
+          </div>
+
+          <button
+            type="button"
+            onClick={handleSendEmailReport}
+            disabled={isSendingReport}
+            className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs whitespace-nowrap shrink-0 ${
+              isSendingReport
+                ? 'bg-indigo-100 text-indigo-400 cursor-not-allowed'
+                : 'bg-indigo-600 hover:bg-indigo-700 text-white hover:shadow-md'
+            }`}
+          >
+            <Send className={`w-3.5 h-3.5 ${isSendingReport ? 'animate-pulse' : ''}`} />
+            <span>{isSendingReport ? 'در حال آماده‌سازی و ارسال...' : 'ارسال گزارش تحلیلی'}</span>
+          </button>
+        </div>
+
+        {reportStatus && (
+          <div className={`p-3 rounded-xl text-[10px] font-black flex items-center gap-2 ${
+            reportStatus.type === 'success'
+              ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+              : 'bg-rose-50 text-rose-800 border border-rose-200'
+          }`}>
+            {reportStatus.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            )}
+            <span>{reportStatus.message}</span>
+          </div>
+        )}
       </div>
 
     </div>
