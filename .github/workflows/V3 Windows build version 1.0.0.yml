@@ -1,0 +1,576 @@
+name: Build Windows EXE (Weekly Planner)
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  بیلد نسخه ویندوز (اپلیکیشن دسکتاپ Electron) برای Weekly Planner
+#  طراحی‌شده برای استفاده در ایران با اینترنت ایران
+#
+#  چرا Electron؟ برنامه یک اپ فول‌استک است: فرانت‌اندد React/Vite + سرور API
+#  اکسپرس (server.ts) که احراز هویت، سینک پلنر، تحلیل Gemini و پنل ادمین را
+#  انجام می‌دهد. بنابراین «نسخه ویندوز» باید هم فرانت‌اندد و هم سرور را لوکال
+#  اجرا کند — دقیقاً مثل `npm start` — که این ورک‌فلو انجام می‌دهد:
+#
+#    ۱) فونت‌ها (وزیرمتن + Inter) کاملاً داخل بیلد باندل می‌شوند؛ هیچ وابستگی
+#       به fonts.googleapis.com (مشکل‌دار برای IP ایران) باقی نمی‌ماند.
+#    ۲) کل برنامه (UI + سرور API) لوکال اجرا می‌شود؛ بدون اینترنت هم کار
+#       می‌کند و داده‌ها در localStorage ذخیره و بعداً همگام می‌شوند.
+#    ۳) سرور فقط روی 127.0.0.1 گوش می‌دهد (بدون پاپ‌آپ فایروال ویندوز) و
+#       به‌صورت خودکار روی اولین پورت آزاد از 3000 اجرا می‌شود.
+#    ۴) سرویس‌های گوگل (Firebase Auth/Firestore، Gmail، Calendar، Gemini)
+#       برای IP ایران مسدودند؛ برنامه به‌صورت خودکار به مد آفلاین می‌رود.
+#       (با VPN یا با قرار دادن .env دوباره فعال می‌شوند — پایین را ببینید)
+#    ۵) پاپ‌آپ‌های OAuth گوگل به‌صورت پنجره داخلی باز می‌شوند و اورجین برنامه
+#       http://localhost است تا با دامنه مجاز پیش‌فرض Firebase سازگار باشد.
+#
+#  خروجی‌ها:
+#    - Weekly-Planner-Setup-1.0.0-x64.exe      (نصب‌کننده NSIS)
+#    - Weekly-Planner-Portable-1.0.0-x64.exe   (نسخه پرتابل بدون نصب)
+#
+#  نکته مهم برای کاربران ایران:
+#    آرتیفکت‌های Actions برای دانلود به حساب گیتهاب نیاز دارند؛ اما اگر روی
+#    تگ v* پوش کنید (مثلاً v1.0.0)، فایل‌ها به‌صورت GitHub Release منتشر
+#    می‌شوند که از ایران بدون محدودیت قابل دانلود است.
+#
+#  نکته اختیاری:
+#    - اگر Secret با نام GEMINI_API_KEY تعریف کنید، داخل بیلد قرار می‌گیرد
+#      (فقط برای بیلدهای شخصی؛ هرگز ریپو عمومی را با کلید بیلد نکنید).
+#    - برای آیکون اختصاصی: فایل windows-icon.ico را در ریشه ریپو کامیت کنید.
+#    - برای پشتیبانی از ویندوز ۷ باید Electron را به نسخه ۲۲ تنزل دهید
+#      (Electron 38 فقط ویندوز ۱۰ به بالا را پشتیبانی می‌کند).
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    name: Windows x64 (Electron + local API server)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install project dependencies
+        run: npm install --no-audit --no-fund
+
+      # ── ایران‌پسند: فونت‌ها به‌جای CDN گوگل، از پکیج‌های npm باندل می‌شوند ──
+      - name: Install local font packages (offline / Iran-safe)
+        run: npm install --no-save --no-audit --no-fund vazirmatn @fontsource/inter
+
+      - name: Patch index.css - replace Google Fonts CDN with bundled fonts
+        run: |
+          cat > patch-fonts.cjs <<'PATCH_EOF'
+          const fs = require('fs');
+          const p = 'src/index.css';
+          let css = fs.readFileSync(p, 'utf8');
+          const cdnRe = /@import\s+url\(\s*'https:\/\/fonts\.googleapis\.com[^)]*'\s*\)\s*;/;
+          if (!cdnRe.test(css)) {
+            console.error('FATAL: Google Fonts @import not found in src/index.css');
+            process.exit(1);
+          }
+          const localImports = [
+            '@import "vazirmatn/Vazirmatn-font-face.css";',
+            '@import "@fontsource/inter/300.css";',
+            '@import "@fontsource/inter/400.css";',
+            '@import "@fontsource/inter/500.css";',
+            '@import "@fontsource/inter/600.css";',
+            '@import "@fontsource/inter/700.css";'
+          ].join('\n');
+          css = css.replace(cdnRe, localImports);
+          fs.writeFileSync(p, css);
+          console.log('index.css patched: fonts are now bundled locally.');
+          PATCH_EOF
+          node patch-fonts.cjs
+          rm -f patch-fonts.cjs
+          grep -q 'vazirmatn/Vazirmatn-font-face.css' src/index.css
+          if grep -q 'fonts.googleapis.com' src/index.css; then
+            echo 'FATAL: Google Fonts CDN still referenced in src/index.css'
+            exit 1
+          fi
+          echo 'Verified: no Google Fonts CDN reference remains.'
+
+      - name: Build frontend (Vite)
+        run: npx vite build
+
+      - name: Build API server bundle (esbuild - same as npm run build)
+        run: npx esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs
+
+      # ── پچ سرور: پورت از لانچر Electron + گوش‌دادن فقط روی لوکال‌هاست ──
+      # نکته تأییدشده با بیلد واقعی: esbuild عدد 3000 را به «3e3» و const را
+      # به var تبدیل می‌کند؛ بنابراین الگو هر دو حالت را پوشش می‌دهد.
+      - name: Patch server bundle (configurable port + loopback bind)
+        run: |
+          cat > patch-port.cjs <<'PORTEOF'
+          const fs = require('fs');
+          const p = 'dist/server.cjs';
+          let s = fs.readFileSync(p, 'utf8');
+          const before = s;
+          s = s.replace(/(?:var|const|let) PORT = (?:3e3|3000);/, 'var PORT = Number(process.env.PORT) || 3000;');
+          if (s === before) { console.error('FATAL: PORT declaration not found in bundle'); process.exit(1); }
+          s = s.replace('app.listen(PORT, "0.0.0.0"', 'app.listen(PORT, "127.0.0.1"');
+          if (!s.includes('app.listen(PORT, "127.0.0.1"')) { console.error('FATAL: listen patch failed'); process.exit(1); }
+          fs.writeFileSync(p, s);
+          console.log('Server patched: PORT from launcher env, bound to 127.0.0.1 (no firewall popup).');
+          PORTEOF
+          node patch-port.cjs
+          rm -f patch-port.cjs
+          grep -q 'process.env.PORT' dist/server.cjs
+          echo 'Verified: bundle now reads PORT from environment.'
+
+      # ── ساخت اسکلت اپ Electron (لانچر + کانفیگ بیلد) ──
+      - name: Scaffold Electron app (launcher + package config)
+        run: |
+          mkdir -p electron-app/server-dist electron-app/build
+          cp -r dist electron-app/dist
+          rm -f electron-app/dist/server.cjs electron-app/dist/server.cjs.map
+          cp dist/server.cjs electron-app/server-dist/server.cjs
+          cp dist/server.cjs.map electron-app/server-dist/server.cjs.map 2>/dev/null || true
+
+          # آیکون اختصاصی (اختیاری): اگر windows-icon.ico در ریشه ریپو باشد
+          if [ -f windows-icon.ico ]; then
+            cp windows-icon.ico electron-app/build/icon.ico
+            echo 'Custom icon applied.'
+          fi
+
+          # NOTE: do NOT add "win.publisherName" - it was removed from the electron-builder 26.x
+          # schema and triggers: "configuration.win should be one of these: null".
+          # Publisher identity comes from the "author" field below ("ndredev"),
+          # which NsisTarget writes into the installer metadata (appInfo.companyName).
+          cat > electron-app/package.json <<'PKG_EOF'
+          {
+            "name": "weekly-planner",
+            "productName": "Weekly Planner",
+            "version": "1.0.0",
+            "private": true,
+            "description": "Weekly Planner - offline-capable Persian weekly planner (Windows build) - Publisher: ndredev",
+            "main": "main.js",
+            "author": "ndredev",
+            "dependencies": {
+              "@google/genai": "^2.4.0",
+              "dotenv": "^17.2.3",
+              "drizzle-orm": "^0.45.2",
+              "express": "^4.21.2",
+              "firebase-admin": "^14.2.0",
+              "pg": "^8.22.0"
+            },
+            "devDependencies": {
+              "electron-builder": "26.15.3"
+            },
+            "build": {
+              "appId": "com.ndredev.weeklyplanner",
+              "productName": "Weekly Planner",
+              "copyright": "Copyright © 2026 ndredev",
+              "electronVersion": "38.0.0",
+              "asar": false,
+              "directories": {
+                "output": "release"
+              },
+              "files": [
+                "main.js",
+                "package.json",
+                ".env",
+                "dist/**/*",
+                "server-dist/**/*",
+                "node_modules/**/*",
+                "!node_modules/electron-builder/**",
+                "!node_modules/.bin/**",
+                "!node_modules/**/.bin/**"
+              ],
+              "win": {
+                "target": [
+                  { "target": "nsis", "arch": ["x64"] },
+                  { "target": "portable", "arch": ["x64"] }
+                ]
+              },
+              "nsis": {
+                "oneClick": false,
+                "perMachine": false,
+                "allowToChangeInstallationDirectory": true,
+                "createDesktopShortcut": true,
+                "shortcutName": "Weekly Planner",
+                "artifactName": "Weekly-Planner-Setup-${version}-${arch}.${ext}"
+              },
+              "portable": {
+                "artifactName": "Weekly-Planner-Portable-${version}-${arch}.${ext}"
+              }
+            }
+          }
+          PKG_EOF
+
+          cat > electron-app/main.js <<'MAIN_EOF'
+          /* Weekly Planner - Electron launcher
+           * سرور API اکسپرس (server-dist/server.cjs) را به‌صورت پروسه Node لوکال
+           * اجرا می‌کند و رابط کاربری بیلدشده (dist/) را در پنجره برنامه باز می‌کند.
+           * همه‌چیز از http://localhost:<port> سرو می‌شود - کاملاً قابلیت آفلاین دارد.
+           */
+          const { app, BrowserWindow, Menu, dialog, shell } = require('electron');
+          const { spawn } = require('child_process');
+          const http = require('http');
+          const net = require('net');
+          const path = require('path');
+          const fs = require('fs');
+
+          const APP_DIR = __dirname;
+          const SERVER_SCRIPT = path.join(APP_DIR, 'server-dist', 'server.cjs');
+          const BASE_PORT = Number(process.env.PLANNER_PORT) || 3000;
+          const PORT_SCAN = 20;
+
+          let serverProc = null;
+          let mainWindow = null;
+          let creating = false;
+          let logFilePath = null;
+          const LOG_LINES = [];
+
+          function log() {
+            try {
+              console.log.apply(console, ['[weekly-planner]'].concat([].slice.call(arguments)));
+            } catch (e) { /* ignore */ }
+          }
+
+          /* خروجی سرور فرزند هم در کنسول نوشته می‌شود و هم در فایل لاگ
+           * (%APPDATA%/Weekly Planner/server.log) ذخیره می‌شود تا اگر روزی
+           * سرور بالا نیامد، علت واقعی در دیالوگ خطا و فایل لاگ دیده شود. */
+          function captureServerOutput(chunk, isErr) {
+            String(chunk).split(/\r?\n/).forEach((line) => {
+              if (!line.trim()) return;
+              const stamped = new Date().toISOString() + (isErr ? ' [err] ' : ' ') + line;
+              LOG_LINES.push(stamped);
+              if (LOG_LINES.length > 200) LOG_LINES.shift();
+              if (logFilePath) {
+                try { fs.appendFileSync(logFilePath, stamped + '\n'); } catch (e) { /* ignore */ }
+              }
+            });
+          }
+
+          function serverLogTail() {
+            return LOG_LINES.slice(-15).join('\n');
+          }
+
+          function isPortFree(port) {
+            return new Promise((resolve) => {
+              const srv = net.createServer();
+              srv.once('error', () => resolve(false));
+              srv.once('listening', () => srv.close(() => resolve(true)));
+              srv.listen(port, '127.0.0.1');
+            });
+          }
+
+          async function pickFreePort() {
+            for (let p = BASE_PORT; p < BASE_PORT + PORT_SCAN; p++) {
+              if (await isPortFree(p)) return p;
+            }
+            throw new Error('No free port in range ' + BASE_PORT + '..' + (BASE_PORT + PORT_SCAN - 1));
+          }
+
+          function startServer(port) {
+            log('starting local API server on 127.0.0.1:' + port);
+            const proc = spawn(process.execPath, [SERVER_SCRIPT], {
+              cwd: APP_DIR,
+              env: Object.assign({}, process.env, {
+                ELECTRON_RUN_AS_NODE: '1',
+                ELECTRON_NO_ATTACH_CONSOLE: '1',
+                NODE_ENV: 'production',
+                PORT: String(port)
+              }),
+              windowsHide: true,
+              stdio: ['ignore', 'pipe', 'pipe']
+            });
+            proc.stdout.on('data', (d) => { process.stdout.write('[server] ' + d); captureServerOutput(d, false); });
+            proc.stderr.on('data', (d) => { process.stderr.write('[server] ' + d); captureServerOutput(d, true); });
+            proc.on('exit', (code, signal) => {
+              log('server exited', { code: code, signal: signal });
+              if (serverProc === proc) serverProc = null;
+            });
+            return proc;
+          }
+
+          function waitForServer(port, timeoutMs) {
+            return new Promise((resolve, reject) => {
+              let settled = false;
+              const fail = (why) => { if (!settled) { settled = true; reject(new Error(why)); } };
+              const ok = () => { if (!settled) { settled = true; resolve(); } };
+              /* اگر پروسه سرور قبل از آماده‌شدن بمیرد، به‌جای صبر ۳۰ ثانیه‌ای
+               * تا timeout، همان لحظه علت واقعی + آخرین لاگ‌ها نشان داده می‌شود. */
+              if (serverProc) {
+                serverProc.once('exit', (code, signal) => {
+                  fail('server process exited prematurely (' + (signal ? 'signal ' + signal : 'code ' + code) + ')' +
+                    '\n\n--- آخرین خطوط لاگ سرور ---\n' + serverLogTail());
+                });
+              }
+              const deadline = Date.now() + (timeoutMs || 30000);
+              const attempt = () => {
+                if (settled) return;
+                if (Date.now() > deadline) {
+                  return fail('timeout' + '\n\n--- آخرین خطوط لاگ سرور ---\n' + serverLogTail());
+                }
+                const req = http.get({ host: '127.0.0.1', port: port, path: '/', timeout: 2500 }, (res) => {
+                  res.resume();
+                  ok();
+                });
+                req.on('timeout', () => req.destroy(new Error('probe timeout')));
+                req.on('error', () => setTimeout(attempt, 400));
+              };
+              attempt();
+            });
+          }
+
+          /* اگر کاربر فایل .env را در پوشه تنظیمات برنامه (%APPDATA%/Weekly Planner)
+           * بگذارد، به کنار سرور کپی می‌شود تا قابلیت‌های ابری (Gemini/Firebase/PG)
+           * با کلیدهای خود کاربر فعال شوند. */
+          function copyUserEnv() {
+            try {
+              const userEnv = path.join(app.getPath('userData'), '.env');
+              if (fs.existsSync(userEnv)) {
+                fs.copyFileSync(userEnv, path.join(APP_DIR, '.env'));
+                log('user .env applied from', userEnv);
+              }
+            } catch (e) { log('copyUserEnv skipped:', e && e.message); }
+          }
+
+          function killServer() {
+            if (serverProc) {
+              try { serverProc.kill(); } catch (e) { /* ignore */ }
+              serverProc = null;
+            }
+          }
+
+          const SPLASH_HTML = '<!doctype html><html dir="rtl" lang="fa"><head><meta charset="utf-8">' +
+            '<style>body{margin:0;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#f8fafc;font-family:Vazirmatn,Tahoma,sans-serif;color:#334155}' +
+            '.ring{width:44px;height:44px;border:4px solid #e2e8f0;border-top-color:#0ea5e9;border-radius:50%;animation:sp 1s linear infinite}' +
+            '@keyframes sp{to{transform:rotate(360deg)}}p{margin-top:16px;font-size:14px}</style></head>' +
+            '<body><div class="ring"></div><p>در حال راه‌اندازی…</p></body></html>';
+
+          async function createWindow() {
+            if (creating || mainWindow) return;
+            creating = true;
+            try {
+              copyUserEnv();
+
+              try {
+                logFilePath = path.join(app.getPath('userData'), 'server.log');
+                fs.appendFileSync(logFilePath, '\n=== ' + new Date().toISOString() + ' launch ===\n');
+              } catch (e) { logFilePath = null; }
+
+              mainWindow = new BrowserWindow({
+                width: 1366,
+                height: 860,
+                minWidth: 1024,
+                minHeight: 640,
+                show: false,
+                autoHideMenuBar: true,
+                backgroundColor: '#f8fafc',
+                title: 'Weekly Planner',
+                webPreferences: {
+                  contextIsolation: true,
+                  nodeIntegration: false,
+                  spellcheck: false
+                }
+              });
+              mainWindow.setMenuBarVisibility(false);
+              mainWindow.once('ready-to-show', () => mainWindow.show());
+
+              /* پاپ‌آپ‌های OAuth گوگل (ورود با گوگل / جیمیل / تقویم) باید داخل
+               * برنامه باز شوند تا جریان postMessage فایربیس کار کند. */
+              mainWindow.webContents.setWindowOpenHandler(() => ({
+                action: 'allow',
+                overrideBrowserWindowOptions: {
+                  width: 520,
+                  height: 640,
+                  autoHideMenuBar: true,
+                  parent: mainWindow,
+                  modal: false,
+                  title: 'Weekly Planner',
+                  backgroundColor: '#f8fafc',
+                  webPreferences: { contextIsolation: true, nodeIntegration: false, spellcheck: false }
+                }
+              }));
+
+              mainWindow.webContents.on('will-navigate', (e, url) => {
+                if (url.indexOf('http://localhost:') !== 0 && url.indexOf('http://127.0.0.1:') !== 0) {
+                  e.preventDefault();
+                  shell.openExternal(url);
+                }
+              });
+
+              mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(SPLASH_HTML));
+
+              const port = await pickFreePort();
+              serverProc = startServer(port);
+              await waitForServer(port, 30000);
+
+              /* localhost (نه 127.0.0.1) تا با دامنه مجاز پیش‌فرض Firebase
+               * برای ورود با گوگل سازگار باشد. */
+              await mainWindow.loadURL('http://localhost:' + port);
+              log('app ready at http://localhost:' + port);
+            } catch (err) {
+              const msg = err && err.message ? err.message : String(err);
+              dialog.showErrorBox('Weekly Planner - خطای راه‌اندازی',
+                'راه‌اندازی سرور محلی برنامه ناموفق بود:\n' + msg +
+                '\n\nلطفاً برنامه را ببندید و دوباره اجرا کنید.' +
+                (logFilePath ? '\n\nگزارش کامل سرور:\n' + logFilePath : ''));
+              killServer();
+              app.quit();
+            } finally {
+              creating = false;
+            }
+          }
+
+          const gotLock = app.requestSingleInstanceLock();
+          if (!gotLock) {
+            app.quit();
+          } else {
+            app.on('second-instance', () => {
+              if (mainWindow) {
+                if (mainWindow.isMinimized()) mainWindow.restore();
+                mainWindow.show();
+                mainWindow.focus();
+              }
+            });
+            Menu.setApplicationMenu(null);
+            app.whenReady().then(createWindow);
+          }
+
+          app.on('activate', () => { if (app.isReady()) createWindow(); });
+          app.on('window-all-closed', () => { killServer(); app.quit(); });
+          app.on('before-quit', killServer);
+          process.on('exit', killServer);
+          process.on('uncaughtException', (e) => log('uncaughtException:', e));
+          process.on('unhandledRejection', (e) => log('unhandledRejection:', e));
+          MAIN_EOF
+
+          # ── وابستگی‌های واقعی سرور + استاب vite (مهم‌ترین فیکس) ──
+          # server.ts در بالای فایل vite را import می‌کند اما فقط در حالت
+          # غیر-production استفاده می‌شود (سرور dev). اگر vite در node_modules
+          # پکیج‌شده نباشد، سرور همان اول با «Cannot find module 'vite'» کرش
+          # می‌کند و لانچر فقط timeout نشان می‌دهد. این اسکریپت:
+          #   ۱) vite را استاب می‌کند (چون لانچر همیشه NODE_ENV=production می‌گذارد)
+          #   ۲) همه requireهای خارجی باندل را با package.json ریشه تطبیق می‌دهد
+          #      و اگر پکیجی کم باشد بیلد را با خطای واضح متوقف می‌کند
+          cat > collect-deps.cjs <<'DEPS_EOF'
+          const fs = require('fs');
+          const path = require('path');
+
+          const serverPath = 'electron-app/server-dist/server.cjs';
+          let bundle = fs.readFileSync(serverPath, 'utf8');
+
+          /* 1) stub the dev-only vite import instead of shipping ~60MB of vite */
+          fs.writeFileSync(path.join(path.dirname(serverPath), 'vite-stub.cjs'), [
+            '/* Production stub for the dev-only "vite" import in server.ts.',
+            ' * The Electron launcher always runs with NODE_ENV=production, so the',
+            ' * vite middleware branch in startServer() is never taken. */',
+            'module.exports = new Proxy({}, {',
+            '  get(target, prop) {',
+            '    if (prop === "__esModule") return false;',
+            '    return function viteDevStub() {',
+            "      throw new Error('vite dev middleware is not available in the packaged app');",
+            '    };',
+            '  },',
+            '});',
+            '',
+          ].join('\n'));
+          const hadVite = /require\(\s*["']vite["']\s*\)/.test(bundle);
+          bundle = bundle.replace(/require\(\s*["']vite["']\s*\)/g, 'require("./vite-stub.cjs")');
+          bundle = bundle.replace(/import\(\s*["']vite["']\s*\)/g, 'Promise.resolve(require("./vite-stub.cjs"))');
+          fs.writeFileSync(serverPath, bundle);
+          console.log(hadVite
+            ? 'vite import stubbed out (dev-only middleware; not shipped in the package).'
+            : 'No vite require found in bundle (nothing to stub).');
+
+          /* 2) collect every external package the bundle requires and make sure
+           *    electron-app/package.json declares it (that is what ships). */
+          const BUILTINS = new Set(('assert,async_hooks,buffer,child_process,cluster,console,constants,crypto,' +
+            'dgram,dns,domain,events,fs,http,http2,https,inspector,module,net,os,path,perf_hooks,process,' +
+            'punycode,querystring,readline,repl,stream,string_decoder,timers,tls,trace_events,tty,url,util,' +
+            'v8,vm,worker_threads,zlib,sys').split(','));
+          const found = new Set();
+          const re = /require\(\s*["']([@a-zA-Z0-9][^"']*)["']\s*\)/g;
+          let m;
+          while ((m = re.exec(bundle)) !== null) {
+            const spec = m[1];
+            if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('node:')) continue;
+            const top = spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0];
+            if (!BUILTINS.has(top)) found.add(top);
+          }
+          const rootPkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const deps = {};
+          const missing = [];
+          for (const name of Array.from(found).sort()) {
+            const v = (rootPkg.dependencies && rootPkg.dependencies[name]) ||
+                      (rootPkg.devDependencies && rootPkg.devDependencies[name]);
+            if (!v) { missing.push(name); continue; }
+            deps[name] = v;
+          }
+          if (missing.length) {
+            console.error('FATAL: bundled server requires packages missing from root package.json: ' + missing.join(', '));
+            process.exit(1);
+          }
+          const appPkgPath = 'electron-app/package.json';
+          const appPkg = JSON.parse(fs.readFileSync(appPkgPath, 'utf8'));
+          appPkg.dependencies = deps;
+          fs.writeFileSync(appPkgPath, JSON.stringify(appPkg, null, 2) + '\n');
+          console.log('electron-app dependencies synced to the bundle requires: ' + Object.keys(deps).join(', '));
+          DEPS_EOF
+          node collect-deps.cjs
+          rm -f collect-deps.cjs
+
+          echo 'Electron scaffold created.'
+          node -e "JSON.parse(require('fs').readFileSync('electron-app/package.json','utf8')); console.log('package.json is valid JSON')"
+
+      # ── فایل .env برای سرور لوکال (اختیاری: کلید Gemini از Secrets) ──
+      - name: Write .env for local server (optional GEMINI_API_KEY)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -n "$GEMINI_API_KEY" ]; then
+            printf 'GEMINI_API_KEY=%s\n' "$GEMINI_API_KEY" > electron-app/.env
+            echo 'NOTE: GEMINI_API_KEY baked into this build (personal builds only!).'
+          else
+            : > electron-app/.env
+            echo 'No GEMINI_API_KEY secret provided - empty .env created.'
+          fi
+
+      - name: Install Electron app dependencies
+        working-directory: electron-app
+        run: npm install --no-audit --no-fund
+
+      - name: Package Windows executables (NSIS setup + portable)
+        working-directory: electron-app
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --win --publish never
+
+      - name: List build outputs
+        run: ls -la electron-app/release
+
+      - name: Upload Windows EXE artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Weekly-Planner-Windows-x64
+          path: electron-app/release/*.exe
+          if-no-files-found: error
+
+      # انتشار به‌صورت Release روی تگ‌های v* — از ایران بدون محدودیت دانلود می‌شود
+      - name: Publish GitHub Release (only on v* tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: electron-app/release/*.exe
+          generate_release_notes: true
