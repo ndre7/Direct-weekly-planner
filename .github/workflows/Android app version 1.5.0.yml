@@ -1,0 +1,317 @@
+name: Build Android APK (Weekly Planner)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  بیلد نسخهٔ اندروید (APK) برای Weekly Planner — بر پایهٔ Capacitor 8
+#  طراحی‌شده برای استفاده در ایران با اینترنت ایران
+#
+#  چرا Capacitor؟ کل منطق برنامه یک وب‌اپ React/Vite است (نسخهٔ ویندوزی همان را
+#  با Electron اجرا می‌کند). Capacitor همان خروجی vite build (پوشهٔ dist) را
+#  داخل یک WebView بومی اندروید بسته‌بندی می‌کند؛ یعنی «یک کد، دو پلتفرم».
+#  تنظیمات Capacitor از قبل در ریشهٔ ریپو موجود است (capacitor.config.json با
+#  appId=com.direct.planner و webDir=dist) — این ورک‌فلو آن را بازتولید نمی‌کند
+#  و عیناً استفاده می‌کند (گیت تأیید دارد).
+#
+#  ── پوشش نسخه‌های اندروید (درخواست: اندروید ۹ تا ۱۷) ────────────────────────
+#  • minSdkVersion = 28  → حداقل: اندروید ۹ Pie (۲۰۱۸) — با sed روی تمپلیت
+#    Capacitor 8 (که پیش‌فرضش ۲۴ است) اعمال و با گیت تأیید می‌شود.
+#  • compileSdk/targetSdk = 36 (اندروید ۱۶ — پیش‌فرض Capacitor 8)
+#  • اندروید ۱۷ (API 37، نام کد Cinnamon Bun) — برای شفافیت کامل: تاریخ انتشار
+#    عمومی آن ۱۶ ژوئن ۲۰۲۶ است (نه «همین ماه»)؛ هر APK با targetSdk 36 روی
+#    اندروید ۱۷ «بدون هیچ تغییری» اجرا می‌شود (سازگاری پس‌روندهٔ رسمی اندروید).
+#    برای انتشار در گوگل‌پلی از آگوست ۲۰۲۶ به بعد targetSdk 36+ الزامی است؛
+#    نصب مستقیم (Sideload) هیچ محدودیتی از این نظر ندارد.
+#
+#  ── فیلترشکن (VPN) — ترافیک برنامه از فیلترشکن کاربر رد می‌شود ──────────────
+#  • اندروید برخلاف ویندوز به «پروکسی سیستمی» تکیه ندارد: هر فیلترشکن اندرویدی
+#    (v2rayNG، Hiddify، NapsternetV، Psiphon و ...) ترافیک را در لایهٔ سیستم
+#    (TUN) می‌گیرد؛ بنابراین ترافیک WebView + Firebase + Google APIs این برنامه
+#    خودبه‌خود و بدون هیچ تنظیم اضافه‌ای از فیلترشکن رد می‌شود. هیچ تزریق
+#    HTTPS_PROXY لازم نیست (برخلاف نسخهٔ ویندوز که سرور Node پروکسی سیستمی را
+#    نمی‌بیند — در اندروید اصلاً سرور Node وجود ندارد).
+#  • شرط‌ها: ① در تنظیمات «per-app proxy / تقسیم ترافیک» فیلترشکن، برنامه باید
+#    داخل لیستِ مجازها باشد (اگر حالت انتخابی دارید، Direct Planner را تیک
+#    بزنید؛ حالت پیش‌فرض «همهٔ اپ‌ها» مشکلی ندارد) ② برای پایداری، گزینهٔ
+#    Always-on VPN را در تنظیمات اندروید فعال کنید.
+#  • بدون فیلترشکن: Firebase/Google از ایران در دسترس نیست → برنامه فقط آفلاین
+#    کار می‌کند (ذخیرهٔ محلی) و سینک ابری هر وقت VPN وصل شد خودش ادامه می‌دهد.
+#
+#  ── مرز صداقت — ماتریس قابلیت‌ها با کد فعلی 1.7.0 (مهم!) ────────────────────
+#  این ورک‌فلو APK می‌سازد؛ اما «تغییر کد» نمی‌دهد. با سورس فعلی:
+#  ✔ اجرا و نصب برنامه، کل رابط کاربری، برنامه‌ریزی آفلاین با ذخیرهٔ محلی،
+#    فونت‌های باندل‌شده (بدون نیاز به CDN)، نمودارها و گزارش‌ها
+#  ✘ ورود با گوگل: کد از signInWithPopup استفاده می‌کند (src/lib/auth.ts:212)
+#    که در WebView اندروید پشتیبانی نمی‌شود (در ویندوز، Electron پاپ‌آپ را با
+#    BrowserWindow می‌سازد؛ اینجا وجود ندارد) → نیازمند تغییر کد به
+#    signInWithRedirect (پرامپت سازگاری اندروید — بعداً)
+#  ✘ ورود با ایمیل/رمز: بعد از احراز فایربیس، حتماً ‎/api/auth/firebase-sync را
+#    صدا می‌زند (src/lib/auth.ts:94) و پاسخ ۴۰۴ (نبود سرور) = شکست ورود
+#    (src/lib/auth.ts:103) → نیازمند fallback مستقیم در کد
+#  ✘ اگر نشست ذخیره‌شده‌ای وجود داشته باشد، ‎/api/auth/validate روی ۴۰۴ →
+#    مودال «نشست کاربری شما منقضی شده است» (SessionManager.tsx:227-248) — همان
+#    مودالی که در ویندوز دیدید، اما این‌جا ریشه‌اش ۴۰۴ است نه خطای PG
+#  ✘ تحلیل‌های Gemini سمت سرور (‎/api/gemini/*)، پنل ادمین و سینک PG — به سرور
+#    Node وابسته‌اند که روی اندروید وجود ندارد (سینک مستقیم Firestore سمت کلاینت
+#    = plannerSyncEngine.ts پس از فعال‌شدن ورود، کار می‌کند)
+#  ⚠ خروجی گرفتن فایل (JSON/PDF) با blob-download در WebView اندروید ممکن است
+#    فایل را ذخیره نکند → پل زدن با Capacitor Filesystem در پرامپت اندروید
+#  ▶ جمع‌بندی صادقانه: این ورک‌فلو «زیرساخت بیلد اندروید» را کامل و ماندگار
+#    می‌سازد؛ فعال‌شدن کامل ورود و قابلیت‌های ابری نیازمند یک پرامپت سازگاری
+#    اندروید برای مجری است (تغییر popup→redirect + fallback بدون سرور + افزودن
+#    دامنهٔ localhost در Firebase Console). پس از آن، همین ورک‌فلو بدون هیچ
+#    تغییری، نسخهٔ کامل‌قابلیت را می‌سازد.
+#
+#  ── امضا و آپدیت درجا (مهم — عین منطق نسخهٔ ویندوز) ─────────────────────────
+#  • در اندروید «آپدیت درجا» فقط وقتی ممکن است که APK جدید با «همان کلید» APK
+#    قبلی امضا شده باشد؛ وگرنه اندروید پیام «App not installed» می‌دهد و باید
+#    برنامه را پاک و نصب کنید (داده‌های محلی از بین می‌رود!).
+#  • پس: یک‌بار یک keystore بسازید، به‌صورت Base64 در Secrets بگذارید و برای
+#    همیشه همان را استفاده کنید (راهنمای ساخت داخل android-build-guide.md):
+#      ANDROID_KEYSTORE_BASE64 ، ANDROID_KEYSTORE_PASSWORD ،
+#      ANDROID_KEY_ALIAS ، ANDROID_KEY_PASSWORD
+#  • اگر Secrets تنظیم نشده باشد: APK با امضای Debug رانِر ساخته می‌شود (فقط
+#    برای آزمون نصب) — هر بیلد امضای متفاوت دارد و روی نسخهٔ قبلی نصب
+#    نمی‌شود. منتشرکردن چنین APK حتی روی تگ v* عمداً مسدود شده است (گیت).
+#
+#  ── لوگو/آیکون برنامه ────────────────────────────────────────────────────────
+#  الزامی: app-icon-rounded-light-512.png در ریشهٔ ریپو (الان موجود است —
+#  بررسی زنده: HTTP 200). نبود آن = توقف بیلد با خطای واضح (خروجی بی‌لوگو
+#  ممنوع). آیکون‌های Adaptive (اندروید ۸+) و کلاسیک در همهٔ چگالی‌ها تولید
+#  می‌شوند: پس‌زمینهٔ سفید + لوگو در لایهٔ جلو.
+#
+#  ── نسخهٔ برنامه ─────────────────────────────────────────────────────────────
+#  versionName از package.json ریشه خوانده می‌شود (الان 1.7.0) و با گیت
+#  APP_VERSION در src/types.ts:1 قفل شده است (عین منطق نسخهٔ ویندوزی).
+#  versionCode = major×10000 + minor×100 + patch (1.7.0 → 10700) که با هر
+#  نسخهٔ جدید بزرگ‌تر می‌شود — شرط آپدیت درجای اندروید.
+#
+#  خروجی‌ها:
+#    - Weekly-Planner-<نسخه>-android.apk        (با Secrets: امضای Release)
+#    - Weekly-Planner-<نسخه>-android-debug.apk  (بدون Secrets: فقط آزمون)
+#
+#  نکتهٔ دانلود از ایران: آرتیفکت‌های Actions نیازمند لاگین گیتهاب‌اند؛ روی تگ
+#  v* (مثل v1.7.0) فایل به GitHub Release منتشر می‌شود که بدون محدودیت است
+#  (انتشار فقط وقتی ممکن است که Secrets امضا تنظیم شده باشد).
+#
+#  مرز آزمون ناظر: مراحل gradle/apksigner به Android SDK نیاز دارند که در
+#  ساندباکس لینوکسی ناظر وجود ندارد؛ آن بخش در CI اجرا می‌شود. بقیهٔ خط لوله
+#  (نصب Capacitor، cap add android واقعی، پچ‌های gradle، تولید آیکون، گیت‌ها)
+#  عیناً روی سیل 1.7.0 اجرا و صحت‌سنجی شده است (scripts/test_build_android.py).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java 21 (Temurin — required by Capacitor 8 / AGP 8.13)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Read version from package.json + version gate (package == types.ts)
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          export VERSION
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          VERSION_CODE=$(node -e "const [a,b,c]=process.env.VERSION.split('.').map(Number);if([a,b,c].some(x=>Number.isNaN(x)))process.exit(1);console.log(a*10000+b*100+c)")
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          APPV=$(grep -m1 "APP_VERSION" src/types.ts | grep -oE "[0-9]+\.[0-9]+\.[0-9]+")
+          if [ "$APPV" != "$VERSION" ]; then
+            echo "::error::نسخه‌ها هم‌خوان نیستند: package.json=$VERSION ولی APP_VERSION در types.ts=$APPV — بیلد متوقف شد"
+            exit 1
+          fi
+          echo "نسخهٔ برنامه: $VERSION (versionCode=$VERSION_CODE) — گیت یکسانی package/types.ts ✓"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Install bundled fonts (vazirmatn + Inter — مثل نسخهٔ ویندوز)
+        run: npm install --no-save --no-audit --no-fund vazirmatn @fontsource/inter
+
+      - name: Build web app (vite build — همان اسکریپت خود ریپو)
+        run: npm run build
+
+      - name: Install Capacitor 8 (بدون تغییر package.json مهرشده)
+        run: npm install --no-save --no-audit --no-fund @capacitor/core@^8 @capacitor/cli@^8 @capacitor/android@^8
+
+      - name: Verify Capacitor config (گیت — جلوگیری از بیلد بی‌شناسنامه)
+        run: |
+          if [ ! -f capacitor.config.json ]; then
+            echo "::error::capacitor.config.json در ریشهٔ ریپو نیست — بیلد متوقف شد"
+            exit 1
+          fi
+          grep -q '"webDir": "dist"' capacitor.config.json || { echo "::error::webDir باید dist باشد"; exit 1; }
+          grep -q '"appId"' capacitor.config.json || { echo "::error::appId در capacitor.config.json نیست"; exit 1; }
+          echo "پیکربندی Capacitor ✓"; cat capacitor.config.json
+
+      - name: Add Android platform (cap add android)
+        run: npx cap add android
+
+      - name: Sync web assets into Android project (cap sync)
+        run: npx cap sync android
+
+      - name: Patch Gradle — minSdk 28 (اندروید ۹+) + versionName/versionCode از package.json
+        run: |
+          if ! grep -q "minSdkVersion" android/variables.gradle; then
+            echo "::error::الگوی minSdkVersion در variables.gradle یافت نشد (تمپلیت Capacitor عوض شده؟) — بیلد متوقف شد"
+            exit 1
+          fi
+          sed -i "s/minSdkVersion = .*/minSdkVersion = 28/" android/variables.gradle
+          grep -q "minSdkVersion = 28" android/variables.gradle || { echo "::error::پچ minSdk اعمال نشد"; exit 1; }
+          sed -i "s/versionCode .*/versionCode ${VERSION_CODE}/" android/app/build.gradle
+          sed -i "s/versionName \".*\"/versionName \"${VERSION}\"/" android/app/build.gradle
+          grep -q "versionCode ${VERSION_CODE}" android/app/build.gradle || { echo "::error::پچ versionCode اعمال نشد"; exit 1; }
+          grep -q "versionName \"${VERSION}\"" android/app/build.gradle || { echo "::error::پچ versionName اعمال نشد"; exit 1; }
+          echo "minSdk=28 (اندروید ۹ به بعد) | versionName=$VERSION | versionCode=$VERSION_CODE ✓"
+
+      - name: Generate app icons from WPR logo (گیت سخت — نبودِ لوگو = توقف)
+        run: |
+          python3 - <<'PY'
+          from PIL import Image, ImageDraw
+          import os, sys
+          cands = ["app-icon-rounded-light-512.png", "build/app-icon-rounded-light-512.png", "build/icon.png", "windows-icon.ico"]
+          src_path = next((c for c in cands if os.path.exists(c)), None)
+          if not src_path:
+              print("FATAL: هیچ فایل لوگو یافت نشد — طبق درخواست کاربر خروجی بی‌لوگو ممنوع است"); sys.exit(1)
+          print("لوگوی انتخاب‌شده:", src_path)
+          src = Image.open(src_path).convert("RGBA")
+          base = src.resize((1024, 1024), Image.LANCZOS)
+          md = "android/app/src/main/res"
+          for dpi, s in {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}.items():
+              d = f"{md}/mipmap-{dpi}"; os.makedirs(d, exist_ok=True)
+              base.resize((s, s), Image.LANCZOS).save(f"{d}/ic_launcher.png")
+              big = base.resize((s * 4, s * 4), Image.LANCZOS)
+              mask = Image.new("L", (s * 4, s * 4), 0)
+              ImageDraw.Draw(mask).ellipse((0, 0, s * 4, s * 4), fill=255)
+              rnd = Image.new("RGBA", (s * 4, s * 4), (0, 0, 0, 0))
+              rnd.paste(big, (0, 0), mask)
+              rnd.resize((s, s), Image.LANCZOS).save(f"{d}/ic_launcher_round.png")
+          for dpi, s in {"mdpi": 108, "hdpi": 162, "xhdpi": 216, "xxhdpi": 324, "xxxhdpi": 432}.items():
+              d = f"{md}/mipmap-{dpi}"; os.makedirs(d, exist_ok=True)
+              canvas = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+              inner = int(s * 0.625)
+              logo = src.resize((inner, inner), Image.LANCZOS)
+              off = (s - inner) // 2
+              canvas.paste(logo, (off, off), logo)
+              canvas.save(f"{d}/ic_launcher_foreground.png")
+          vals = f"{md}/values"; os.makedirs(vals, exist_ok=True)
+          with open(f"{vals}/ic_launcher_background.xml", "w", encoding="utf-8") as f:
+              f.write('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#FFFFFF</color>\n</resources>\n')
+          anydpi = f"{md}/mipmap-anydpi-v26"; os.makedirs(anydpi, exist_ok=True)
+          for name in ("ic_launcher", "ic_launcher_round"):
+              with open(f"{anydpi}/{name}.xml", "w", encoding="utf-8") as f:
+                  f.write('<?xml version="1.0" encoding="utf-8"?>\n<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n    <background android:drawable="@color/ic_launcher_background"/>\n    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>\n</adaptive-icon>\n')
+          print("آیکون‌های Adaptive و کلاسیک برای همهٔ چگالی‌ها تولید شد ✓")
+          PY
+          echo "── فهرست آیکون‌های تولیدشده ──"
+          ls -la android/app/src/main/res/mipmap-*/
+          test -f android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png || { echo "::error::آیکون xxxhdpi تولید نشد"; exit 1; }
+          test -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml || { echo "::error::adaptive icon XML تولید نشد"; exit 1; }
+
+      - name: Install Android SDK 36 components
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKM" ]; then SDKM="$(command -v sdkmanager)"; fi
+          test -n "$SDKM" || { echo "::error::sdkmanager یافت نشد"; exit 1; }
+          yes | "$SDKM" --licenses > /dev/null 2>&1 || true
+          yes | "$SDKM" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+          echo "SDK 36 + build-tools 36.0.0 آماده است ✓"
+
+      - name: Decode signing keystore from Secrets (اختیاری — مسیر Release)
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_B64" ]; then
+            echo "$ANDROID_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/weekly-planner.keystore"
+            echo "RELEASE_MODE=1" >> "$GITHUB_ENV"
+            echo "امضای Release فعال است — APK با کلید ثابت شما امضا می‌شود (قابل آپدیت درجا) ✓"
+          else
+            echo "RELEASE_MODE=0" >> "$GITHUB_ENV"
+            echo "::warning::Secrets امضا تنظیم نشده — خروجی Debug-sign (فقط آزمون نصب؛ روی نسخهٔ قبلی نصب نمی‌شود)"
+          fi
+
+      - name: Build APK (Gradle)
+        run: |
+          cd android
+          chmod +x gradlew
+          if [ "$RELEASE_MODE" = "1" ]; then
+            ./gradlew assembleRelease --no-daemon --stacktrace
+          else
+            ./gradlew assembleDebug --no-daemon --stacktrace
+          fi
+
+      - name: Zip-align + sign APK with release keystore
+        if: env.RELEASE_MODE == '1'
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          IN="android/app/build/outputs/apk/release/app-release-unsigned.apk"
+          test -f "$IN" || { echo "::error::APK خام یافت نشد: $IN"; exit 1; }
+          "$BT/zipalign" -f -p 4 "$IN" aligned.apk
+          "$BT/apksigner" sign \
+            --ks "$RUNNER_TEMP/weekly-planner.keystore" \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass "pass:$ANDROID_KEYSTORE_PASSWORD" \
+            --key-pass "pass:$ANDROID_KEY_PASSWORD" \
+            --out "Weekly-Planner-${VERSION}-android.apk" aligned.apk
+          "$BT/apksigner" verify --print-certs "Weekly-Planner-${VERSION}-android.apk"
+          echo "APK امضاشده و راستی‌آزمایی‌شده ✓"
+
+      - name: Rename debug APK (حالت بدون Secrets)
+        if: env.RELEASE_MODE != '1'
+        run: |
+          IN="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$IN" || { echo "::error::APK Debug یافت نشد: $IN"; exit 1; }
+          cp "$IN" "Weekly-Planner-${VERSION}-android-debug.apk"
+          echo "::warning::این APK فقط برای آزمون نصب است. برای آپدیت درجا و انتشار، Secrets امضا را تنظیم کنید (راهنما: android-build-guide.md)"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Weekly-Planner-android-${{ env.VERSION }}
+          path: Weekly-Planner-*-android*.apk
+          if-no-files-found: error
+
+      - name: Release gate (تگ v* بدون Secrets امضا = توقف عمدی)
+        if: startsWith(github.ref, 'refs/tags/v') && env.RELEASE_MODE != '1'
+        run: |
+          echo "::error::انتشار عمومی APK با امضای ناپایدارِ هر-بیلد ممنوع است (کاربران نمی‌توانند آپدیت درجا کنند). ابتدا ۴ Secrets امضا را تنظیم کنید و دوباره تگ بزنید."
+          exit 1
+
+      - name: Publish GitHub Release (فقط روی تگ v* با امضای Release)
+        if: startsWith(github.ref, 'refs/tags/v') && env.RELEASE_MODE == '1'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Weekly-Planner-*-android.apk
+          generate_release_notes: true
+
+      - name: Build summary
+        run: |
+          {
+            echo "### خلاصهٔ بیلد اندروید"
+            echo "- appId: $(node -p "require('./capacitor.config.json').appId")"
+            echo "- versionName: $VERSION | versionCode: $VERSION_CODE"
+            echo "- minSdk 28 (اندروید ۹+) | compile/target SDK 36 (روی اندروید ۱۷/API 37 هم اجرا می‌شود)"
+            echo "- حالت امضا: $([ "$RELEASE_MODE" = "1" ] && echo 'Release (کلید ثابت — قابل آپدیت درجا)' || echo 'Debug (فقط آزمون)')"
+            echo "- یادآوری: با کد فعلی 1.7.0 ورود ابری روی اندروید فعال نیست (ماتریس قابلیت در کامنت بالای همین فایل) — پرامپت سازگاری اندروید لازم است"
+          } >> "$GITHUB_STEP_SUMMARY"
