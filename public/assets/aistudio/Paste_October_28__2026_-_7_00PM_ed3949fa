@@ -1,0 +1,687 @@
+T161-F-R
+T161-F-R
+T161-F-R
+NONCE=T161FR-5W7Q
+====================================================================
+مأموریت: T161-مرحلهٔ ۲ (بازنگری‌شده) — اعمال کامل «ویرایشگر اهداف + فیکس بریدن/ناقص‌ماندن نقشهٔ راه AI»
+این نسخه بر پایهٔ پنجره‌های واقعیِ تثبیت‌شدهٔ T161-F2-E نوشته شده است؛ همهٔ لنگرها با کد واقعی می‌خوانند.
+کاری که این مأموریت به برنامه اضافه می‌کند:
+  ۱) ویرایشگر کامل هدف: دکمهٔ ویرایش روی هر کارت هدف + مودال ویرایش تمام‌فیلد (عنوان، هفته‌ها، دسته/رنگ، فازها، هفته‌ها، کارها با لینک/ددلاین/نوع) + دکمهٔ «هدف دستی» برای ساختن هدف بدون AI.
+  ۲) فیکس بریدن نقشهٔ راه AI: سقف توکن خروجی بالا (۳۲۷۶۸ برای رودمپ)، پرامپت سخت‌گیرانه‌تر، و اگر مدل هفته‌ها را ناقص داد، «ادامهٔ خودکار» تولید و ادغام می‌شود + هشدار پوشش به کاربر.
+  ۳) سازگاری همین خروجی بزرگ با کلیدهای شخصی Anthropic و OpenAI-compat (max_tokens داینامیک + retry هوشمند روی خطای 400).
+
+فایل‌های مجاز ویرایش (فقط این چهار):
+  server.ts
+  src/types.ts
+  src/components/GoalsTab.tsx
+  src/components/GoalEditorModal.tsx   (فایل جدید)
+منجمد مطلق (حتی یک بایت): src/App.tsx، src/lib/firestoreSync.ts،
+src/lib/plannerSyncEngine.ts، src/components/ClassSlotModal.tsx،
+src/components/AnalyticsTab.tsx و تمام فایل‌های دیگر.
+
+قواعد الزامی:
+- چهار خط اول گزارش: سه خط T161-F-R و بعد NONCE=T161FR-5W7Q (عیناً).
+- هر خروجی عیناً داخل بلوک با برچسب خودش: ===BEGIN:برچسب=== ... ===END:برچسب===
+- برای هر ویرایش فقط دو بلوک: <برچسب>-before (پنجرهٔ sed شامل خط فرمان، حداکثر ۳۰ خط) و <برچسب>-after (همان پنجره پس از ویرایش). هیچ توضیحی ننویس.
+- ممنوع مطلق: git، نصب پکیج، تغییر package.json، ویرایش هر فایل بیرون از چهار فایل مجاز.
+- اگر متن واقعی هر لنگر با «قبل» اعلام‌شده در همین پرامپت نخواند → STOP با برچسب همان هانک (مثلاً GT-S3). هیچ حدس و تطبیق انعطافی مجاز نیست.
+- هر گیت FAIL شد → فوراً STOP و فقط بخش (۸) فرمت گزارش با خروجی خام همان گیت.
+- تحویل گزارش: به‌صورت فایل متنی.
+====================================================================
+
+====================================================================
+فاز الف — pre-flight (بدون ویرایش)
+====================================================================
+P1) md5sum src/App.tsx src/components/ClassSlotModal.tsx src/types.ts src/lib/plannerSyncEngine.ts src/lib/firestoreSync.ts src/components/AnalyticsTab.tsx
+    گیت GT-P1: شش مقدار عیناً:
+    App=1d8095d6db9c93c2a66a28901a22901d
+    ClassSlotModal=89d18143a3ab00f4213d500254d3a325
+    types=0734a56b27ae630b10786ad611a8d248
+    plannerSyncEngine=5f378ab312b5c56ee28119acd45f7c8d
+    firestoreSync=20bd324785846846756859642594720a
+    AnalyticsTab=2aa957617bfb7a6aa1ad85dbcee4e0ca
+
+P2) wc -l server.ts src/types.ts src/components/GoalsTab.tsx
+    گیت GT-P2: دقیقاً 1827 / 357 / 1470
+
+P3) sed -n '1506,1807p' server.ts | sha256sum
+    گیت GT-P3: عیناً 5b49f32c93bf3f835942bd30ca13bad4d44e191b09da5202abf7dd84e69ec61a
+
+P4) npx tsc --noEmit; echo "TSC_EXIT=$?"
+    گیت GT-P4: خط عین TSC_EXIT=0
+
+P5) grep -n -e "getFallbackConfig" -e "AI Predict Feasibility" server.ts | head -5
+    (فقط ثبت — تعیین وجود/نبودِ مسیر predict برای S6/S8. خروجی خالی = predict وجود ندارد.)
+
+====================================================================
+فاز ب — ویرایش‌های server.ts (هانک‌های S1 تا S10)
+====================================================================
+
+S1) داخل interface GeminiFallbackOptions، بلافاصله بعد از خطِ
+      customKeys?: ParsedCustomKey[];
+این خط را اضافه کن:
+      maxOutputTokens?: number;
+
+S2) در executeCustomKeyCall، شاخهٔ anthropic — تنها خطِ فایل که عبارت max_tokens: 4096 دارد
+(این عبارت در کل server.ts فقط یک بار است؛ عیناً همین را جایگزین کن، بقیهٔ خط دست نخورد):
+قبل:
+          max_tokens: 4096,
+بعد:
+          max_tokens: Math.min(options.maxOutputTokens ?? 4096, 8192),
+
+S3) در executeCustomKeyCall، شاخهٔ openai-compat — بلوک ساخت reqBody
+(همانی که با const reqBody: any = { شروع می‌شود؛ مواظب باش reqBody دیگری با let در فایل هست که نباید دست بخورد):
+قبل:
+      const reqBody: any = {
+        model,
+        messages: [{ role: 'user', content: options.prompt }]
+      };
+بعد:
+      const reqBody: any = {
+        model,
+        messages: [{ role: 'user', content: options.prompt }],
+        ...(options.maxOutputTokens ? { max_tokens: options.maxOutputTokens } : {})
+      };
+
+S4) در همان شاخه، بلوک خطای 400 (همانی که با if (resp.status === 400 && reqBody.response_format) { شروع می‌شود) را
+کامل با این نسخه جایگزین کن (رفتار قبلی حفظ شده + یک شاخهٔ retry جدید برای max_tokens):
+قبل:
+      if (resp.status === 400 && reqBody.response_format) {
+        const errTxt = await resp.text().catch(() => '');
+        if (errTxt.toLowerCase().includes('response_format')) {
+          delete reqBody.response_format;
+          resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${customKey.key}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(reqBody),
+            signal: controller.signal
+          });
+        } else {
+          const err = new Error(errTxt || 'HTTP 400');
+          (err as any).status = 400;
+          throw err;
+        }
+      }
+بعد:
+      if (resp.status === 400) {
+        const errTxt = await resp.text().catch(() => '');
+        if (errTxt.toLowerCase().includes('response_format') && reqBody.response_format) {
+          delete reqBody.response_format;
+          resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${customKey.key}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(reqBody),
+            signal: controller.signal
+          });
+        } else if (options.maxOutputTokens && reqBody.max_tokens) {
+          delete reqBody.max_tokens;
+          resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${customKey.key}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(reqBody),
+            signal: controller.signal
+          });
+        } else {
+          const err = new Error(errTxt || 'HTTP 400');
+          (err as any).status = 400;
+          throw err;
+        }
+      }
+
+S5) در تابع getConfigForGoalAnalysis (همانی که responseSchema آن با feasibility_score شروع می‌شود —
+مواظب باش تابع مشابه getConfigForNextWeek را دست نمی‌زنی)، بلافاصله بعد از خط
+      const baseConfig: any = {
+این خط را اضافه کن:
+      maxOutputTokens: 32768,
+
+S6) فقط اگر P5 نشان داد predict وجود دارد: در تابع کانفیگ predict، به هر دو return
+(داخل if و بیرون آن)، بلافاصله بعد از temperature: 0.2، این خط اضافه شود:
+      maxOutputTokens: 16384,
+اگر P5 خالی بود → این هانک را اجرا نکن و در گزارش بنویس: PREDICT-SKIP
+
+S7) در call-site تحلیل هدف (تنها فراخوانی callGeminiWithFallback که خط
+      getConfigForModel: getConfigForGoalAnalysis,
+را دارد)، بعد از همان خط، این خط اضافه شود:
+      maxOutputTokens: 32768,
+یعنی:
+قبل:
+  const result = await callGeminiWithFallback({
+    prompt,
+    preferredModels: GOAL_ANALYSIS_MODELS,
+    getConfigForModel: getConfigForGoalAnalysis,
+    userKeysHeader,
+    customKeys,
+  });
+بعد:
+  const result = await callGeminiWithFallback({
+    prompt,
+    preferredModels: GOAL_ANALYSIS_MODELS,
+    getConfigForModel: getConfigForGoalAnalysis,
+    maxOutputTokens: 32768,
+    userKeysHeader,
+    customKeys,
+  });
+
+S8) فقط اگر P5 نشان داد predict وجود دارد: در call-site predict (فراخوانی callGeminiWithFallback
+که getConfigForModel: getFallbackConfig دارد)، داخل شیء فراخوانی (مثلاً بعد از خط getConfigForModel)
+این خط اضافه شود:
+      maxOutputTokens: 16384,
+اگر نبود → PREDICT-SKIP
+
+S9) سخت‌سازی پرامپت رودمپ — بلافاصله بعد از خطی که با این عبارت شروع می‌شود:
+      شما باید نقشه راه را برای تمام ${totalWeeks} هفته به صورت کاملاً جداگانه و تک‌تک هفته‌ها
+این خط جدید (یک خط، داخل همان template literal) اضافه شود:
+تمام هفته‌ها از ۱ تا ${totalWeeks} را کامل تولید کن؛ بدون placeholder، بدون خلاصه‌سازی، بدون تجمیع هفته‌ها؛ کامل‌ترین و باجزئیات‌ترین پاسخ ممکن را بده.
+
+S10) بلوک coverage + continuation — در شاخهٔ analyze (تحلیل هدف)، خط بازگشت پایانی را جایگزین کن.
+تشخیص محل درست: این return بلافاصله پیش از } catch (error: any) { می‌آید که در آن
+console.error("Gemini Goal Analysis Error:", error); هست.
+هشدار: عبارت return res.json({ success: true, ...parsed }); دو بار در فایل هست (یکی در شاخهٔ next-week
+که بعدش } else { می‌آید — آن نباید دست بخورد؛ یکی در شاخهٔ analyze — فقط همین یکی).
+قبل:
+  const textVal = text || "{}";
+  const parsed = JSON.parse(textVal.trim());
+  return res.json({ success: true, ...parsed });
+بعد (فقط خط return جایگزین می‌شود؛ دو خط بالایی دست نمی‌خورند):
+  const textVal = text || "{}";
+  const parsed = JSON.parse(textVal.trim());
+
+  // T161-F: coverage validation — weeks of phases must cover ai_estimated_weeks
+  const expectedWeeks = Number(parsed.ai_estimated_weeks) || Number(totalWeeks) || 0;
+  const countCovered = (obj: any) => (obj.phases || []).reduce((s: number, ph: any) => s + (((ph.weeks || []).length) || 0), 0);
+  let coveredWeeks = countCovered(parsed);
+  let coverageComplete = expectedWeeks > 0 && coveredWeeks >= expectedWeeks;
+
+  if (!coverageComplete && expectedWeeks > 0) {
+    try {
+      const maxWeekSoFar = (parsed.phases || []).reduce((m: number, ph: any) => Math.max(m, ...((ph.weeks || []).map((w: any) => Number(w.week_number) || 0))), 0);
+      const contPrompt = `ادامهٔ نقشه راه برای هدف "${title}" را تولید کن. هفته‌های ۱ تا ${maxWeekSoFar} قبلاً تولید شده‌اند. فقط هفته‌های ${maxWeekSoFar + 1} تا ${expectedWeeks} را در همان قالب JSON قبلی (آرایهٔ phases با weeks و tasks) تولید کن؛ هیچ متن اضافه و هیچ توضیحی ننویس، فقط JSON.`;
+      const contResult = await callGeminiWithFallback({
+        prompt: contPrompt,
+        preferredModels: GOAL_ANALYSIS_MODELS,
+        getConfigForModel: getConfigForGoalAnalysis,
+        maxOutputTokens: 32768,
+        userKeysHeader,
+        customKeys,
+      });
+      const contParsed = JSON.parse(contResult.text.trim());
+      const contPhases: any[] = contParsed.phases || [];
+      const existingByNumber = new Map<number, any>();
+      (parsed.phases || []).forEach((ph: any) => existingByNumber.set(Number(ph.phase_number), ph));
+      for (const cph of contPhases) {
+        const num = Number(cph.phase_number);
+        const target = existingByNumber.get(num);
+        if (target) {
+          const seenWeeks = new Set((target.weeks || []).map((w: any) => Number(w.week_number)));
+          const newWeeks = (cph.weeks || []).filter((w: any) => !seenWeeks.has(Number(w.week_number)));
+          target.weeks = [...(target.weeks || []), ...newWeeks];
+          target.tasks = [...(target.tasks || []), ...((cph.tasks || []))];
+        } else {
+          parsed.phases = parsed.phases || [];
+          parsed.phases.push(cph);
+          existingByNumber.set(num, cph);
+        }
+      }
+      coveredWeeks = countCovered(parsed);
+      coverageComplete = coveredWeeks >= expectedWeeks;
+    } catch (contErr: any) {
+      console.warn("[AI Roadmap Continuation] failed:", contErr?.message || contErr);
+    }
+  }
+
+  return res.json({
+    success: true,
+    ...parsed,
+    coverage: {
+      complete: coverageComplete,
+      expectedWeeks,
+      coveredWeeks,
+      ...(coverageComplete ? {} : { warning: "نقشه راه کامل تولید نشد؛ هفته‌های پوشش‌داده‌شده کمتر از تخمین هوش مصنوعی است." })
+    }
+  });
+
+نکته: پاسخ با ...parsed پخش می‌شود (سازگار با کلاینت فعلی) و فقط کلید coverage اضافه می‌شود.
+
+====================================================================
+فاز ج — src/types.ts (فقط-افزودنی)
+====================================================================
+T1) داخل interface GoalPhaseTask (همانی که suggested_weekday و deadline_note دارد)،
+بلافاصله بعد از خط
+      completed?: boolean;
+و قبل از بستن براکت، این خطوط اضافه شود:
+  // T161-F: full-field editor additions (all optional — legacy data untouched)
+  link?: string;
+  linkTitle?: string;
+  deadline?: string;
+قید مهم: فیلدهای type و description در این interface از قبل وجود دارند؛ آن‌ها را تکرار نکن.
+
+====================================================================
+فاز د — فایل جدید src/components/GoalEditorModal.tsx
+====================================================================
+H1) این فایل را عیناً با محتوای زیر بساز (بدون کم‌وکاست، بدون تغییر اسپیس/تورفتگی):
+
+import { useEffect, useState } from 'react';
+import { X, Plus, Trash2, ChevronDown, ChevronUp, Save } from 'lucide-react';
+import { Goal, GoalPhase, GoalWeek, GoalPhaseTask, Category } from '../types';
+
+// T161-F: full-field goal editor (manual + AI goals) — merge-save via onSave
+interface GoalEditorModalProps {
+  goal: Goal | null;
+  open: boolean;
+  categories: Category[];
+  lang?: 'fa' | 'en';
+  onClose: () => void;
+  onSave: (edited: Goal) => void;
+}
+
+const COLOR_CHOICES = [
+  { name: 'نیلی', value: 'bg-indigo-100 border-indigo-300 text-indigo-900' },
+  { name: 'زمردی', value: 'bg-emerald-100 border-emerald-300 text-emerald-900' },
+  { name: 'آبی', value: 'bg-sky-100 border-sky-300 text-sky-900' },
+  { name: 'بنفش', value: 'bg-purple-100 border-purple-300 text-purple-900' },
+  { name: 'کهربایی', value: 'bg-amber-100 border-amber-300 text-amber-900' },
+  { name: 'رز', value: 'bg-rose-100 border-rose-300 text-rose-900' },
+];
+
+const emptyTask = (pid: string, wid: string, idx: number): GoalPhaseTask => ({
+  id: `gedit_${pid}_${wid}_${idx}_${Date.now()}`,
+  title: '',
+  completed: false,
+  type: 'core',
+  description: '',
+  link: '',
+  linkTitle: '',
+  deadline: ''
+});
+
+const emptyWeek = (num: number): GoalWeek => ({
+  week_number: num,
+  week_title: `هفته ${num}`,
+  tasks: []
+});
+
+const emptyPhase = (num: number): GoalPhase => ({
+  phase_number: num,
+  title: `فاز ${num}`,
+  description: '',
+  estimated_weeks: `هفته ${num}`,
+  weeks: [emptyWeek(num)],
+  tasks: []
+});
+
+export default function GoalEditorModal({ goal, open, categories, lang = 'fa', onClose, onSave }: GoalEditorModalProps) {
+  const isRtl = lang === 'fa';
+  const [draft, setDraft] = useState<Goal | null>(null);
+  const [expandedPhase, setExpandedPhase] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (open && goal) {
+      setDraft(JSON.parse(JSON.stringify(goal)));
+      setExpandedPhase(null);
+    }
+  }, [open, goal]);
+
+  if (!open || !draft) return null;
+
+  const t = (fa: string, en: string) => (isRtl ? fa : en);
+  const update = (patch: Partial<Goal>) => setDraft(prev => prev ? { ...prev, ...patch } : prev);
+
+  const updatePhase = (pNum: number, patch: Partial<GoalPhase>) =>
+    setDraft(prev => prev ? ({
+      ...prev,
+      phases: (prev.phases || []).map(p => p.phase_number === pNum ? { ...p, ...patch } : p)
+    }) : prev);
+
+  const updateWeek = (pNum: number, wNum: number, patch: Partial<GoalWeek>) =>
+    setDraft(prev => prev ? ({
+      ...prev,
+      phases: (prev.phases || []).map(p => p.phase_number !== pNum ? p : ({
+        ...p,
+        weeks: (p.weeks || []).map(w => w.week_number === wNum ? { ...w, ...patch } : w)
+      }))
+    }) : prev);
+
+  const updateTask = (pNum: number, wNum: number | null, taskId: string, patch: Partial<GoalPhaseTask>) =>
+    setDraft(prev => prev ? ({
+      ...prev,
+      phases: (prev.phases || []).map(p => {
+        if (p.phase_number !== pNum) return p;
+        if (wNum === null) {
+          return { ...p, tasks: p.tasks.map(tk => tk.id === taskId ? { ...tk, ...patch } : tk) };
+        }
+        return {
+          ...p,
+          weeks: (p.weeks || []).map(w => w.week_number !== wNum ? w : ({
+            ...w,
+            tasks: w.tasks.map(tk => tk.id === taskId ? { ...tk, ...patch } : tk)
+          }))
+        };
+      })
+    }) : prev);
+
+  const addPhase = () => {
+    const nextNum = (draft.phases || []).length + 1;
+    setDraft(prev => prev ? ({ ...prev, phases: [...(prev.phases || []), emptyPhase(nextNum)] }) : prev);
+    setExpandedPhase(nextNum);
+  };
+
+  const addWeek = (p: GoalPhase) => {
+    const wNum = ((p.weeks || []).reduce((m, w) => Math.max(m, w.week_number), 0)) + 1;
+    updatePhase(p.phase_number, { weeks: [...(p.weeks || []), emptyWeek(wNum)] });
+  };
+
+  const addTask = (p: GoalPhase, w: GoalWeek | null) => {
+    const wk = w ? w.week_number : null;
+    const fresh = emptyTask(`${p.phase_number}`, `${wk ?? 'flat'}`, (wk !== null ? (w!.tasks.length) : p.tasks.length) + 1);
+    if (wk === null) {
+      updatePhase(p.phase_number, { tasks: [...p.tasks, fresh] });
+    } else {
+      updateWeek(p.phase_number, wk, { tasks: [...(w!.tasks), fresh] });
+    }
+  };
+
+  const handleSave = () => {
+    if (!draft.title.trim()) return;
+    onSave(draft);
+    onClose();
+  };
+
+  const taskCard = (p: GoalPhase, tk: GoalPhaseTask, wNum: number | null, remove: () => void) => (
+    <div key={tk.id} className="rounded-lg bg-slate-50 p-2 space-y-1">
+      <div className="flex items-center gap-2">
+        <input value={tk.title} placeholder={t('عنوان کار', 'Task title')}
+          onChange={e => updateTask(p.phase_number, wNum, tk.id, { title: e.target.value })}
+          className="flex-1 px-2 py-1 rounded-lg border border-slate-200 text-sm" />
+        <button onClick={remove} className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-100"><Trash2 size={14} /></button>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <input value={tk.link || ''} placeholder={t('لینک (اختیاری)', 'Link (optional)')}
+          onChange={e => updateTask(p.phase_number, wNum, tk.id, { link: e.target.value })}
+          className="px-2 py-1 rounded-lg border border-slate-200 text-xs" dir="ltr" />
+        <input value={tk.linkTitle || ''} placeholder={t('عنوان لینک (اختیاری)', 'Link title (optional)')}
+          onChange={e => updateTask(p.phase_number, wNum, tk.id, { linkTitle: e.target.value })}
+          className="px-2 py-1 rounded-lg border border-slate-200 text-xs" />
+        <select value={tk.type || 'core'}
+          onChange={e => updateTask(p.phase_number, wNum, tk.id, { type: e.target.value as 'core' | 'secondary' | 'habit' })}
+          className="px-2 py-1 rounded-lg border border-slate-200 text-xs">
+          <option value="core">{t('اصلی', 'Core')}</option>
+          <option value="secondary">{t('فرعی', 'Secondary')}</option>
+          <option value="habit">{t('عادت', 'Habit')}</option>
+        </select>
+        <input value={tk.deadline || ''} placeholder={t('ددلاین (متن آزاد)', 'Deadline (free text)')}
+          onChange={e => updateTask(p.phase_number, wNum, tk.id, { deadline: e.target.value })}
+          className="px-2 py-1 rounded-lg border border-slate-200 text-xs" />
+      </div>
+      <textarea value={tk.description || ''} placeholder={t('توضیح', 'Description')}
+        onChange={e => updateTask(p.phase_number, wNum, tk.id, { description: e.target.value })}
+        className="w-full px-2 py-1 rounded-lg border border-slate-200 text-xs" rows={2} />
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3" onClick={onClose}>
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-3xl max-h-[88vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="sticky top-0 bg-white/95 backdrop-blur border-b border-slate-200 p-4 flex items-center justify-between gap-2">
+          <h3 className="font-black text-slate-800">{t('ویرایش هدف', 'Edit Goal')}</h3>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-100"><X size={18} /></button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          <div>
+            <label className="text-xs font-bold text-slate-600">{t('عنوان هدف', 'Goal title')}</label>
+            <input value={draft.title} onChange={e => update({ title: e.target.value })}
+              className="w-full mt-1 px-3 py-2 rounded-xl border border-slate-200 text-sm" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-bold text-slate-600">{t('تعداد کل هفته‌ها', 'Total weeks')}</label>
+              <input type="number" min={1} value={draft.total_weeks}
+                onChange={e => update({ total_weeks: Math.max(1, Number(e.target.value) || 1) })}
+                className="w-full mt-1 px-3 py-2 rounded-xl border border-slate-200 text-sm" />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-slate-600">{t('رنگ دسته', 'Category color')}</label>
+              <select value={draft.categoryColor || COLOR_CHOICES[0].value}
+                onChange={e => update({ categoryColor: e.target.value })}
+                className="w-full mt-1 px-3 py-2 rounded-xl border border-slate-200 text-sm">
+                {COLOR_CHOICES.map(c => <option key={c.value} value={c.value}>{c.name}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-slate-600">{t('دسته', 'Category')}</label>
+            <select value={draft.categoryId || ''}
+              onChange={e => update({ categoryId: e.target.value || undefined })}
+              className="w-full mt-1 px-3 py-2 rounded-xl border border-slate-200 text-sm">
+              <option value="">{t('بدون دسته', 'No category')}</option>
+              {categories.map(c => <option key={c.id} value={c.id}>{c.nameFa}</option>)}
+            </select>
+          </div>
+
+          {(draft.phases || []).map(p => (
+            <div key={p.phase_number} className="rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="flex items-center justify-between gap-2 p-3 bg-slate-50">
+                <input value={p.title} onChange={e => updatePhase(p.phase_number, { title: e.target.value })}
+                  className="flex-1 px-2 py-1 rounded-lg border border-slate-200 text-sm font-bold" />
+                <input value={p.estimated_weeks} onChange={e => updatePhase(p.phase_number, { estimated_weeks: e.target.value })}
+                  className="w-28 px-2 py-1 rounded-lg border border-slate-200 text-xs" />
+                <button onClick={() => setExpandedPhase(expandedPhase === p.phase_number ? null : p.phase_number)}
+                  className="p-2 rounded-lg hover:bg-slate-200">
+                  {expandedPhase === p.phase_number ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
+              </div>
+
+              {expandedPhase === p.phase_number && (
+                <div className="p-3 space-y-3">
+                  {(p.weeks || []).map(w => (
+                    <div key={w.week_number} className="rounded-xl border border-slate-200 p-2 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-black text-slate-500 w-8">#{w.week_number}</span>
+                        <input value={w.week_title} onChange={e => updateWeek(p.phase_number, w.week_number, { week_title: e.target.value })}
+                          className="flex-1 px-2 py-1 rounded-lg border border-slate-200 text-sm" />
+                        <button onClick={() => updatePhase(p.phase_number, { weeks: (p.weeks || []).filter(x => x.week_number !== w.week_number) })}
+                          className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50"><Trash2 size={14} /></button>
+                      </div>
+                      {w.tasks.map(tk => taskCard(p, tk, w.week_number,
+                        () => updateWeek(p.phase_number, w.week_number, { tasks: w.tasks.filter(x => x.id !== tk.id) })))}
+                      <button onClick={() => addTask(p, w)}
+                        className="text-xs font-bold text-indigo-600 hover:underline flex items-center gap-1">
+                        <Plus size={12} /> {t('افزودن کار', 'Add task')}
+                      </button>
+                    </div>
+                  ))}
+                  {(!p.weeks || p.weeks.length === 0) && (
+                    <div className="space-y-2">
+                      {p.tasks.map(tk => taskCard(p, tk, null,
+                        () => updatePhase(p.phase_number, { tasks: p.tasks.filter(x => x.id !== tk.id) })))}
+                      <button onClick={() => addTask(p, null)}
+                        className="text-xs font-bold text-indigo-600 hover:underline flex items-center gap-1">
+                        <Plus size={12} /> {t('افزودن کار', 'Add task')}
+                      </button>
+                    </div>
+                  )}
+                  <button onClick={() => addWeek(p)} className="text-xs font-bold text-indigo-600 hover:underline flex items-center gap-1">
+                    <Plus size={12} /> {t('افزودن هفته', 'Add week')}
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+
+          <button onClick={addPhase} className="text-sm font-bold text-indigo-600 hover:underline flex items-center gap-1">
+            <Plus size={14} /> {t('افزودن فاز', 'Add phase')}
+          </button>
+        </div>
+
+        <div className="sticky bottom-0 bg-white/95 backdrop-blur border-t border-slate-200 p-4 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-100">{t('انصراف', 'Cancel')}</button>
+          <button onClick={handleSave} className="px-4 py-2 rounded-xl text-sm font-black bg-indigo-600 text-white hover:bg-indigo-700 flex items-center gap-1">
+            <Save size={14} /> {t('ذخیره (ادغام کامل)', 'Save (merge)')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+====================================================================
+فاز هـ — سیم‌کشی src/components/GoalsTab.tsx
+====================================================================
+G1) دو کار:
+  الف) در import چندخطی lucide-react، بلافاصله بعد از خط
+        Edit2,
+  این خط را اضافه کن:
+        PenSquare,
+  ب) بعد از آخرین خط import در بلوک importهای ابتدای فایل، این خط را اضافه کن:
+import GoalEditorModal from './GoalEditorModal';
+
+G2) بلافاصله قبل از خط
+      const handleDeleteGoal = (goalId: string) => {
+این بلوک را اضافه کن:
+  // T161-F: goal editor state
+  const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
+
+G3) بلافاصله بعد از پایان handleDeleteGoal — یعنی بعد از این سه خط:
+      showToast('هدف با موفقیت حذف شد.');
+      setConfirmDeleteGoalId(null);
+    };
+این بلوک را اضافه کن:
+
+  // T161-F: merge-save goal edits (only edited fields override; nothing dropped)
+  const handleSaveGoalEdits = (edited: Goal) => {
+    onUpdateData(prev => ({
+      ...prev,
+      goals: (prev.goals || []).map(g => g.goal_id === edited.goal_id ? { ...g, ...edited } : g)
+    }));
+    showToast(isRtl ? 'هدف با ادغام کامل ذخیره شد' : 'Goal saved with full merge');
+  };
+  // T161-F: manual goal creation (skeleton, completed via editor)
+  const handleAddManualGoal = () => {
+    const title = window.prompt(isRtl ? 'عنوان هدف دستی:' : 'Manual goal title:');
+    if (!title || !title.trim()) return;
+    const weeks = Number(window.prompt(isRtl ? 'تعداد هفته‌ها:' : 'Number of weeks:', '8')) || 8;
+    const goalId = `goal_${Date.now()}`;
+    const newGoal: Goal = {
+      goal_id: goalId,
+      title: title.trim(),
+      total_weeks: weeks,
+      current_week_index: 1,
+      ai_estimated_weeks: weeks,
+      milestones: [{ week_number: 1, title: 'فاز ۱', completed: false }],
+      phases: [{
+        phase_number: 1,
+        title: 'فاز ۱',
+        description: '',
+        estimated_weeks: `هفته ۱ تا ${weeks}`,
+        weeks: Array.from({ length: weeks }, (_, i) => ({ week_number: i + 1, week_title: `هفته ${i + 1}`, tasks: [] })),
+        tasks: []
+      }],
+      active_week_tasks: []
+    };
+    onUpdateData(prev => ({ ...prev, goals: [...(prev.goals || []), newGoal] }));
+    showToast(isRtl ? 'هدف دستی ساخته شد؛ با دکمهٔ ویرایش کاملش کنید' : 'Manual goal created; complete it via Edit');
+  };
+قید: اگر tsc گفت interface Goal فیلد الزامی دیگری دارد که بالا نیامده، مقدار پیش‌فرض معقول همان
+فیلد را در newGoal اضافه کن و در گزارش اعلام کن.
+
+G4) در هندلر ثبت هدف جدید، بلافاصله بعد از بلوک
+      if (resData.success === false) {
+        throw new Error(resData.error || "خطای نامشخص در تحلیل هوش مصنوعی");
+      }
+این بلوک را اضافه کن:
+      // T161-F: surface server coverage warning (silence forbidden)
+      if (resData.coverage && resData.coverage.complete === false) {
+        showToast(isRtl ? `هشدار: نقشه راه ناقص است (پوشش ${resData.coverage.coveredWeeks} از ${resData.coverage.expectedWeeks} هفته)` : `Warning: roadmap incomplete (${resData.coverage.coveredWeeks}/${resData.coverage.expectedWeeks} weeks)`);
+      }
+(تشخیص محل: همان هندلری که بعد از response.ok خط `const resData = await response.json();` دارد.)
+
+G5) دو جای‌گذاری در JSX — هر دو را جداگانه با بلوک before/after گزارش کن:
+  الف) دکمهٔ ویرایش روی کارت هدف: با grep محل دکمهٔ حذف را پیدا کن:
+      grep -n -e "setConfirmDeleteGoalId" -e "handleDeleteGoal" -e "Trash2" src/components/GoalsTab.tsx
+      دکمهٔ حذفِ کارت هدف در هدر کارت (لیست اهداف) را پیدا کن و بلافاصله قبل از آن دکمه، این را اضافه کن:
+                      <button
+                        onClick={() => setEditingGoal(goal)}
+                        className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50"
+                        title={isRtl ? 'ویرایش هدف' : 'Edit goal'}
+                      >
+                        <PenSquare size={14} />
+                      </button>
+      (اگر بیش از یک محل حذف یافت شد، پنجرهٔ هر دو را در گزارش بیاور و فقط محل هدر کارتِ لیست اهداف را ویرایش کن.)
+  ب) دکمهٔ «هدف دستی»: در ردیف بالای پنل اهداف — همان ردیفی که عنوان
+      «سیستم هوشمند مدیریت اهداف و نقشه راه» است و در سمت مقابلش باکس مدل (آیکون Brain) قرار دارد
+      (حوالی خطوط ۸۰۶ تا ۸۲۲) — بلافاصله بعد از بسته‌شدن باکس مدل، این را اضافه کن:
+                    <button type="button" onClick={handleAddManualGoal}
+                      className="px-3 py-1.5 rounded-xl text-xs font-bold border border-indigo-200 text-indigo-700 hover:bg-indigo-50">
+                      {isRtl ? '+ هدف دستی' : '+ Manual goal'}
+                    </button>
+
+G6) در انتهای فایل، ساختار پایانی چنین است: بعد از </AnimatePresence> دو </div> پشت‌سرهم می‌آید و
+سپس ); و }. مودال را دقیقاً بین اولین </div> و دومین </div> اضافه کن (داخل کانتینر ریشه؛ آخرین
+</div> باید همان آخرین </div> پیش از ); بماند):
+        </AnimatePresence>
+      </div>
+      <GoalEditorModal
+        goal={editingGoal}
+        open={editingGoal !== null}
+        categories={data.categories || []}
+        lang={isRtl ? 'fa' : 'en'}
+        onClose={() => setEditingGoal(null)}
+        onSave={handleSaveGoalEdits}
+      />
+    </div>
+  );
+}
+
+====================================================================
+فاز و — گیت‌های پایانی
+====================================================================
+Z1) npx tsc --noEmit; echo "TSC_EXIT=$?"
+    گیت GT-Z1: خط عین TSC_EXIT=0.
+
+Z2) npm run build
+    گیت GT-Z2: بیلد سبز؛ چند خط آخر خام.
+
+Z3) شمارش‌های پس-ویرایش:
+    grep -c "maxOutputTokens" server.ts            → گیت GT-Z3: اگر predict ویرایش شد دقیقاً 10؛ اگر PREDICT-SKIP دقیقاً 7
+    grep -c "max_tokens: 4096" server.ts           → گیت GT-Z4: دقیقاً 0
+    grep -c "coverageComplete" server.ts           → گیت GT-Z5: دقیقاً 5
+    grep -c "AI Roadmap Continuation" server.ts    → گیت GT-Z6: دقیقاً 1
+    grep -c "Math.min(options.maxOutputTokens" server.ts → گیت GT-Z7: دقیقاً 1
+    grep -c "GoalEditorModal" src/components/GoalsTab.tsx  → گیت GT-Z8: دقیقاً 2
+    grep -c "setEditingGoal" src/components/GoalsTab.tsx   → گیت GT-Z9: دقیقاً 3
+    grep -c "handleSaveGoalEdits" src/components/GoalsTab.tsx → گیت GT-Z10: دقیقاً 2
+    grep -c "handleAddManualGoal" src/components/GoalsTab.tsx → گیت GT-Z11: دقیقاً 2
+    grep -c "PenSquare" src/components/GoalsTab.tsx → گیت GT-Z12: دقیقاً 2
+    grep -c "linkTitle?: string" src/types.ts       → گیت GT-Z13: دقیقاً 1
+    grep -c "T161-F: full-field editor additions" src/types.ts → گیت GT-Z14: دقیقاً 1
+
+Z4) md5sum src/App.tsx src/components/ClassSlotModal.tsx src/lib/plannerSyncEngine.ts src/lib/firestoreSync.ts src/components/AnalyticsTab.tsx
+    گیت GT-Z15 (اثبات منجمد): هر پنج مقدار باید عین P1 باشد.
+
+Z5) md5sum server.ts src/types.ts src/components/GoalsTab.tsx src/components/GoalEditorModal.tsx
+    wc -l server.ts src/types.ts src/components/GoalsTab.tsx src/components/GoalEditorModal.tsx
+    (پین‌های جدید CB-5 — فقط گزارش.)
+
+====================================================================
+فرمت گزارش (فقط و فقط این بخش‌ها به همین ترتیب)
+====================================================================
+(۱) چهار خط اول: T161-F-R / T161-F-R / T161-F-R / NONCE=T161FR-5W7Q
+(۲) فاز الف: بلوک‌های P1 تا P5 + حکم هر گیت
+(۳) فاز ب: برای هر هانک S1-S10 دو بلوک S<n>-before و S<n>-after (اگر هانکی اجرا نشد: PREDICT-SKIP)
+(۴) فاز ج: بلوک T1-before / T1-after
+(۵) فاز د: بلوک H1 (خروجی wc -l فایل جدید + md5sum آن + sed -n '1,20p' فایل جدید)
+(۶) فاز هـ: برای هر G1-G6 بلوک‌های before/after (G5 هر دو جای‌گذاری را جدا نشان بده)
+(۷) فاز و: بلوک‌های Z1 تا Z5 + جدول تک‌خطی GT-Z1 تا GT-Z15 = PASS/FAIL
+(۸) فقط در صورت FAIL یا STOP: شماره گیت/هانک، دلیل، خروجی خام، کدام بخش‌ها اجرا نشدند
+(۹) هیچ چیز دیگر — نه توضیح، نه تحلیل، نه پیشنهاد.

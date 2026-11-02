@@ -1,10 +1,22 @@
+import "dotenv/config";
+import { setGlobalDispatcher, EnvHttpProxyAgent } from "undici";
+
+if (process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy) {
+  try {
+    setGlobalDispatcher(new EnvHttpProxyAgent());
+    console.log("[Server Proxy] undici EnvHttpProxyAgent configured successfully for outbound requests");
+  } catch (proxyErr) {
+    console.error("[Server Proxy] Failed to set global dispatcher:", proxyErr);
+  }
+}
+
 import express from "express";
 import path from "path";
 import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
-import "dotenv/config";
 import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
+import { detectProvider, ALLOWED_BASE_URL_HOSTS, PROVIDERS, ProviderId } from "./src/shared/providers.ts";
 import { adminAuth } from "./src/lib/firebase-admin.ts";
 import { 
   getOrCreateUser, 
@@ -521,25 +533,75 @@ app.post("/api/auth/delete-account", requireAuth, async (req: AuthRequest, res) 
 interface GeminiAccount {
   client: GoogleGenAI;
   label: string;
+  keyHash: string;
 }
 
-function discoverGeminiApiKeys(): GeminiAccount[] {
-  const accounts: GeminiAccount[] = [];
+function computeKeyHash(key: string): string {
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) {
+    hash = ((hash << 5) - hash) + key.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(16).padStart(8, '0').slice(0, 8);
+}
 
-  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== "") {
-    accounts.push({
-      client: new GoogleGenAI({
-        apiKey: process.env.GEMINI_API_KEY.trim(),
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          }
-        }
-      }),
-      label: "primary"
-    });
+function discoverGeminiApiKeys(userKeysHeader?: string | string[]): GeminiAccount[] {
+  const accounts: GeminiAccount[] = [];
+  const seenKeys = new Set<string>();
+
+  // 1. Process custom user keys passed from header first
+  if (userKeysHeader) {
+    const rawHeader = Array.isArray(userKeysHeader) ? userKeysHeader.join(',') : userKeysHeader;
+    const splitKeys = rawHeader
+      .split(/[,\r\n]+/)
+      .map(k => k.trim())
+      .filter(k => k.length > 0);
+
+    let userKeyIndex = 1;
+    for (const key of splitKeys) {
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        const keyHash = computeKeyHash(key);
+        console.log(`[Gemini Fallback] Discovered user key [user-key-${userKeyIndex}]: len=${key.length}, hash=${keyHash}`);
+        accounts.push({
+          client: new GoogleGenAI({
+            apiKey: key,
+            httpOptions: {
+              headers: {
+                'User-Agent': 'aistudio-build',
+              }
+            }
+          }),
+          label: `user-key-${userKeyIndex++}`,
+          keyHash
+        });
+      }
+    }
   }
 
+  // 2. Primary environment key
+  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== "") {
+    const primaryKey = process.env.GEMINI_API_KEY.trim();
+    if (!seenKeys.has(primaryKey)) {
+      seenKeys.add(primaryKey);
+      const keyHash = computeKeyHash(primaryKey);
+      console.log(`[Gemini Fallback] Discovered env key [primary]: len=${primaryKey.length}, hash=${keyHash}`);
+      accounts.push({
+        client: new GoogleGenAI({
+          apiKey: primaryKey,
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
+            }
+          }
+        }),
+        label: "primary",
+        keyHash
+      });
+    }
+  }
+
+  // 3. Extra nth_account_of_gais accounts
   const extraAccounts: { num: number; key: string }[] = [];
   for (const [envKey, envVal] of Object.entries(process.env)) {
     if (!envVal || envVal.trim() === "") continue;
@@ -553,17 +615,23 @@ function discoverGeminiApiKeys(): GeminiAccount[] {
   extraAccounts.sort((a, b) => a.num - b.num);
 
   for (const acc of extraAccounts) {
-    accounts.push({
-      client: new GoogleGenAI({
-        apiKey: acc.key,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
+    if (!seenKeys.has(acc.key)) {
+      seenKeys.add(acc.key);
+      const keyHash = computeKeyHash(acc.key);
+      console.log(`[Gemini Fallback] Discovered env key [account-${acc.num}]: len=${acc.key.length}, hash=${keyHash}`);
+      accounts.push({
+        client: new GoogleGenAI({
+          apiKey: acc.key,
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
+            }
           }
-        }
-      }),
-      label: `account-${acc.num}`
-    });
+        }),
+        label: `account-${acc.num}`,
+        keyHash
+      });
+    }
   }
 
   return accounts;
@@ -574,16 +642,377 @@ const unavailablePairs = new Set<string>();
 const GEMINI_FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-3.1-flash-lite"];
 const GOAL_ANALYSIS_MODELS = ["gemini-3.1-pro-preview", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-3.1-flash-lite"];
 
+interface ParsedCustomKey {
+  id: string;
+  key: string;
+  provider: string;
+  providerName?: string;
+  modelMode?: 'exact' | 'cascade';
+  model?: string;
+  baseUrl?: string;
+}
+
+function parseCustomApiKeys(req: express.Request): ParsedCustomKey[] {
+  const headerVal = req.headers['x-custom-api-keys'];
+  let rawList: any[] = [];
+  if (headerVal && typeof headerVal === 'string') {
+    try {
+      const parsed = JSON.parse(headerVal);
+      if (Array.isArray(parsed)) rawList.push(...parsed);
+    } catch (_) {}
+  }
+  if (Array.isArray((req.body as any)?.customKeys)) {
+    rawList.push(...(req.body as any).customKeys);
+  }
+  if ((req.body as any)?.apiKey && (req.body as any)?.provider) {
+    rawList.push({
+      id: 'body_key',
+      key: (req.body as any).apiKey,
+      provider: (req.body as any).provider,
+      model: (req.body as any).model,
+      modelMode: (req.body as any).model ? 'exact' : 'cascade',
+      baseUrl: (req.body as any).baseUrl
+    });
+  }
+  if (rawList.length === 0) return [];
+
+  try {
+    const validProviders = new Set(PROVIDERS.map(p => p.id));
+    const result: ParsedCustomKey[] = [];
+    for (const item of rawList) {
+      if (!item || typeof item !== 'object') continue;
+      const key = typeof item.key === 'string' ? item.key.trim() : '';
+      if (key.length <= 5) continue;
+      const provider = typeof item.provider === 'string' ? item.provider.trim() : '';
+      if (!validProviders.has(provider as ProviderId)) continue;
+
+      let baseUrl = typeof item.baseUrl === 'string' ? item.baseUrl.trim() : undefined;
+      if (baseUrl) {
+        try {
+          if (baseUrl.includes('@')) continue;
+          const u = new URL(baseUrl);
+          if (u.protocol !== 'https:' || !ALLOWED_BASE_URL_HOSTS.includes(u.hostname) || u.username || u.password) {
+            continue;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      const modelMode: 'exact' | 'cascade' = item.modelMode === 'exact' ? 'exact' : 'cascade';
+      const rawModel = typeof item.model === 'string' ? item.model.trim() : '';
+      if (modelMode === 'exact' && !rawModel) {
+        // Skip keys in exact mode that do not specify a model
+        continue;
+      }
+
+      result.push({
+        id: typeof item.id === 'string' ? item.id : `key_${Date.now()}`,
+        key,
+        provider,
+        providerName: typeof item.providerName === 'string' ? item.providerName : undefined,
+        modelMode,
+        model: rawModel || undefined,
+        baseUrl
+      });
+      if (result.length >= 10) break;
+    }
+    return result;
+  } catch {
+    return [];
+  }
+}
+
+interface CustomKeyExecutionResult {
+  text: string;
+  model: string;
+  tokenCount: number;
+}
+
+async function executeCustomKeyCall(
+  customKey: ParsedCustomKey,
+  options: GeminiFallbackOptions,
+  deadlineMs: number
+): Promise<CustomKeyExecutionResult | null> {
+  const providerDef = PROVIDERS.find(p => p.id === customKey.provider);
+  const isExactMode = customKey.modelMode === 'exact';
+  const modelsToTry: string[] = isExactMode && customKey.model
+    ? [customKey.model]
+    : (providerDef?.candidateModels && providerDef.candidateModels.length > 0
+        ? providerDef.candidateModels
+        : (customKey.model ? [customKey.model] : options.preferredModels));
+
+  const isUserExplicitModel = isExactMode && !!customKey.model;
+
+  for (const model of modelsToTry) {
+    if (Date.now() >= deadlineMs) break;
+
+    const remainingChainMs = Math.max(1000, deadlineMs - Date.now());
+    const requestTimeoutMs = Math.min(60000, remainingChainMs);
+
+    let attempts = 0;
+    const maxAttempts = 2;
+
+    while (attempts < maxAttempts) {
+      attempts++;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+
+      try {
+        let text = '';
+        let tokenCount: number | undefined;
+
+        if (customKey.provider === 'gemini') {
+          const client = new GoogleGenAI({ apiKey: customKey.key });
+          const config = options.getConfigForModel(model);
+          const response = await client.models.generateContent({
+            model,
+            contents: options.prompt,
+            config
+          });
+          text = response.text || '';
+          tokenCount = response.usageMetadata?.totalTokenCount;
+        } else if (customKey.provider === 'anthropic') {
+          const resp = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'x-api-key': customKey.key,
+              'anthropic-version': '2023-06-01',
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              model,
+              max_tokens: Math.min(options.maxOutputTokens ?? 4096, 8192),
+              messages: [{ role: 'user', content: options.prompt }]
+            }),
+            signal: controller.signal
+          });
+
+          if (!resp.ok) {
+            const errBody = await resp.text().catch(() => '');
+            const err = new Error(errBody || `Anthropic HTTP ${resp.status}`);
+            (err as any).status = resp.status;
+            throw err;
+          }
+
+          const data: any = await resp.json();
+          text = data.content?.[0]?.text || '';
+          if (data.usage) {
+            tokenCount = (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0);
+          }
+        } else {
+          let endpoint = customKey.baseUrl || providerDef?.defaultBaseUrl || 'https://api.openai.com/v1';
+          if (!endpoint.endsWith('/chat/completions')) {
+            endpoint = endpoint.replace(/\/+$/, '') + '/chat/completions';
+          }
+
+          let requestedLimit = options.maxOutputTokens ?? 32768;
+          if (model.includes('gpt-oss') || customKey.provider === 'gemini') {
+            requestedLimit = Math.min(requestedLimit, 65536);
+          } else {
+            requestedLimit = Math.min(requestedLimit, 32768);
+          }
+
+          let currentTokens = requestedLimit;
+          let useCompletionTokens = true;
+          let jsonModeActive = !!providerDef?.jsonMode;
+
+          const buildReqBody = (tokens: number, useComp: boolean, useJson: boolean) => {
+            const body: any = {
+              model,
+              messages: [{ role: 'user', content: options.prompt }]
+            };
+            if (useComp) {
+              body.max_completion_tokens = tokens;
+            } else {
+              body.max_tokens = tokens;
+            }
+            if (useJson) {
+              body.response_format = { type: 'json_object' };
+            }
+            return body;
+          };
+
+          let reqBody = buildReqBody(currentTokens, useCompletionTokens, jsonModeActive);
+
+          let resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${customKey.key}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(reqBody),
+            signal: controller.signal
+          });
+
+          // Handle 400 retries for response_format, max_completion_tokens, and token size
+          while (resp.status === 400) {
+            const errTxt = await resp.text().catch(() => '');
+            const lowerErr = errTxt.toLowerCase();
+
+            // 1. Retry if response_format unsupported
+            if (jsonModeActive && lowerErr.includes('response_format')) {
+              jsonModeActive = false;
+              reqBody = buildReqBody(currentTokens, useCompletionTokens, false);
+              resp = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${customKey.key}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(reqBody),
+                signal: controller.signal
+              });
+              continue;
+            }
+
+            // 2. Retry if max_completion_tokens unsupported -> fallback to max_tokens
+            if (useCompletionTokens && (lowerErr.includes('max_completion_tokens') || lowerErr.includes('unrecognized') || lowerErr.includes('unknown parameter') || lowerErr.includes('extra fields'))) {
+              useCompletionTokens = false;
+              reqBody = buildReqBody(currentTokens, false, jsonModeActive);
+              resp = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${customKey.key}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(reqBody),
+                signal: controller.signal
+              });
+              continue;
+            }
+
+            // 3. Retry if token limit exceeded -> halve tokens and retry
+            if ((lowerErr.includes('max_tokens') || lowerErr.includes('maximum') || lowerErr.includes('context_length') || lowerErr.includes('token')) && currentTokens > 2048) {
+              currentTokens = Math.floor(currentTokens / 2);
+              reqBody = buildReqBody(currentTokens, useCompletionTokens, jsonModeActive);
+              resp = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${customKey.key}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(reqBody),
+                signal: controller.signal
+              });
+              continue;
+            }
+
+            const err = new Error(errTxt || 'HTTP 400');
+            (err as any).status = 400;
+            throw err;
+          }
+
+          if (!resp.ok) {
+            const errBody = await resp.text().catch(() => '');
+            const err = new Error(errBody || `OpenAI-compatible HTTP ${resp.status}`);
+            (err as any).status = resp.status;
+            throw err;
+          }
+
+          const data: any = await resp.json();
+          text = data.choices?.[0]?.message?.content || '';
+          tokenCount = data.usage?.total_tokens;
+        }
+
+        clearTimeout(timer);
+
+        if (!text || !text.trim()) {
+          break;
+        }
+
+        if (typeof tokenCount !== 'number') {
+          tokenCount = Math.round((options.prompt.length + text.length) / 4);
+        }
+
+        return { text, model, tokenCount };
+      } catch (err: any) {
+        clearTimeout(timer);
+
+        const status = err?.status || err?.response?.status;
+        const msg = (err?.message || String(err)).toLowerCase();
+
+        if (
+          status === 401 ||
+          status === 403 ||
+          msg.includes('api_key_invalid') ||
+          msg.includes('api key not valid') ||
+          msg.includes('unauthorized') ||
+          msg.includes('unauthenticated') ||
+          msg.includes('permission_denied') ||
+          msg.includes('invalid x-api-key')
+        ) {
+          return null;
+        }
+
+        if (isUserExplicitModel) {
+          return null;
+        }
+
+        if (
+          status === 404 ||
+          (status === 400 && (
+            msg.includes('model_not_found') ||
+            msg.includes('does not exist') ||
+            msg.includes('not supported') ||
+            msg.includes('unknown model') ||
+            msg.includes('not found') ||
+            msg.includes('deprecated') ||
+            msg.includes('retired')
+          )) ||
+          msg.includes('no longer available') ||
+          msg.includes('not found') ||
+          msg.includes('does not exist') ||
+          msg.includes('model_not_found') ||
+          msg.includes('deprecated') ||
+          msg.includes('retired')
+        ) {
+          break;
+        }
+
+        if (
+          status === 429 ||
+          msg.includes('resource_exhausted') ||
+          msg.includes('quota') ||
+          msg.includes('rate limit')
+        ) {
+          let delaySec = 0;
+          const match = msg.match(/(\d+(\.\d+)?)s/);
+          if (match) delaySec = parseFloat(match[1]);
+
+          if (attempts === 1 && delaySec > 0 && delaySec <= 10) {
+            await sleep(Math.ceil(delaySec * 1000));
+            continue;
+          }
+          break;
+        }
+
+        break;
+      }
+    }
+  }
+
+  return null;
+}
+
 interface GeminiFallbackOptions {
   prompt: string;
   preferredModels: string[];
   getConfigForModel: (modelName: string) => any;
+  userKeysHeader?: string | string[];
+  customKeys?: ParsedCustomKey[];
+  maxOutputTokens?: number;
 }
 
 interface GeminiFallbackResult {
   text: string;
   accountLabel: string;
   modelName: string;
+  usedCustomKeyId?: string;
+  usedProvider?: string;
+  usedModel?: string;
+  tokenCount?: number;
+  source?: "custom" | "server";
 }
 
 export class GeminiFallbackError extends Error {
@@ -605,11 +1034,30 @@ export class GeminiFallbackError extends Error {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function callGeminiWithFallback(options: GeminiFallbackOptions): Promise<GeminiFallbackResult> {
-  const accounts = discoverGeminiApiKeys();
+  if (options.customKeys && options.customKeys.length > 0) {
+    const chainDeadline = Date.now() + 120000;
+    for (const customKey of options.customKeys) {
+      if (Date.now() >= chainDeadline) break;
+      const customRes = await executeCustomKeyCall(customKey, options, chainDeadline);
+      if (customRes && customRes.text) {
+        return {
+          text: customRes.text,
+          accountLabel: customKey.providerName || customKey.provider,
+          modelName: customRes.model,
+          usedCustomKeyId: customKey.id,
+          usedProvider: customKey.provider,
+          usedModel: customRes.model,
+          tokenCount: customRes.tokenCount,
+          source: "custom"
+        };
+      }
+    }
+  }
+  const accounts = discoverGeminiApiKeys(options.userKeysHeader);
   if (accounts.length === 0) {
     throw new GeminiFallbackError(
       "unknown",
-      "کلید API هوش مصنوعی در سرور یافت نشد. لطفاً در تنظیمات آن را وارد کنید.",
+      "هیچ کلید Gemini یافت نشد. از تنظیمات > کلیدهای Gemini یک کلید وارد کنید یا GEMINI_API_KEY را در فایل .env تنظیم کنید.",
       "No Gemini API keys found in environment."
     );
   }
@@ -623,9 +1071,9 @@ async function callGeminiWithFallback(options: GeminiFallbackOptions): Promise<G
     for (const modelName of options.preferredModels) {
       if (skipAccount) break;
 
-      const cacheKey = `${account.label}:${modelName}`;
+      const cacheKey = `${account.keyHash}:${modelName}`;
       if (unavailablePairs.has(cacheKey)) {
-        console.log(`[Gemini Fallback] Skipping ${cacheKey} (cached as unavailable)`);
+        console.log(`[Gemini Fallback] Skipping ${account.label}:${modelName} (cached as unavailable)`);
         continue;
       }
 
@@ -645,8 +1093,14 @@ async function callGeminiWithFallback(options: GeminiFallbackOptions): Promise<G
           });
 
           const text = response.text || "";
-          console.log(`[Gemini Fallback] Success on ${account.label} with model ${modelName}`);
-          return { text, accountLabel: account.label, modelName };
+          return {
+            text,
+            accountLabel: account.label,
+            modelName,
+            source: "server",
+            usedModel: modelName,
+            tokenCount: response.usageMetadata?.totalTokenCount || Math.round((options.prompt.length + text.length) / 4)
+          };
 
         } catch (error: any) {
           const status = error?.status || error?.response?.status;
@@ -718,8 +1172,273 @@ async function callGeminiWithFallback(options: GeminiFallbackOptions): Promise<G
   );
 }
 
+function sanitizeErrorMessage(msg: string, keyToScrub?: string): string {
+  if (!msg || typeof msg !== 'string') return 'خطای نامشخص در اعتبارسنجی کلید';
+  let clean = msg.replace(/<[^>]*>/g, ' ');
+  if (keyToScrub && keyToScrub.length >= 4) {
+    clean = clean.split(keyToScrub).join('***');
+  }
+  clean = clean.replace(/\s+/g, ' ').trim();
+  return clean.slice(0, 300);
+}
+
+// 4.9. Validate Personal API Key (BYOK)
+app.post("/api/gemini/validate-key", requireAuth, async (req: AuthRequest, res) => {
+  const { apiKey, provider, baseUrl, model, modelMode } = req.body || {};
+  if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length <= 5) {
+    return res.status(400).json({ valid: false, error: 'کلید نامعتبر یا بسیار کوتاه است.' });
+  }
+
+  const trimmedKey = apiKey.trim();
+  const prov = (typeof provider === 'string' ? provider.trim() : detectProvider(trimmedKey)) as ProviderId;
+  const providerDef = PROVIDERS.find(p => p.id === prov);
+
+  if (baseUrl) {
+    try {
+      if (typeof baseUrl !== 'string' || baseUrl.includes('@')) {
+        return res.status(400).json({ valid: false, error: 'آدرس Base URL نامعتبر است.' });
+      }
+      const u = new URL(baseUrl);
+      if (u.protocol !== 'https:' || !ALLOWED_BASE_URL_HOSTS.includes(u.hostname) || u.username || u.password) {
+        return res.status(400).json({ valid: false, error: 'هاست Base URL مجاز نیست.' });
+      }
+    } catch {
+      return res.status(400).json({ valid: false, error: 'آدرس Base URL نامعتبر است.' });
+    }
+  }
+
+  const isExact = modelMode === 'exact';
+  const modelsToValidate: string[] = isExact && model
+    ? [model]
+    : (providerDef?.candidateModels && providerDef.candidateModels.length > 0
+        ? providerDef.candidateModels
+        : (model ? [model] : ['gpt-4o-mini']));
+
+  let lastError = '';
+  let isAuthFailure = false;
+
+  for (const targetModel of modelsToValidate) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+
+    try {
+      if (prov === 'gemini') {
+        const client = new GoogleGenAI({ apiKey: trimmedKey });
+        await client.models.generateContent({
+          model: targetModel,
+          contents: 'ping',
+          config: { maxOutputTokens: 16 }
+        });
+        clearTimeout(timer);
+        return res.json({ valid: true, model: targetModel, workingModel: targetModel });
+      } else if (prov === 'anthropic') {
+        const resp = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'x-api-key': trimmedKey,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: targetModel,
+            max_tokens: 16,
+            messages: [{ role: 'user', content: 'ping' }]
+          }),
+          signal: controller.signal
+        });
+        clearTimeout(timer);
+        if (resp.ok) {
+          return res.json({ valid: true, model: targetModel, workingModel: targetModel });
+        }
+        const errText = await resp.text().catch(() => '');
+        const status = resp.status;
+        lastError = sanitizeErrorMessage(errText || `خطای سرویس (${status})`, trimmedKey);
+        if (status === 401 || status === 403) {
+          isAuthFailure = true;
+          break;
+        }
+      } else {
+        let endpoint = baseUrl || providerDef?.defaultBaseUrl || 'https://api.openai.com/v1';
+        if (!endpoint.endsWith('/chat/completions')) {
+          endpoint = endpoint.replace(/\/+$/, '') + '/chat/completions';
+        }
+
+        let reqBody: any = {
+          model: targetModel,
+          messages: [{ role: 'user', content: 'ping' }],
+          max_tokens: 16
+        };
+
+        let resp = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${trimmedKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(reqBody),
+          signal: controller.signal
+        });
+
+        if (resp.status === 400) {
+          const errBody = await resp.text().catch(() => '');
+          if (errBody.toLowerCase().includes('max_completion_tokens')) {
+            delete reqBody.max_tokens;
+            reqBody.max_completion_tokens = 16;
+            resp = await fetch(endpoint, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${trimmedKey}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify(reqBody),
+              signal: controller.signal
+            });
+          }
+        }
+
+        clearTimeout(timer);
+        if (resp.ok) {
+          return res.json({ valid: true, model: targetModel, workingModel: targetModel });
+        }
+
+        const errText = await resp.text().catch(() => '');
+        const status = resp.status;
+        lastError = sanitizeErrorMessage(errText || `خطای سرویس (${status})`, trimmedKey);
+        if (status === 401 || status === 403) {
+          isAuthFailure = true;
+          break;
+        }
+      }
+    } catch (err: any) {
+      clearTimeout(timer);
+      const msg = err?.message || String(err);
+      const status = err?.status || err?.response?.status;
+      lastError = sanitizeErrorMessage(msg, trimmedKey);
+      if (status === 401 || status === 403 || msg.toLowerCase().includes('api_key_invalid') || msg.toLowerCase().includes('unauthorized')) {
+        isAuthFailure = true;
+        break;
+      }
+    }
+  }
+
+  if (isAuthFailure) {
+    return res.status(401).json({ valid: false, error: lastError || 'کلید وارد شده نامعتبر یا غیرمجاز است.' });
+  }
+
+  if (isExact) {
+    const isModelNotFound = lastError.toLowerCase().includes('model_not_found') || 
+                            lastError.toLowerCase().includes('does not exist') || 
+                            lastError.toLowerCase().includes('404');
+    const userMsg = isModelNotFound 
+      ? `مدل انتخابی '${model}' در این سرویس یافت نشد یا بازنشسته شده است. از دکمه «دریافت مدل‌های فعال» استفاده کنید.`
+      : lastError;
+    return res.status(400).json({ valid: false, error: userMsg });
+  }
+
+  return res.status(400).json({ 
+    valid: false, 
+    error: lastError || 'هیچ‌یک از مدل‌های کاندید برای این ارائه‌دهنده در دسترس نیستند. لطفاً یک مدل دقیق مشخص کنید.' 
+  });
+});
+
+// 4.10. Fetch Live Provider Models (BYOK)
+app.post("/api/gemini/list-models", requireAuth, async (req: AuthRequest, res) => {
+  const { provider, apiKey, baseUrl } = req.body || {};
+  if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length <= 5) {
+    return res.status(400).json({ success: false, models: [], error: 'کلید نامعتبر یا بسیار کوتاه است.' });
+  }
+
+  const trimmedKey = apiKey.trim();
+  const prov = (typeof provider === 'string' ? provider.trim() : detectProvider(trimmedKey)) as ProviderId;
+  const providerDef = PROVIDERS.find(p => p.id === prov);
+
+  if (baseUrl) {
+    try {
+      if (typeof baseUrl !== 'string' || baseUrl.includes('@')) {
+        return res.status(400).json({ success: false, models: [], error: 'آدرس Base URL نامعتبر است.' });
+      }
+      const u = new URL(baseUrl);
+      if (u.protocol !== 'https:' || !ALLOWED_BASE_URL_HOSTS.includes(u.hostname) || u.username || u.password) {
+        return res.status(400).json({ success: false, models: [], error: 'هاست Base URL مجاز نیست.' });
+      }
+    } catch {
+      return res.status(400).json({ success: false, models: [], error: 'آدرس Base URL نامعتبر است.' });
+    }
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    let models: string[] = [];
+
+    if (prov === 'gemini') {
+      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(trimmedKey)}`, {
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        return res.status(resp.status).json({ success: false, models: [], error: sanitizeErrorMessage(errText || `خطا در فراخوانی جمینای (${resp.status})`, trimmedKey) });
+      }
+      const data: any = await resp.json().catch(() => ({}));
+      if (Array.isArray(data.models)) {
+        models = data.models
+          .filter((m: any) => Array.isArray(m.supportedGenerationMethods) ? m.supportedGenerationMethods.includes('generateContent') : true)
+          .map((m: any) => typeof m.name === 'string' ? m.name.replace(/^models\//, '') : '')
+          .filter(Boolean);
+      }
+    } else if (prov === 'anthropic') {
+      const resp = await fetch('https://api.anthropic.com/v1/models', {
+        headers: {
+          'x-api-key': trimmedKey,
+          'anthropic-version': '2023-06-01'
+        },
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        return res.status(resp.status).json({ success: false, models: [], error: sanitizeErrorMessage(errText || `خطا در فراخوانی آنتروپیک (${resp.status})`, trimmedKey) });
+      }
+      const data: any = await resp.json().catch(() => ({}));
+      if (Array.isArray(data.data)) {
+        models = data.data.map((m: any) => m.id).filter(Boolean);
+      }
+    } else {
+      let endpoint = baseUrl || providerDef?.defaultBaseUrl || 'https://api.openai.com/v1';
+      endpoint = endpoint.replace(/\/chat\/completions\/?$/, '').replace(/\/+$/, '') + '/models';
+
+      const resp = await fetch(endpoint, {
+        headers: {
+          'Authorization': `Bearer ${trimmedKey}`
+        },
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        return res.status(resp.status).json({ success: false, models: [], error: sanitizeErrorMessage(errText || `خطا در فراخوانی مدل‌ها (${resp.status})`, trimmedKey) });
+      }
+      const data: any = await resp.json().catch(() => ({}));
+      if (Array.isArray(data.data)) {
+        models = data.data.map((m: any) => m.id).filter(Boolean);
+      } else if (Array.isArray(data.models)) {
+        models = data.models.map((m: any) => typeof m === 'string' ? m : m.id || m.name).filter(Boolean);
+      }
+    }
+
+    const uniqueModels = Array.from(new Set(models)).sort();
+    return res.json({ success: true, models: uniqueModels });
+  } catch (err: any) {
+    clearTimeout(timer);
+    const msg = err?.message || String(err);
+    return res.status(500).json({ success: false, models: [], error: sanitizeErrorMessage(msg, trimmedKey) });
+  }
+});
+
 // 5. Intelligent AI Weekly Analytics & Productivity Analysis (Gemini)
-app.post("/api/gemini/analyze-planner", async (req, res) => {
+app.post("/api/gemini/analyze-planner", requireAuth, async (req: AuthRequest, res) => {
   const { plannerData } = req.body;
 
   if (!plannerData) {
@@ -805,11 +1524,25 @@ Return ONLY the raw JSON array. Do NOT wrap it in markdown code blocks like \`\`
       },
     };
 
-    const { text } = await callGeminiWithFallback({
+    const userKeysHeader = req.headers['x-gemini-keys'] as string | undefined;
+    const customKeys = parseCustomApiKeys(req);
+
+    const result = await callGeminiWithFallback({
       prompt,
       preferredModels: GEMINI_FALLBACK_MODELS,
       getConfigForModel: () => plannerConfig,
+      userKeysHeader,
+      customKeys,
     });
+
+    const { text } = result;
+
+    res.setHeader("x-used-custom-key-id", result.usedCustomKeyId || "");
+    res.setHeader("x-used-provider", result.usedProvider || "");
+    res.setHeader("x-used-model", result.usedModel || result.modelName || "");
+    res.setHeader("x-fallback-used", result.source || "server");
+    res.setHeader("x-used-token-count", String(result.tokenCount ?? 0));
+    res.setHeader("Access-Control-Expose-Headers", "x-used-custom-key-id, x-used-provider, x-used-model, x-fallback-used, x-used-token-count");
 
     if (!text) {
       throw new Error("پاسخی از مدل هوش مصنوعی دریافت نشد.");
@@ -844,8 +1577,117 @@ Return ONLY the raw JSON array. Do NOT wrap it in markdown code blocks like \`\`
   }
 });
 
-// 5.1. Target-Goal Management & Feasibility Prediction API (Gemini)
-app.post("/api/gemini/analyze-goal", async (req, res) => {
+function extractRobustJson(rawText: string): any {
+  if (!rawText || !rawText.trim()) {
+    throw new Error("پاسخ هوش مصنوعی خالی است");
+  }
+  let str = rawText.trim();
+  // Strip reasoning or think tags
+  str = str.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  // Strip markdown code fences if present
+  const codeBlockMatch = str.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (codeBlockMatch && codeBlockMatch[1]) {
+    str = codeBlockMatch[1].trim();
+  }
+  try {
+    return JSON.parse(str);
+  } catch {
+    const firstBrace = str.indexOf('{');
+    const lastBrace = str.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      const candidate = str.substring(firstBrace, lastBrace + 1);
+      try {
+        return JSON.parse(candidate);
+      } catch {
+        const fixed = candidate.replace(/,\s*([}\]])/g, '$1');
+        return JSON.parse(fixed);
+      }
+    }
+    throw new Error("امکان استخراج JSON از پاسخ هوش مصنوعی وجود ندارد: " + str.slice(0, 150));
+  }
+}
+
+function sanitizePhases(rawPhases: any): any[] {
+  if (!Array.isArray(rawPhases)) {
+    return [];
+  }
+  const cleanPhases: any[] = [];
+  for (let i = 0; i < rawPhases.length; i++) {
+    const ph = rawPhases[i];
+    if (!ph || typeof ph !== "object") continue;
+
+    const phaseNumber = Number(ph.phase_number) || (cleanPhases.length + 1);
+    const title = typeof ph.title === "string" && ph.title.trim() ? ph.title.trim() : `فاز ${phaseNumber}`;
+    const description = typeof ph.description === "string" ? ph.description : "";
+    const estimated_weeks = typeof ph.estimated_weeks === "string" ? ph.estimated_weeks : "";
+
+    // Guarantee weeks is always a valid array
+    let rawWeeks: any[] = [];
+    if (Array.isArray(ph.weeks)) {
+      rawWeeks = ph.weeks;
+    } else if (ph.weeks && typeof ph.weeks === "object" && Array.isArray((ph.weeks as any).weeks)) {
+      rawWeeks = (ph.weeks as any).weeks;
+    } else {
+      rawWeeks = [];
+    }
+
+    const cleanWeeks: any[] = [];
+    for (let wIdx = 0; wIdx < rawWeeks.length; wIdx++) {
+      const w = rawWeeks[wIdx];
+      if (!w || typeof w !== "object") continue;
+      const weekNumber = Number(w.week_number) || (wIdx + 1);
+      const weekTitle = typeof w.week_title === "string" && w.week_title.trim() ? w.week_title.trim() : `هفته ${weekNumber}`;
+      const weeklyGoal = typeof w.weekly_goal === "string" ? w.weekly_goal : "";
+      const practiceExercise = typeof w.practice_exercise === "string" ? w.practice_exercise : "";
+
+      const rawTasks = Array.isArray(w.tasks) ? w.tasks : [];
+      const cleanTasks = rawTasks
+        .filter((t: any) => t && typeof t === "object")
+        .map((t: any) => ({
+          title: typeof t.title === "string" && t.title.trim() ? t.title.trim() : "تسک بدون عنوان",
+          description: typeof t.description === "string" ? t.description : "",
+          type: (t.type === "core" || t.type === "secondary" || t.type === "habit") ? t.type : "core",
+          suggested_weekday: typeof t.suggested_weekday === "string" ? t.suggested_weekday : "saturday",
+          deadline_note: typeof t.deadline_note === "string" ? t.deadline_note : undefined,
+        }));
+
+      cleanWeeks.push({
+        week_number: weekNumber,
+        week_title: weekTitle,
+        weekly_goal: weeklyGoal,
+        practice_exercise: practiceExercise,
+        tasks: cleanTasks,
+      });
+    }
+
+    const phaseTasks = (Array.isArray(ph.tasks) ? ph.tasks : [])
+      .filter((t: any) => t && typeof t === "object")
+      .map((t: any) => ({
+        title: typeof t.title === "string" && t.title.trim() ? t.title.trim() : "تسک فاز",
+        description: typeof t.description === "string" ? t.description : "",
+        type: (t.type === "core" || t.type === "secondary" || t.type === "habit") ? t.type : "core",
+        suggested_weekday: typeof t.suggested_weekday === "string" ? t.suggested_weekday : "saturday",
+        deadline_note: typeof t.deadline_note === "string" ? t.deadline_note : undefined,
+      }));
+
+    cleanPhases.push({
+      phase_number: phaseNumber,
+      title,
+      description,
+      estimated_weeks,
+      weeks: cleanWeeks,
+      tasks: phaseTasks,
+    });
+  }
+  return cleanPhases;
+}
+
+// 5.1. Target-Goal Management & Feasibility Prediction API (Gemini & Multi-Provider)
+app.get("/api/gemini/analyze-goal", (_req, res) => {
+  res.json({ error: "GET not supported" });
+});
+
+app.post("/api/gemini/analyze-goal", async (req: express.Request, res: express.Response) => {
   const { action, title, totalWeeks, averageTcr, universityHours, currentWeekIndex, milestones, completedWeeksHistory } = req.body;
 
   if (!title) {
@@ -912,11 +1754,25 @@ Return ONLY valid JSON. Do not wrap in markdown code blocks.`;
         return baseConfig;
       };
 
-      const { text } = await callGeminiWithFallback({
+      const userKeysHeader = req.headers['x-gemini-keys'] as string | undefined;
+      const customKeys = parseCustomApiKeys(req);
+
+      const result = await callGeminiWithFallback({
         prompt,
         preferredModels: GOAL_ANALYSIS_MODELS,
         getConfigForModel: getConfigForNextWeek,
+        userKeysHeader,
+        customKeys,
       });
+
+      const { text } = result;
+
+      res.setHeader("x-used-custom-key-id", result.usedCustomKeyId || "");
+      res.setHeader("x-used-provider", result.usedProvider || "");
+      res.setHeader("x-used-model", result.usedModel || result.modelName || "");
+      res.setHeader("x-fallback-used", result.source || "server");
+      res.setHeader("x-used-token-count", String(result.tokenCount ?? 0));
+      res.setHeader("Access-Control-Expose-Headers", "x-used-custom-key-id, x-used-provider, x-used-model, x-fallback-used, x-used-token-count");
 
       const textVal = text || "{}";
       const parsed = JSON.parse(textVal.trim());
@@ -943,6 +1799,7 @@ Return ONLY valid JSON. Do not wrap in markdown code blocks.`;
 
 ۳. تفکیک دقیق و جداگانه تک‌تک هفته‌ها (Week-by-Week Granular Breakdown):
    - شما باید نقشه راه را برای تمام ${totalWeeks} هفته به صورت **کاملاً جداگانه و تک‌تک هفته‌ها** (Week 1, Week 2, Week 3, ..., Week ${totalWeeks}) خرد و تفکیک کنید.
+تمام هفته‌ها از ۱ تا ${totalWeeks} را کامل تولید کن؛ بدون placeholder، بدون خلاصه‌سازی، بدون تجمیع هفته‌ها؛ کامل‌ترین و باجزئیات‌ترین پاسخ ممکن را بده.
    - به هیچ وجه نباید چند هفته را تجمیع یا کلی‌گویی کنید (مثلا تجمیع هفته ۱ تا ۳ ممنوع است!). باید هر هفته به عنوان یک واحد مستقل دارای عنوان هفته (week_title)، هدف هفته (weekly_goal)، تمرین عملی مشخص این هفته (practice_exercise) و حداقل ۳ تا ۵ تسک عملیاتی، جزئی و کامل (tasks) باشد.
    - برای هر تسک: title شفاف و دقیق، description کامل با جزئیات اجرایی، type ('core' یا 'secondary' یا 'habit')، suggested_weekday و deadline_note قرار دهید.
 
@@ -997,6 +1854,7 @@ Return ONLY valid JSON. Do not wrap in markdown code blocks.`;
 
       const getConfigForGoalAnalysis = (modelName: string) => {
         const baseConfig: any = {
+          maxOutputTokens: 32768,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -1095,15 +1953,173 @@ Return ONLY valid JSON. Do not wrap in markdown code blocks.`;
         return baseConfig;
       };
 
-      const { text } = await callGeminiWithFallback({
+      const userKeysHeader = req.headers['x-gemini-keys'] as string | undefined;
+      const customKeys = parseCustomApiKeys(req);
+
+      const result = await callGeminiWithFallback({
         prompt,
         preferredModels: GOAL_ANALYSIS_MODELS,
         getConfigForModel: getConfigForGoalAnalysis,
+        maxOutputTokens: 32768,
+        userKeysHeader,
+        customKeys,
       });
 
+      const { text } = result;
+
+      res.setHeader("x-used-custom-key-id", result.usedCustomKeyId || "");
+      res.setHeader("x-used-provider", result.usedProvider || "");
+      res.setHeader("x-used-model", result.usedModel || result.modelName || "");
+      res.setHeader("x-fallback-used", result.source || "server");
+      res.setHeader("x-used-token-count", String(result.tokenCount ?? 0));
+      res.setHeader("Access-Control-Expose-Headers", "x-used-custom-key-id, x-used-provider, x-used-model, x-fallback-used, x-used-token-count");
+
       const textVal = text || "{}";
-      const parsed = JSON.parse(textVal.trim());
-      return res.json({ success: true, ...parsed });
+      const parsed = extractRobustJson(textVal);
+
+      // Task 1: Sanitize initial phases immediately
+      parsed.phases = sanitizePhases(parsed.phases);
+
+      // Task 2: Target coverage is user requested totalWeeks (or ai_estimated_weeks if totalWeeks not given)
+      const requestedTotalWeeks = Math.max(1, Number(totalWeeks) || Number(parsed.ai_estimated_weeks) || 1);
+      const targetWeeks = requestedTotalWeeks;
+
+      const getCoveredWeeksSet = (phasesList: any[]): Set<number> => {
+        const set = new Set<number>();
+        for (const ph of phasesList) {
+          if (Array.isArray(ph.weeks)) {
+            for (const w of ph.weeks) {
+              const num = Number(w.week_number);
+              if (num >= 1 && num <= targetWeeks) {
+                set.add(num);
+              }
+            }
+          }
+        }
+        return set;
+      };
+
+      const getMissingWeeks = (phasesList: any[]): number[] => {
+        const covered = getCoveredWeeksSet(phasesList);
+        const missing: number[] = [];
+        for (let w = 1; w <= targetWeeks; w++) {
+          if (!covered.has(w)) {
+            missing.push(w);
+          }
+        }
+        return missing;
+      };
+
+      let missingWeeks = getMissingWeeks(parsed.phases);
+      let continuationRound = 0;
+      const MAX_CONTINUATION_ROUNDS = 4;
+
+      while (missingWeeks.length > 0 && continuationRound < MAX_CONTINUATION_ROUNDS) {
+        continuationRound++;
+        const chunkWeeks = missingWeeks.slice(0, 6);
+        console.log(`[analyze-goal] Continuation round ${continuationRound}: requesting missing weeks [${chunkWeeks.join(", ")}] of ${targetWeeks}`);
+
+        try {
+          const contPrompt = `ادامهٔ نقشه راه برای هدف "${title}".
+هفته‌های باقی‌مانده و مورد نیاز این بخش: [${chunkWeeks.join(", ")}].
+دقیقاً برای تک‌تک این هفته‌ها (${chunkWeeks.join(", ")}) محتوای کامل شامل عنوان هفته (week_title)، هدف هفته (weekly_goal)، تمرین عملی مشخص (practice_exercise) و حداقل ۳ تسک عملیاتی (tasks با title و description و type) تولید کن.
+پاسخ باید دقیقاً یک شیء JSON با ساختار زیر باشد:
+{
+  "phases": [
+    {
+      "phase_number": 1,
+      "title": "عنوان فاز",
+      "description": "توضیحات فاز",
+      "weeks": [
+        {
+          "week_number": ${chunkWeeks[0]},
+          "week_title": "هفته ${chunkWeeks[0]}: عنوان هفته",
+          "weekly_goal": "هدف این هفته",
+          "practice_exercise": "تمرین عملی",
+          "tasks": [
+            {
+              "title": "عنوان تسک",
+              "description": "توضیحات تسک",
+              "type": "core",
+              "suggested_weekday": "saturday"
+            }
+          ]
+        }
+      ],
+      "tasks": []
+    }
+  ]
+}
+فقط JSON خالص بازگردان بدون هیچ متن اضافی.`;
+
+          const contResult = await callGeminiWithFallback({
+            prompt: contPrompt,
+            preferredModels: GOAL_ANALYSIS_MODELS,
+            getConfigForModel: getConfigForGoalAnalysis,
+            maxOutputTokens: 32768,
+            userKeysHeader,
+            customKeys,
+          });
+
+          const contParsed = extractRobustJson(contResult.text || "{}");
+          const contPhases = sanitizePhases(contParsed.phases);
+
+          const existingByNumber = new Map<number, any>();
+          parsed.phases.forEach((ph: any) => existingByNumber.set(Number(ph.phase_number), ph));
+
+          for (const cph of contPhases) {
+            const num = Number(cph.phase_number);
+            const target = existingByNumber.get(num);
+            if (target) {
+              const seenWeeks = new Set((target.weeks || []).map((w: any) => Number(w.week_number)));
+              for (const nw of cph.weeks) {
+                if (!seenWeeks.has(Number(nw.week_number))) {
+                  target.weeks.push(nw);
+                  seenWeeks.add(Number(nw.week_number));
+                }
+              }
+              target.weeks.sort((a: any, b: any) => (Number(a.week_number) || 0) - (Number(b.week_number) || 0));
+              if (Array.isArray(cph.tasks) && cph.tasks.length > 0) {
+                target.tasks = [...(target.tasks || []), ...cph.tasks];
+              }
+            } else {
+              parsed.phases.push(cph);
+              existingByNumber.set(num, cph);
+            }
+          }
+
+          parsed.phases = sanitizePhases(parsed.phases);
+          missingWeeks = getMissingWeeks(parsed.phases);
+        } catch (contErr: any) {
+          console.warn(`[analyze-goal] Continuation round ${continuationRound} failed:`, contErr?.message || contErr);
+          break;
+        }
+      }
+
+      // Final sanitize check to guarantee no invalid phase or non-array weeks
+      parsed.phases = sanitizePhases(parsed.phases);
+      const coveredWeeksSet = getCoveredWeeksSet(parsed.phases);
+      const coveredWeeks = coveredWeeksSet.size;
+      const coverageComplete = coveredWeeks >= targetWeeks;
+
+      const activeProvider = result.usedProvider || (result.source === 'custom' ? result.accountLabel : 'gemini');
+      const activeModel = result.usedModel || result.modelName || 'gemini';
+
+      console.log(`[analyze-goal] Complete. Provider: "${activeProvider}", Model: "${activeModel}", Expected: ${targetWeeks}, Covered: ${coveredWeeks}, Complete: ${coverageComplete}`);
+
+      return res.json({
+        success: true,
+        ...parsed,
+        provider: activeProvider,
+        model: activeModel,
+        source: result.source || 'server',
+        coverage: {
+          complete: coverageComplete,
+          expectedWeeks: targetWeeks,
+          coveredWeeks,
+          ...(coverageComplete ? {} : { warning: `نقشه راه تا هفته ${coveredWeeks} از ${targetWeeks} هفته مورد نیاز تکمیل شد.` })
+        }
+      });
     }
 
   } catch (error: any) {
@@ -1135,6 +2151,7 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
+    console.log("route registered: /api/gemini/analyze-goal");
   });
 }
 

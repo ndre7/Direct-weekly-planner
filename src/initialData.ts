@@ -370,5 +370,6 @@ export const INITIAL_PLANNER_DATA: PlannerData = {
       date: '۱۴۰۵/۰۳/۱۵',
       description: 'استاد اعلام کرد که ارائه اختیاری است و نمره‌اش بین کوییزها تقسیم می‌شود.'
     }
-  ]
+  ],
+  archive: []
 };

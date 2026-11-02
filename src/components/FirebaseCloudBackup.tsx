@@ -126,10 +126,6 @@ export default function FirebaseCloudBackup({
       return;
     }
 
-    if (!window.confirm(isRtl ? 'آیا از بازیابی این نسخه پشتیبان اطمینان دارید؟ داده‌های فعلی شما جایگزین خواهند شد.' : 'Are you sure you want to restore this backup? Current data will be replaced.')) {
-      return;
-    }
-
     setRestoringId(backup.id);
     try {
       setData(backup.data);
@@ -143,9 +139,6 @@ export default function FirebaseCloudBackup({
 
   const handleDeleteBackup = async (backupId: string) => {
     if (!userId) return;
-    if (!window.confirm(isRtl ? 'آیا از حذف این نسخه پشتیبان ابری اطمینان دارید؟' : 'Are you sure you want to delete this cloud backup?')) {
-      return;
-    }
 
     try {
       await deleteDoc(doc(db, 'planners', userId, 'backups', backupId));

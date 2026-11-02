@@ -1,0 +1,464 @@
+NOTE1
+NONCE = NOTE1-M3K7
+
+═════════════════════════════════════════════════════════════════════════
+P0 — انکرهای پیش از تغییر (بررسی تطابق کامل دیسک با مقادیر مورد انتظار ناظر)
+═════════════════════════════════════════════════════════════════════════
+
+md5sum src/App.tsx src/types.ts src/lib/plannerSyncEngine.ts src/utils/jalali.ts src/lib/gcalAutoSyncEngine.ts src/lib/firestoreSync.ts src/components/Sidebar.tsx package.json
+2a194fc60d6511a34ee4cd558bba5845  src/App.tsx
+d7eb1b488340aaadd1d239a2ddac8aad  src/types.ts
+5f378ab312b5c56ee28119acd45f7c8d  src/lib/plannerSyncEngine.ts
+6b5c2a846baa3ba565d2f915375f6d10  src/utils/jalali.ts
+2cbd1b0805acdffc639397d0b98b3fd0  src/lib/gcalAutoSyncEngine.ts
+20bd324785846846756859642594720a  src/lib/firestoreSync.ts
+c81ef5905f0fc0d07d6b40502d7829e7  src/components/Sidebar.tsx
+d72238dccdf9e84a502c529c25887902  package.json
+
+wc -l src/App.tsx src/types.ts src/lib/plannerSyncEngine.ts src/utils/jalali.ts src/lib/gcalAutoSyncEngine.ts src/lib/firestoreSync.ts src/components/Sidebar.tsx package.json
+  8488 src/App.tsx
+   379 src/types.ts
+   740 src/lib/plannerSyncEngine.ts
+   415 src/utils/jalali.ts
+   439 src/lib/gcalAutoSyncEngine.ts
+  1692 src/lib/firestoreSync.ts
+  1433 src/components/Sidebar.tsx
+    48 package.json
+ 13634 total
+
+تطابق: ۸/۸ منطبق با جدول ناظر (PASS قطعی).
+
+═════════════════════════════════════════════════════════════════════════
+شرح اقدامات انجام‌شده (N-1 تا N-7)
+═════════════════════════════════════════════════════════════════════════
+
+N-1 | types.ts:
+  - ارتقای نسخه: APP_VERSION = "1.7.0" در خط ۱.
+  - تعریف اینترفیس NotesArchiveEntry با فیلدهای weekId، startLabel، endLabel، text، archivedAt پیش از PlannerData.
+  - افزودن فیلد اختیاری `notesArchive?: NotesArchiveEntry[];` بلافاصله پس از `archive?: ArchiveWeek[];`.
+  - تعداد خطوط: از ۳۷۹ به ۳۸۹ خط (+۱۰ خط با کامنت).
+
+N-2 | App.tsx (دو هلپر خالص درون‌کامپوننتی):
+  - `buildNotesArchiveEntry`: تولید شیء NotesArchiveEntry با قالب استاندارد weekId عینا مطابق خط ۳۱۳۲ (`week_${startYear}_${startMonth}_${startDay}_to_${endDay}_${endMonth}`).
+  - `upsertNotesArchiveEntry`: درج یا جایگزینی بر اساس weekId، قرارگیری نسخه جدید در انتهای آرایه، سقف ۱۰۴ ورودی با هرس قدیمی‌ترین‌ها بر اساس archivedAt و لاگ کنسول با پیشوند `[Notes Archive Maintenance]`.
+
+N-3 | App.tsx (مسیر دستی submitCalendarRange):
+  - در صورت خالی نبودن `prev.notes`، ساخت entry از روی مقادیر oldStart... و oldEnd... و ارسال آن به `upsertNotesArchiveEntry`.
+  - درج `notesArchive: updatedNotesArchive` در شیء بازگشتی setData.
+
+N-4 | App.tsx (بلوک‌های دوگانه تعمیر خودکار بارگیری ابر):
+  - در هر دو شاخه (داده محلی جدیدتر و داده ابری جدیدتر)، در نقطهٔ تشخیص هفته پایان‌یافته یا نامعتبر (`isWeekRangeEndedOrInvalid`)، بلافاصله پس از `hasRepairedWeekRangeRef.current = true;` و پیش از بازنویسی مقادیر هفته، اسنپ‌شات یادداشت‌های هفته گذشته در `merged.notesArchive` با فراخوانی `upsertNotesArchiveEntry` و `buildNotesArchiveEntry` ذخیره می‌شود.
+
+N-5 | App.tsx (کارت UI در تب ۵):
+  - اضافه شدن کارت سفید استاندارد با آیکون Archive و عنوان «یادداشت‌های هفته‌های گذشته» و زیرعنوان «نسخه‌های بایگانی‌شدهٔ خودکار در پایان هفته».
+  - نمایش لیست به صورت معکوس (جدیدترین اول) با برچسب بازه تاریخی و تاریخ بایگانی، متن با حفظ فاصله‌ها (whitespace-pre-wrap)، حالت فقط‌خواندنی بدون دکمه حذف/ویرایش، اسکرول عمودی با حداکثر ارتفاع `max-h-[40vh]` و پیام خالی بودن در صورت نبود آیتم.
+
+N-6 | plannerSyncEngine.ts:
+  - افزودن کلید `'notesArchive'` به آرایهٔ `allowedScalarKeys` پس از `'archive'`.
+  - تعداد خطوط: از ۷۴۰ به ۷۴۱ خط (+۱ خط).
+
+N-7 | package.json:
+  - خط ۴: "version": "1.7.0".
+
+═════════════════════════════════════════════════════════════════════════
+P0-POST — انکرهای پس از تغییرات
+═════════════════════════════════════════════════════════════════════════
+
+md5sum src/App.tsx src/types.ts src/lib/plannerSyncEngine.ts package.json
+f3d837558697c36c0094225c791ce05b  src/App.tsx
+23ff8d0597ef42ddcc02592b28e0be0f  src/types.ts
+f586447036bbde26670257eb8fe4a123  src/lib/plannerSyncEngine.ts
+35c4508620fa037501519c91f9ec26a2  package.json
+
+wc -l src/App.tsx src/types.ts src/lib/plannerSyncEngine.ts package.json
+  8570 src/App.tsx
+   389 src/types.ts
+   741 src/lib/plannerSyncEngine.ts
+    48 package.json
+  9748 total
+
+═════════════════════════════════════════════════════════════════════════
+پنجره‌های هش‌دار (W-A تا W-I) با شماره خط grep -n، بایت‌شمار و sha256
+═════════════════════════════════════════════════════════════════════════
+
+[W-A] src/types.ts:204-233 (تعریف NotesArchiveEntry و فیلد notesArchive)
+md5sum src/types.ts
+23ff8d0597ef42ddcc02592b28e0be0f  src/types.ts
+sed -n '204,233p' src/types.ts
+// NOTE1: notesArchive entry structure
+export interface NotesArchiveEntry {
+  weekId: string;
+  startLabel: string;
+  endLabel: string;
+  text: string;
+  archivedAt: string;
+}
+
+export interface PlannerData {
+  month: string; // e.g. "خرداد 1405"
+  term: string; // e.g. "ترم دانشگاه : 6"
+  activeClassesOnly: boolean; // "کلاس ها فعال"
+  quoteText: string;
+  quoteAuthor: string;
+  categories: Category[];
+  classesSchedule: ClassSlot[];
+  dailyTasks: Record<string, DailyTask[]>;
+  detailsColumns: DetailsColumn[];
+  secondaryTaskColumns: SecondaryTaskColumn[];
+  secondaryTasks: SecondaryTask[];
+  reminders: ReminderItem[];
+  coreTasks?: CoreTask[];
+  notes: string;
+  weeklyEvents?: NoteItem[];
+  dailyThoughts?: NoteItem[];
+  todoList: NoteItem[];
+  archive?: ArchiveWeek[];
+  notesArchive?: NotesArchiveEntry[];
+  // Calendar range parameters (hotel/flight booking range style)
+sed -n '204,233p' src/types.ts | wc -c
+844
+sed -n '204,233p' src/types.ts | sha256sum
+886d01a51fea8b0c90c162d42e6f2110b4685d2a795f2e809c0ba4fd2c097e1c  -
+
+[W-B] src/App.tsx:1488-1515 (بلوک تعمیر اول + اسنپ‌شات یادداشت‌ها)
+md5sum src/App.tsx
+f3d837558697c36c0094225c791ce05b  src/App.tsx
+sed -n '1488,1515p' src/App.tsx
+            for (const [key, val] of Object.entries(combinedData)) {
+              if (val !== undefined && ((merged as any)[key] === undefined || (merged as any)[key] === null)) {
+                (merged as any)[key] = val;
+              }
+            }
+            if (isWeekRangeEndedOrInvalid(merged) && !hasRepairedWeekRangeRef.current) {
+              hasRepairedWeekRangeRef.current = true;
+              if ((merged.notes || '').trim() !== '') {
+                merged.notesArchive = upsertNotesArchiveEntry(merged.notesArchive || [], buildNotesArchiveEntry(merged.weekYear || getTodayJalali(getNow()).year, merged.weekMonth || '', merged.weekStartDay || 1, merged.weekEndYear || merged.weekYear || getTodayJalali(getNow()).year, merged.weekEndMonth || merged.weekMonth || '', merged.weekEndDay || 7, merged.notes));
+              }
+              const curWeek = getCurrentJalaliWeekRange(getNow());
+              merged.weekYear = curWeek.startYear;
+              merged.weekMonth = curWeek.startMonth;
+              merged.weekStartDay = curWeek.startDay;
+              merged.weekEndYear = curWeek.endYear;
+              merged.weekEndMonth = curWeek.endMonth;
+              merged.weekEndDay = curWeek.endDay;
+              merged.month = curWeek.month;
+              showToast('بازهٔ هفته به هفتهٔ جاری اصلاح شد', 'info');
+            }
+            return merged;
+          }
+
+          const merged = { ...prev };
+          for (const [key, val] of Object.entries(combinedData)) {
+            if (val !== undefined) (merged as any)[key] = val;
+          }
+sed -n '1488,1515p' src/App.tsx | wc -c
+1609
+sed -n '1488,1515p' src/App.tsx | sha256sum
+92679acbbffbce792a1107e2743f478e698bc0ef659200099162d7aa8b935e43  -
+
+[W-C] src/App.tsx:1516-1540 (بلوک تعمیر دوم + اسنپ‌شات یادداشت‌ها تا return merged)
+md5sum src/App.tsx
+f3d837558697c36c0094225c791ce05b  src/App.tsx
+sed -n '1516,1540p' src/App.tsx
+          if (isWeekRangeEndedOrInvalid(merged) && !hasRepairedWeekRangeRef.current) {
+            hasRepairedWeekRangeRef.current = true;
+            if ((merged.notes || '').trim() !== '') {
+              merged.notesArchive = upsertNotesArchiveEntry(merged.notesArchive || [], buildNotesArchiveEntry(merged.weekYear || getTodayJalali(getNow()).year, merged.weekMonth || '', merged.weekStartDay || 1, merged.weekEndYear || merged.weekYear || getTodayJalali(getNow()).year, merged.weekEndMonth || merged.weekMonth || '', merged.weekEndDay || 7, merged.notes));
+            }
+            const curWeek = getCurrentJalaliWeekRange(getNow());
+            merged.weekYear = curWeek.startYear;
+            merged.weekMonth = curWeek.startMonth;
+            merged.weekStartDay = curWeek.startDay;
+            merged.weekEndYear = curWeek.endYear;
+            merged.weekEndMonth = curWeek.endMonth;
+            merged.weekEndDay = curWeek.endDay;
+            merged.month = curWeek.month;
+            showToast('بازهٔ هفته به هفتهٔ جاری اصلاح شد', 'info');
+          }
+          const updated = syncAllTasksToDetails(merged);
+          isRemoteUpdateRef.current = true;
+          lastSavedDataJsonRef.current = JSON.stringify(updated);
+          try {
+            localStorage.setItem('planner_data', JSON.stringify(updated));
+            if (currentUser) {
+              localStorage.setItem('planner_user', JSON.stringify({
+                id: currentUser.id,
+                email: currentUser.email || '',
+                username: currentUser.username || ''
+              }));
+            }
+          } catch (lsErr) {
+sed -n '1516,1540p' src/App.tsx | wc -c
+1454
+sed -n '1516,1540p' src/App.tsx | sha256sum
+29724689c819d8996cf6331c1f86f1e5d9f0f570d207dc9118bfbced8044a899  -
+
+[W-D] src/App.tsx:3195-3225 (مسیر submitCalendarRange و بایگانی یادداشت‌ها)
+md5sum src/App.tsx
+f3d837558697c36c0094225c791ce05b  src/App.tsx
+sed -n '3195,3225p' src/App.tsx
+      // NOTE1: Archive non-empty notes for ended week
+      const notesEntry = (prev.notes || '').trim() !== ''
+        ? buildNotesArchiveEntry(oldStartYear, oldStartMonth, oldStartDay, oldEndYear, oldEndMonth, oldEndDay, prev.notes)
+        : null;
+      const updatedNotesArchive = notesEntry
+        ? upsertNotesArchiveEntry(prev.notesArchive || [], notesEntry)
+        : (prev.notesArchive || []);
+
+      return {
+        ...prev,
+        weekStartDay: tempStartDay,
+        weekEndDay: tempEndDay,
+        weekYear: startYear,
+        weekEndYear: endYear,
+        weekMonth: tempStartMonth,
+        weekEndMonth: tempEndMonth,
+        month: monthStr,
+        coreTasks: filteredCoreTasks,
+        secondaryTasks: filteredSecondaryTasks,
+        dailyTasks: filteredDailyTasks,
+        detailsColumns: filteredDetailsColumns,
+        examColumns: filteredExamColumns,
+        weeklyEvents: filteredWeeklyEvents,
+        postponedEvents: [...filteredPostponedEvents, ...restorableFromArchive],
+        todoList: filteredTodoList,
+        reminders: filteredReminders,
+        archive: currentArchive,
+        notesArchive: updatedNotesArchive
+      };
+    });
+sed -n '3195,3225p' src/App.tsx | wc -c
+1169
+sed -n '3195,3225p' src/App.tsx | sha256sum
+e74c09a2520ebf715b68e970f6d63fc7c05e1bd121577e31a6afd1002a2a9bd3  -
+
+[W-E] src/App.tsx:4501-4532 (دو هلپر خالص درون‌کامپوننتی NOTE1)
+md5sum src/App.tsx
+f3d837558697c36c0094225c791ce05b  src/App.tsx
+sed -n '4501,4532p' src/App.tsx
+  // NOTE1: Pure helper to build NotesArchiveEntry
+  function buildNotesArchiveEntry(
+    startYear: number,
+    startMonth: string,
+    startDay: number,
+    endYear: number,
+    endMonth: string,
+    endDay: number,
+    text: string
+  ): NotesArchiveEntry {
+    return {
+      weekId: `week_${startYear}_${startMonth}_${startDay}_to_${endDay}_${endMonth}`,
+      startLabel: `${startDay} ${startMonth} ${startYear}`,
+      endLabel: `${endDay} ${endMonth} ${endYear}`,
+      text,
+      archivedAt: new Date().toISOString()
+    };
+  }
+
+  // NOTE1: Pure helper to upsert NotesArchiveEntry into notesArchive list with 104-entry limit
+  function upsertNotesArchiveEntry(list: NotesArchiveEntry[], entry: NotesArchiveEntry): NotesArchiveEntry[] {
+    let updated = (list || []).filter(item => item.weekId !== entry.weekId);
+    updated.push(entry);
+    if (updated.length > 104) {
+      updated.sort((a, b) => new Date(a.archivedAt).getTime() - new Date(b.archivedAt).getTime());
+      const excess = updated.length - 104;
+      console.log(`[Notes Archive Maintenance] Pruned ${excess} oldest notes archive entry/entries exceeding 104-entry limit.`);
+      updated = updated.slice(excess);
+    }
+    return updated;
+  }
+sed -n '4501,4532p' src/App.tsx | wc -c
+1220
+sed -n '4501,4532p' src/App.tsx | sha256sum
+51aebc944e975f73d4802cba2057deea161c62a7f357324edfec7759102efc11  -
+
+[W-F] src/App.tsx:7531-7567 (کارت UI یادداشت‌های هفته‌های گذشته در تب ۵)
+md5sum src/App.tsx
+f3d837558697c36c0094225c791ce05b  src/App.tsx
+sed -n '7531,7567p' src/App.tsx
+              {/* NOTE1: Historical notesArchive Card */}
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-5 flex flex-col">
+                <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Archive className="w-5 h-5 text-indigo-600 ml-1" />
+                    <h2 className="font-black text-slate-800 text-sm">یادداشت‌های هفته‌های گذشته</h2>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-bold">نسخه‌های بایگانی‌شدهٔ خودکار در پایان هفته</span>
+                </div>
+                <div className="max-h-[40vh] overflow-y-auto space-y-3 pr-1">
+                  {(data.notesArchive && data.notesArchive.length > 0) ? (
+                    (data.notesArchive || []).slice().reverse().map((entry) => (
+                      <div
+                        key={entry.weekId || entry.archivedAt}
+                        className="bg-slate-50 border border-slate-100 rounded-2xl p-4 text-xs space-y-2 hover:bg-slate-100/60 transition-colors"
+                      >
+                        <div className="flex items-center justify-between text-slate-500 font-black text-[11px] border-b border-slate-200/50 pb-1.5">
+                          <span>{entry.startLabel} تا {entry.endLabel}</span>
+                          <span className="text-[10px] text-slate-400 font-normal font-mono">
+                            {new Date(entry.archivedAt).toLocaleDateString('fa-IR')}
+                          </span>
+                        </div>
+                        <p className="text-slate-700 font-bold leading-relaxed whitespace-pre-wrap break-words">
+                          {entry.text}
+                        </p>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-slate-400 text-xs italic py-8 text-center">
+                      هنوز یادداشتی از هفته‌های گذشته بایگانی نشده است.
+                    </div>
+                  )}
+                </div>
+              </div>
+sed -n '7531,7567p' src/App.tsx | wc -c
+2287
+sed -n '7531,7567p' src/App.tsx | sha256sum
+b993e48041a5f11a6ba3fe66c14a05beff2f59015f7798ce175ef7da947a472b  -
+
+[W-G] src/lib/plannerSyncEngine.ts:221-235 (آرایهٔ کامل allowedScalarKeys)
+md5sum src/lib/plannerSyncEngine.ts
+f586447036bbde26670257eb8fe4a123  src/lib/plannerSyncEngine.ts
+sed -n '221,235p' src/lib/plannerSyncEngine.ts
+  // Checklist of permitted scalar settings for parent doc
+  const allowedScalarKeys = [
+    'month', 'term', 'activeClassesOnly', 'quoteText', 'quoteAuthor',
+    'classRows', 'dailyTaskRows', 'activeClassStatus', 'classStatusList', 'activeDayKeys',
+    'classesTitle', 'dailyTasksTitle', 'detailsTitle', 'secondaryTitle', 'remindersTitle',
+    'notesTitle', 'todoTitle', 'coreTasksTitle', 'examsAndPresentationsTitle',
+    'emailRemindersGlobalEnabled', 'emailReminderDefaultOffset', 'reminderEmailTargetType',
+    'reminderCustomEmail', 'notes', 'weekStartDay', 'weekEndDay', 'weekYear', 'weekEndYear',
+    'weekMonth', 'weekEndMonth', 'archive',
+    'notesArchive'
+  ];
+
+  for (const key of allowedScalarKeys) {
+    if (key in rest && rest[key] !== undefined) {
+      scalarSettings[key] = rest[key];
+sed -n '221,235p' src/lib/plannerSyncEngine.ts | wc -c
+804
+sed -n '221,235p' src/lib/plannerSyncEngine.ts | sha256sum
+567c8624fa6db83b21c9a01f2d328274962b267d4527c4f17352b0e8a3d6fd78  -
+
+[W-H] نسخه‌ها و cat کامل package.json
+sed -n '1p' src/types.ts
+export const APP_VERSION = "1.7.0";
+
+sed -n '4p' package.json
+  "version": "1.7.0",
+
+cat package.json
+{
+  "name": "react-example",
+  "private": true,
+  "version": "1.7.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "start": "node dist/server.cjs",
+    "preview": "vite preview",
+    "clean": "rm -rf dist server.js",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google/genai": "^2.4.0",
+    "@tailwindcss/vite": "^4.1.14",
+    "@vitejs/plugin-react": "^5.0.4",
+    "chart.js": "^4.5.1",
+    "dotenv": "^17.2.3",
+    "drizzle-orm": "^0.45.2",
+    "express": "^4.21.2",
+    "firebase": "^12.16.0",
+    "firebase-admin": "^14.2.0",
+    "html2canvas": "^1.4.1",
+    "html2canvas-pro": "^2.3.0",
+    "https-proxy-agent": "^9.1.0",
+    "jspdf": "^4.2.1",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "pg": "^8.22.0",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "undici": "^8.11.2",
+    "vite": "^6.2.3"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "@types/pg": "^8.20.0",
+    "autoprefixer": "^10.4.21",
+    "drizzle-kit": "^0.31.10",
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^4.1.14",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.3"
+  }
+}
+
+[W-I] خروجی بیلد G-3
+npm run build 2>&1 | tail -15
+dist/assets/purify.es-Jn2rvFN8.js           28.91 kB │ gzip:  10.90 kB
+dist/assets/index.es-BqueVk_t.js           159.60 kB │ gzip:  53.51 kB
+dist/assets/html2canvas.esm-QH1iLAAe.js    202.38 kB │ gzip:  48.04 kB
+dist/assets/index-C5LyZZfr.js            3,343.05 kB │ gzip: 853.49 kB
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 14.35s
+  dist/server.cjs      120.2kb
+  dist/server.cjs.map  182.3kb
+⚡ Done in 20ms
+
+stat -c "%n %s" dist/assets/index-*.js dist/server.cjs
+dist/assets/index-C5LyZZfr.js 3343046
+dist/server.cjs 123130
+
+═════════════════════════════════════════════════════════════════════════
+G — اعتبارسنجی گیت‌ها
+═════════════════════════════════════════════════════════════════════════
+
+[G-1] بررسی ممنوعیت دیالوگ‌های نیتیو:
+grep -rnE "window\.confirm|alert\(" src/; echo "G1_EXIT=$?"
+G1_EXIT=1
+
+[G-2] تایپ‌چک کامل:
+npx tsc --noEmit; echo "TSC_EXIT=$?"
+TSC_EXIT=0
+
+[G-3] تأیید بیلد:
+  - باندل کلاینت: ۳٬۳۴۳٬۰۴۶ بایت (3,343.05 kB │ gzip: 853.49 kB)
+  - سرور نود: دقیقاً ۱۲۳٬۱۳۰ بایت (123130 bytes).
+
+[G-4] شمارش‌های دقیق grep -c:
+  - "notesArchive" در types.ts: ۲ (≥ ۲)
+  - "notesArchive" در plannerSyncEngine.ts: ۱ (= ۱)
+  - "notesArchive" در App.tsx: ۹ (≥ ۸)
+  - "buildNotesArchiveEntry" در App.tsx: ۴ (۱ تعریف + ۳ فراخوانی) (≥ ۴)
+  - "upsertNotesArchiveEntry" در App.tsx: ۴ (۱ تعریف + ۳ فراخوانی) (≥ ۴)
+  - قالب `week_${` در App.tsx: ۳ خط شامل:
+    ۱) خط ۲۲۴۴: `auto_downloaded_week_${savedWeekKey}` (کلید پیشین دانلود خودکار)
+    ۲) خط ۳۱۳۲: `const weekId = \`week_${oldStartYear}_${oldStartMonth}_${oldStartDay}_to_${oldEndDay}_${oldEndMonth}\`;` (شناسه هفته در submitCalendarRange)
+    ۳) خط ۴۵۱۲: `weekId: \`week_${startYear}_${startMonth}_${startDay}_to_${endDay}_${endMonth}\`` (شناسه هفته در هلپر جدید buildNotesArchiveEntry)
+
+[G-5] پین دست‌نخورده ماندن ۷ شاهد زیرساختی:
+md5sum src/utils/jalali.ts src/lib/gcalAutoSyncEngine.ts src/lib/firestoreSync.ts src/components/Sidebar.tsx server.ts vite.config.ts report_T5EV.txt
+6b5c2a846baa3ba565d2f915375f6d10  src/utils/jalali.ts
+2cbd1b0805acdffc639397d0b98b3fd0  src/lib/gcalAutoSyncEngine.ts
+20bd324785846846756859642594720a  src/lib/firestoreSync.ts
+c81ef5905f0fc0d07d6b40502d7829e7  src/components/Sidebar.tsx
+8749e363a4fcfa5654333e64b27a2c99  server.ts
+400784be009b0adb6f6c97f2992e4106  vite.config.ts
+a6cbf3488e9b2efd8ccf6727d57f295c  report_T5EV.txt
+
+[G-6] شرح رفتاری notesArchive در صورت عدم تأیید تقویم:
+اگر کاربر هرگز تقویم را تأیید نکند و بازه هفته را تغییر ندهد (یا تعمیر خودکار ابر شلیک نشود)، تا زمانی که یکی از سه مسیر زیر شلیک نشود هیچ ورودی جدیدی در notesArchive ایجاد نمی‌شود و فیلد آن در داده‌های برنامه همان مقدار پیشین (یا تعریف‌نشده/خالی) باقی می‌ماند:
+  ۱. ثبت دستی بازه جدید تقویم در submitCalendarRange
+  ۲. غلتک خودکار هفته در صورت انقضای بازه ذخیره‌شده (در شاخه حفظ تغییرات محلی)
+  ۳. غلتک خودکار هفته در صورت انقضای بازه ذخیره‌شده (در شاخه پذیرش داده ابری)
+
+═════════════════════════════════════════════════════════════════════════
+یادآوری پایانی برای کاربر گرامی
+═════════════════════════════════════════════════════════════════════════
+پیش از استقرار، از داده‌های خود Export JSON بگیرید. توجه داشته باشید که سقف نگهداری یادداشت‌های آرشیوشده ۱۰۴ ورودی است؛ یعنی پس از گذشت ۲ سال از هفته‌های ثبت‌شده، قدیمی‌ترین یادداشت‌ها به صورت خودکار هرس خواهند شد.

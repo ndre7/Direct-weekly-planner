@@ -10,7 +10,7 @@ import {
   deleteField
 } from 'firebase/firestore';
 import { db, auth } from './firebase.ts';
-import { jalaliToGregorian, JALALI_MONTHS } from '../utils/jalali.ts';
+import { jalaliToGregorian, JALALI_MONTHS, getTodayTehranISO } from '../utils/jalali.ts';
 import { 
   PlannerData, 
   CoreTask, 
@@ -164,7 +164,10 @@ export function loadPersistedPendingSync(): PendingSyncItem | null {
 try {
   loadPersistedPendingSync();
 } catch (_) {}
-
+export function hasPendingSync(userId: string): boolean {
+  const q = pendingSyncQueue.get(userId);
+  return !!(q && Object.keys(q).length > 0);
+}
 export async function flushPendingSyncQueue(userId: string): Promise<boolean> {
   if (!userId || isFlushingQueue) return false;
   if (!isAuthValidForUser(userId, true)) return false;
@@ -196,7 +199,11 @@ export async function flushPendingSyncQueue(userId: string): Promise<boolean> {
   pendingSyncQueue.delete(userId);
   isFlushingQueue = true;
   try {
-    await savePlannerSubcollections(userId, pendingData);
+    const committed = await savePlannerSubcollections(userId, pendingData);
+    if (committed === false) {
+      // savePlannerSubcollections already re-queued the payload (memory + localStorage)
+      return false;
+    }
     // Success: remove from localStorage only if item belongs to this userId
     try {
       const raw = localStorage.getItem(PENDING_SYNC_STORAGE_KEY);
@@ -246,8 +253,8 @@ export function getISOFromWeekContext(dataCtx: Partial<PlannerData> | undefined,
       try {
         const startGDate = jalaliToGregorian(dataCtx.weekYear, monthIdx + 1, dataCtx.weekStartDay);
         const targetGDate = new Date(startGDate.getTime() + offset * 86400000);
-        const dateISO = targetGDate.toISOString().split('T')[0];
-        const weekIdentifier = startGDate.toISOString().split('T')[0];
+        const dateISO = getTodayTehranISO(targetGDate);
+        const weekIdentifier = getTodayTehranISO(startGDate);
         return { dateISO, weekIdentifier };
       } catch (e) {
         console.warn("[Date ISO Context Warning] Failed to compute Jalali week context:", e);
@@ -255,8 +262,7 @@ export function getISOFromWeekContext(dataCtx: Partial<PlannerData> | undefined,
     }
   }
 
-  const today = new Date();
-  const dateISO = today.toISOString().split('T')[0];
+  const dateISO = getTodayTehranISO();
   return { dateISO, weekIdentifier: dateISO };
 }
 
@@ -644,8 +650,8 @@ export async function saveDailyStatsAndSnapshot(
     kind: 'daily' | 'core' | 'secondary';
     text: string;
     status: 'pending' | 'completed' | 'failed';
-    categoryId?: string;
-    completionDate?: string;
+    categoryId?: string | null;
+    completionDate?: string | null;
   }> = [];
 
   tasksForDay.forEach(t => {
@@ -654,8 +660,8 @@ export async function saveDailyStatsAndSnapshot(
       kind: 'daily',
       text: t.textFa || t.textEn || '',
       status: t.status,
-      categoryId: t.categoryId,
-      completionDate: t.completionDate
+      categoryId: t.categoryId ?? null,
+      completionDate: t.completionDate ?? null
     });
   });
 
@@ -669,7 +675,7 @@ export async function saveDailyStatsAndSnapshot(
           kind: 'core',
           text: ct.title || ct.description || '',
           status: ct.status,
-          categoryId: ct.categoryId
+          categoryId: ct.categoryId ?? null
         });
       }
     });
@@ -685,8 +691,8 @@ export async function saveDailyStatsAndSnapshot(
           kind: 'secondary',
           text: st.textFa || st.textEn || '',
           status: st.status,
-          categoryId: st.categoryId,
-          completionDate: st.completionDate
+          categoryId: st.categoryId ?? null,
+          completionDate: st.completionDate ?? null
         });
       }
     });
@@ -870,17 +876,17 @@ export async function cleanupLeakedParentFields(userId: string): Promise<void> {
  * Saves planner data using the Mirror-Diff Engine:
  * computeDiff -> applyDiff -> stats/history rollups
  */
-export async function savePlannerSubcollections(userId: string, data: Partial<PlannerData>): Promise<void> {
-  if (!userId) return;
+export async function savePlannerSubcollections(userId: string, data: Partial<PlannerData>): Promise<boolean> {
+  if (!userId) return false;
 
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     queuePendingSync(userId, data);
-    return;
+    return false;
   }
 
   if (!isAuthValidForUser(userId, true)) {
     queuePendingSync(userId, data);
-    return;
+    return false;
   }
 
   try {
@@ -910,6 +916,7 @@ export async function savePlannerSubcollections(userId: string, data: Partial<Pl
 
     // 4. Parent doc size audit
     await auditPlannerDocSize(userId);
+    return true;
   } catch (err: any) {
     const errMsg = err instanceof Error ? err.message : String(err);
     if (
@@ -921,7 +928,7 @@ export async function savePlannerSubcollections(userId: string, data: Partial<Pl
     ) {
       console.warn('[Firestore Offline Sync] Caught offline write error, queued for reconnection:', errMsg);
       queuePendingSync(userId, data);
-      return;
+      return false;
     }
     throw err;
   }
@@ -934,8 +941,16 @@ export async function savePlannerSubcollections(userId: string, data: Partial<Pl
 export function subscribeToPlannerSubcollections(
   userId: string,
   onDataCombined: (data: Partial<PlannerData>) => void,
-  onError?: (error: Error) => void
+  onError?: (error: Error) => void,
+  onReady?: () => void
 ): () => void {
+  // T164-R Phase B: one-time "full first snapshot" readiness signal
+  const T164R_REQUIRED_READY = [
+    'categories', 'classesSchedule', 'dailyTasks', 'coreTasks', 'secondaryTasks', 'secondaryColumns',
+    'reminders', 'detailsColumns', 'examColumns', 'goals', 'postponedEvents', 'todoList',
+    'weeklyEvents', 'dailyThoughts', 'pomodoroHistory', 'waterTrackerHistory', 'habitTracking', 'timebox'
+  ];
+  let readySignalSent = false;
   if (!userId || !isAuthValidForUser(userId)) return () => {};
 
   let settingsData: Record<string, any> = {};
@@ -1078,6 +1093,14 @@ export function subscribeToPlannerSubcollections(
 
       // Update local mirror before invoking callback to prevent echo (B2)
       updateMirrorFromSnapshot(userId, combinedData);
+      // T164-R Phase B: fire one-time readiness signal when every collection + settings has delivered
+      // its first snapshot — after this point the sync mirror reflects the server and pushes are safe.
+      if (!readySignalSent && settingsReady && T164R_REQUIRED_READY.every(k => readyCollections.has(k))) {
+        readySignalSent = true;
+        if (onReady) {
+          try { onReady(); } catch (_) {}
+        }
+      }
       onDataCombined(combinedData);
     }, 300);
   };

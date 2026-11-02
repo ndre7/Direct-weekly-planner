@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ClassSlot, Category, Language } from '../types';
 import { TRANSLATIONS } from '../translations';
-import { X, Save, Trash2, Clock } from 'lucide-react';
+import { X, Save, Trash2, Clock, Calendar, Plus } from 'lucide-react';
+import { DateTimeSelect } from './DateTimeSelect';
 
 interface ClassSlotModalProps {
   isOpen: boolean;
@@ -9,6 +10,7 @@ interface ClassSlotModalProps {
   slot: ClassSlot | null;
   categories: Category[];
   lang: Language;
+  defaultAnchorDate?: string;
   onChange: (updated: ClassSlot) => void;
   onSave: () => void;
   onDelete?: () => void;
@@ -47,10 +49,12 @@ export default function ClassSlotModal({
   slot,
   categories,
   lang,
+  defaultAnchorDate,
   onChange,
   onSave,
   onDelete,
 }: ClassSlotModalProps) {
+  const [manualDateInput, setManualDateInput] = useState<string>('');
   const t = TRANSLATIONS[lang];
   const isRtl = lang === 'fa';
   const parsed = React.useMemo(
@@ -205,7 +209,15 @@ export default function ClassSlotModal({
             <label className="block text-xs font-bold text-slate-500">{t.category}</label>
             <select
               value={slot.categoryId || ''}
-              onChange={(e) => onChange({ ...slot, categoryId: e.target.value || undefined })}
+              onChange={(e) => {
+                const updated = { ...slot };
+                if (e.target.value) {
+                  updated.categoryId = e.target.value;
+                } else {
+                  delete updated.categoryId;
+                }
+                onChange(updated);
+              }}
               className="w-full text-sm p-2.5 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
             >
               <option value="">{t.noCategory}</option>
@@ -215,6 +227,114 @@ export default function ClassSlotModal({
                 </option>
               ))}
             </select>
+          </div>
+
+          {/* Recurrence Selection */}
+          <div className="p-3 bg-slate-50 rounded-xl border border-slate-150 space-y-3">
+            <div className="flex items-center gap-1.5 text-[10px] font-black text-indigo-600 uppercase tracking-wider">
+              <Calendar className="w-4 h-4" />
+              <span>{isRtl ? 'دوره و الگوی تکرار کلاس' : 'Recurrence Pattern'}</span>
+            </div>
+            <select
+              value={slot.recurrence || 'weekly'}
+              onChange={(e) => {
+                const rec = e.target.value as any;
+                const nextAnchor = slot.anchorDate || defaultAnchorDate || '';
+                const nextSlot: ClassSlot = { ...slot, recurrence: rec };
+                if (
+                  (rec === 'biweekly' || rec === 'quadweekly' || rec === 'monthly') &&
+                  !slot.anchorDate &&
+                  nextAnchor
+                ) {
+                  nextSlot.anchorDate = nextAnchor;
+                }
+                onChange(nextSlot);
+              }}
+              className="w-full text-xs font-bold p-2.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all cursor-pointer"
+            >
+              <option value="weekly">{isRtl ? 'هر هفته (پیش‌فرض)' : 'Weekly (Default)'}</option>
+              <option value="biweekly">{isRtl ? 'هر ۲ هفته (یک هفته در میان)' : 'Bi-weekly (Every 2 weeks)'}</option>
+              <option value="quadweekly">{isRtl ? 'هر ۴ هفته (چهار هفته یک‌بار)' : 'Quad-weekly (Every 4 weeks)'}</option>
+              <option value="monthly">{isRtl ? 'ماهانه (هفتهٔ مطابق با روزِ ماهِ لنگر)' : 'Monthly'}</option>
+              <option value="manual">{isRtl ? 'دستی (انتخاب تاریخ‌های مشخص)' : 'Manual (Specific dates)'}</option>
+            </select>
+
+            {/* Anchor Date for biweekly, quadweekly, monthly */}
+            {(slot.recurrence === 'biweekly' || slot.recurrence === 'quadweekly' || slot.recurrence === 'monthly') && (
+              <div className="space-y-1.5 pt-1">
+                <label className="block text-[10px] font-bold text-slate-500">
+                  {isRtl ? 'تاریخ مبنا / لنگر تکرار (Anchor Date)' : 'Anchor Date'}
+                </label>
+                <DateTimeSelect
+                  value={slot.anchorDate || defaultAnchorDate || ''}
+                  onChange={(val) => onChange({ ...slot, anchorDate: val })}
+                />
+                <p className="text-[9px] text-slate-400 font-bold">
+                  {isRtl
+                    ? 'محاسبهٔ دوره‌های تکرار نسبت به این تاریخ انجام می‌شود.'
+                    : 'Recurrence cycles are computed relative to this date.'}
+                </p>
+              </div>
+            )}
+
+            {/* Manual Dates selector */}
+            {slot.recurrence === 'manual' && (
+              <div className="space-y-2 pt-1">
+                <label className="block text-[10px] font-bold text-slate-500">
+                  {isRtl ? 'افزودن تاریخ‌های تشکیل کلاس' : 'Add Class Dates'}
+                </label>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <DateTimeSelect
+                      value={manualDateInput}
+                      onChange={(val) => setManualDateInput(val)}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!manualDateInput.trim()) return;
+                      const currentDates = slot.manualDates || [];
+                      if (!currentDates.includes(manualDateInput.trim())) {
+                        onChange({ ...slot, manualDates: [...currentDates, manualDateInput.trim()] });
+                      }
+                      setManualDateInput('');
+                    }}
+                    className="p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+                {/* List of selected manual dates */}
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {(slot.manualDates || []).map((d) => (
+                    <span
+                      key={d}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200"
+                    >
+                      <span>{d}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onChange({
+                            ...slot,
+                            manualDates: (slot.manualDates || []).filter((item) => item !== d)
+                          });
+                        }}
+                        className="text-indigo-400 hover:text-rose-600 transition-colors cursor-pointer"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                  {(!slot.manualDates || slot.manualDates.length === 0) && (
+                    <span className="text-[10px] text-slate-400 italic">
+                      {isRtl ? 'هیچ تاریخی هنوز انتخاب نشده است.' : 'No dates selected yet.'}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

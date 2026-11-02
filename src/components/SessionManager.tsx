@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onIdTokenChanged, getIdToken } from 'firebase/auth';
 import { auth } from '../lib/firebase.ts';
-import { clientLogin, getAuthErrorMessage, clientRegister, safeParseJson } from '../lib/auth.ts';
+import { clientLogin, clientGoogleLogin, getAuthErrorMessage, clientRegister, safeParseJson } from '../lib/auth.ts';
 import { 
   ShieldCheck, 
   AlertTriangle, 
@@ -76,6 +76,36 @@ export function verifyAndRepairPlannerData(rawData: any): { repairedData: any; r
   if (!repaired.dailyTasks || typeof repaired.dailyTasks !== 'object') {
     repaired.dailyTasks = {};
     repairedCount++;
+  }
+
+  // Normalize live tasks undefined fields to null to avoid Firestore setDoc errors
+  if (Array.isArray(repaired.coreTasks)) {
+    repaired.coreTasks.forEach((ct: any) => {
+      if (ct && typeof ct === 'object') {
+        if (ct.categoryId === undefined) { ct.categoryId = null; repairedCount++; }
+        if (ct.completionDate === undefined) { ct.completionDate = null; repairedCount++; }
+      }
+    });
+  }
+  if (Array.isArray(repaired.secondaryTasks)) {
+    repaired.secondaryTasks.forEach((st: any) => {
+      if (st && typeof st === 'object') {
+        if (st.categoryId === undefined) { st.categoryId = null; repairedCount++; }
+        if (st.completionDate === undefined) { st.completionDate = null; repairedCount++; }
+      }
+    });
+  }
+  if (repaired.dailyTasks && typeof repaired.dailyTasks === 'object') {
+    Object.values(repaired.dailyTasks).forEach((dayTasks: any) => {
+      if (Array.isArray(dayTasks)) {
+        dayTasks.forEach((dt: any) => {
+          if (dt && typeof dt === 'object') {
+            if (dt.categoryId === undefined) { dt.categoryId = null; repairedCount++; }
+            if (dt.completionDate === undefined) { dt.completionDate = null; repairedCount++; }
+          }
+        });
+      }
+    });
   }
 
   // Validate and repair Pomodoro history (filter out dateless entries)
@@ -194,25 +224,30 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
             localStorage.setItem('planner_user', JSON.stringify(verifiedUser));
           } else {
             console.warn('Session verification failed on server:', resData);
-            setIsCriticalAuthFailure(true);
-            if (res.status === 403) {
-              setStatus('SUSPENDED');
-              setShowModal(true);
-              showToast(
-                isRtl 
-                  ? 'حساب کاربری شما تعلیق شده است' 
-                  : 'Your account has been suspended', 
-                'error'
-              );
+            if (res.status === 503) {
+              setStatus('OFFLINE_MODE');
+              setIsCriticalAuthFailure(false);
             } else {
-              setStatus('INVALID');
-              setShowModal(true);
-              showToast(
-                isRtl 
-                  ? 'نشست کاربری شما منقضی شده است' 
-                  : 'Your session has expired', 
-                'error'
-              );
+              setIsCriticalAuthFailure(true);
+              if (res.status === 403) {
+                setStatus('SUSPENDED');
+                setShowModal(true);
+                showToast(
+                  isRtl 
+                    ? 'حساب کاربری شما تعلیق شده است' 
+                    : 'Your account has been suspended', 
+                  'error'
+                );
+              } else {
+                setStatus('INVALID');
+                setShowModal(true);
+                showToast(
+                  isRtl 
+                    ? 'نشست کاربری شما منقضی شده است' 
+                    : 'Your session has expired', 
+                  'error'
+                );
+              }
             }
           }
         } catch (err) {
@@ -232,6 +267,53 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
 
     return () => unsubscribe();
   }, [isRtl]);
+
+  // Scheduled retry every 60s when in OFFLINE_MODE (e.g. temporary 503 auth infra failure)
+  useEffect(() => {
+    if (status !== 'OFFLINE_MODE' || !auth.currentUser) return;
+
+    const timer = setInterval(async () => {
+      try {
+        const firebaseUser = auth.currentUser;
+        if (!firebaseUser) return;
+        const token = await getIdToken(firebaseUser, true);
+        const res = await timeSyncFetch('/api/auth/validate', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        if (res.ok) {
+          updateNetworkTimeFromResponse(res);
+          setStatus('VALID');
+          setIsCriticalAuthFailure(false);
+          const savedUser = localStorage.getItem('planner_user');
+          let username = firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User';
+          if (savedUser) {
+            try {
+              const parsed = JSON.parse(savedUser);
+              if (parsed.username) username = parsed.username;
+            } catch (e) {
+              console.error(e);
+            }
+          }
+          const verifiedUser: User = {
+            id: firebaseUser.uid,
+            email: firebaseUser.email!,
+            username,
+            token
+          };
+          setCurrentUser(verifiedUser);
+          localStorage.setItem('planner_user', JSON.stringify(verifiedUser));
+        }
+      } catch (err) {
+        // Silent retry without toast spam
+      }
+    }, 60000);
+
+    return () => clearInterval(timer);
+  }, [status, setCurrentUser, setIsCriticalAuthFailure]);
 
   // Listen to external auth failure triggers (e.g. 401 or 403 from App sync operations)
   useEffect(() => {
@@ -350,11 +432,20 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
         );
       } else {
         // Offer normal data choice
-        const confirmMsg = isRtl 
-          ? 'کدام داده‌ها را ترجیح می‌دهید؟\n\nتایید (OK): آپلود داده‌های فعلی این مرورگر روی ابری\nلغو (Cancel): دانلود داده‌های ذخیره شده قبلی از ابری'
-          : 'Which data do you prefer?\n\nOK: Upload current local data to the cloud\nCancel: Download previous data from the cloud';
+        const cloudData = await onLoadData(verifiedUser);
+        const localTime = data.updatedAt ? new Date(data.updatedAt).getTime() : 0;
+        const cloudTime = cloudData?.updatedAt ? new Date(cloudData.updatedAt).getTime() : 0;
 
-        if (window.confirm(confirmMsg)) {
+        if (cloudData && cloudTime > localTime) {
+          setData(cloudData);
+          localStorage.setItem('planner_data', JSON.stringify(cloudData));
+          showToast(
+            isRtl 
+              ? 'اطلاعات ابری شما با موفقیت بارگیری و جایگزین شد!' 
+              : 'Cloud data loaded and replaced successfully!', 
+            'success'
+          );
+        } else {
           await onSyncData(verifiedUser, data);
           showToast(
             isRtl 
@@ -362,25 +453,6 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
               : 'Your local data has been synced to the cloud!', 
             'success'
           );
-        } else {
-          const cloudData = await onLoadData(verifiedUser);
-          if (cloudData) {
-            setData(cloudData);
-            localStorage.setItem('planner_data', JSON.stringify(cloudData));
-            showToast(
-              isRtl 
-                ? 'اطلاعات ابری شما با موفقیت بارگیری و جایگزین شد!' 
-                : 'Cloud data loaded and replaced successfully!', 
-              'success'
-            );
-          } else {
-            showToast(
-              isRtl 
-                ? 'داده‌ای روی سرور یافت نشد. از داده‌های محلی استفاده می‌شود.' 
-                : 'No data found on server. Keeping local data.', 
-              'success'
-            );
-          }
         }
       }
     } catch (err: any) {
@@ -391,14 +463,52 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
     }
   };
 
+  // Action: Google Re-login (INVALID / SERVER_RESET modal)
+  const handleGoogleReLogin = async () => {
+    setLoadingAction(true);
+    setErrorMsg(null);
+
+    try {
+      const loggedInUser = await clientGoogleLogin();
+      setCurrentUser(loggedInUser);
+      localStorage.setItem('planner_user', JSON.stringify(loggedInUser));
+      setStatus('VALID');
+      setIsCriticalAuthFailure(false);
+      setAuthFailureStatus(null);
+      setShowModal(false);
+      setPassword('');
+
+      if (pendingSyncData) {
+        showToast(
+          isRtl 
+            ? 'احراز هویت با موفقیت انجام شد. در حال همگام‌سازی کارهای معلق...' 
+            : 'Re-authenticated successfully. Syncing pending changes...', 
+          'success'
+        );
+        await onSyncData(loggedInUser, pendingSyncData);
+        setPendingSyncData(null);
+        showToast(
+          isRtl 
+            ? 'همگام‌سازی کارهای معلق با موفقیت به پایان رسید!' 
+            : 'Pending changes synced successfully!', 
+          'success'
+        );
+      }
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(getAuthErrorMessage(err, isRtl));
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  const isGoogleUser = Boolean(
+    auth.currentUser?.providerData?.some((p) => p.providerId === 'google.com')
+  );
+
   // Switch/Sign out of this account safely (preserves local planner state)
   const handleSignOutSafely = () => {
-    const confirmMsg = isRtl 
-      ? 'آیا مطمئن هستید؟ اطلاعات شما همچنان به صورت آفلاین در این مرورگر باقی می‌مانند.'
-      : 'Are you sure? Your data will remain offline in this browser.';
-
-    if (window.confirm(confirmMsg)) {
-      localStorage.removeItem('planner_user');
+    localStorage.removeItem('planner_user');
       setCurrentUser(null);
       setStatus('IDLE');
       setIsCriticalAuthFailure(false);
@@ -411,7 +521,6 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
           : 'Signed out successfully. Offline usage continued.', 
         'success'
       );
-    }
   };
 
   const handleContinueOffline = () => {
@@ -547,6 +656,39 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
                     <span>{isRtl ? 'حساب کاربری:' : 'Account:'} {currentUser.username}</span>
                   </div>
                   <span className="text-slate-400">{currentUser.email}</span>
+                </div>
+              )}
+
+              {/* Google Re-login Button & Note (Always visible if not suspended) */}
+              {status !== 'SUSPENDED' && (
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={handleGoogleReLogin}
+                    disabled={loadingAction}
+                    className="w-full bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 py-2.5 rounded-2xl text-sm font-bold shadow-xs active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                    </svg>
+                    <span>{isRtl ? 'ورود مجدد با حساب گوگل' : 'Re-authenticate with Google'}</span>
+                  </button>
+
+                  <div className="relative flex items-center justify-center my-0.5">
+                    <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200" /></div>
+                    <span className="relative px-2 bg-white text-[11px] text-slate-400 font-bold">{isRtl ? 'یا ورود با رمز عبور' : 'Or with password'}</span>
+                  </div>
+
+                  {isGoogleUser && (
+                    <div className="p-2.5 bg-amber-50 border border-amber-200/80 rounded-xl text-xs text-amber-800 font-medium leading-relaxed">
+                      {isRtl 
+                        ? 'حساب شما با گوگل ساخته شده و رمز عبور برنامه ندارد؛ از دکمه ورود با گوگل استفاده کنید' 
+                        : 'Your account was created with Google and does not have a password; please use the Google sign-in button.'}
+                    </div>
+                  )}
                 </div>
               )}
 

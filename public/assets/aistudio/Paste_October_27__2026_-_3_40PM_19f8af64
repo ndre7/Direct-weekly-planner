@@ -1,0 +1,539 @@
+T164-R
+T164-R
+T164-R
+====================================================================
+مأموریت: T164 بازصدارشده با انکرهای تازه + دو بهینه‌سازی سینک (تصمیم کاربر):
+  فاز الف) ۱۰ ویرایش اسکرول داخلی تب ۷ و تب ۵ (عین T164 اصلی — انکرهای گیت تازه شده)
+  فاز ب)  گارد سینک ۱: «تا اولین اسنپ‌شاتِ کاملِ سرور، هیچ push ابری ممنوع» + تعویق flush صف آفلاین تا بعد از اولین همگام‌سازی کامل
+  فاز ج)  گارد سینک ۲: ادغام per-document در کال‌بک ریموت — برنده = سرور، مگر سندِ محلیِ تغییر-اعلام‌نشده داشته باشد (حفظ ویرایش‌های محلیِ هنوز ارسال‌نشده + انتشار حذف‌های ریموت)
+ماهیت: فقط src/App.tsx و src/lib/firestoreSync.ts — هیچ فایل دیگری
+قفل مطلق (md5 باید دست‌نخورده بماند): src/types.ts، src/components/ClassSlotModal.tsx، src/lib/plannerSyncEngine.ts
+====================================================================
+
+قواعد الزامی (پروتکل همیشگی + تکمیلی):
+- کار فقط در ریشه پروژه (جایی که src/App.tsx هست).
+- محیط تو گیت ندارد. هر دستور git (حتی init/status/diff) ممنوع مطلق. قفل وضعیت = md5sum.
+- همه‌ی خروجی‌های ترمینال باید بین نشانگر بگذاری:
+  ===BEGIN <شناسه-گیت>===
+  ...خروجی خام...
+  ===END <شناسه-گیت>===
+  هیچ خروجی بیرون از نشانگر نگذار. این قاعده برای جلوگیری از خرابی ترنسکریپت الزامی است.
+- خروجی خام و کامل؛ خروجی خالی را عیناً و بدون توضیح جای‌گذاری کن.
+- هیچ ویرایشی قبل از سبز شدن کامل فاز ۰ ممنوع.
+- هر گیت FAIL شد: فوراً STOP — فقط شماره گیت + علت + خروجی خام همان گیت داخل نشانگر.
+- ممنوع مطلق تا اطلاع بعدی: commit / push / tag / merge / rebase / checkout / stash / restore / git init.
+
+====================================================================
+فاز ۰ — pre-flight (بدون هیچ ویرایش)
+====================================================================
+P1) pwd
+
+P2) md5sum src/App.tsx src/components/ClassSlotModal.tsx src/types.ts src/lib/plannerSyncEngine.ts src/lib/firestoreSync.ts
+    گیت GP2 (سخت): باید «دقیقاً» این پنج خط باشد:
+      eddc25a84219f2b7b80e2b05c8073cfb  src/App.tsx
+      89d18143a3ab00f4213d500254d3a325  src/components/ClassSlotModal.tsx
+      0734a56b27ae630b10786ad611a8d248  src/types.ts
+      5f378ab312b5c56ee28119acd45f7c8d  src/lib/plannerSyncEngine.ts
+      16c22b2e2519c46b4969f944580500d6  src/lib/firestoreSync.ts
+    هر مغایرت = STOP (وضعیت پایه از قفل T162-C جابه‌جا شده — بدون اجازه من ادامه نده).
+
+P3) پنجره‌های محتوا — برای هر ۶ مورد زیر، خروجی «grep -n -F '<الگو>' <فایل>» را بده و
+    سپس پنجره‌ی ±۳ خطِ دور هر hit را عیناً کپی کن:
+    W1) الگو: flushPendingSyncQueue(firebaseUser.uid).catch(() => {});            فایل: src/App.tsx            انتظار: دقیقاً ۱ hit
+    W2) الگو: // Guard 1: Skip auto-sync if change came from Firestore remote listener   فایل: src/App.tsx   انتظار: دقیقاً ۱ hit
+    W3) الگو: const unsub = subscribeToPlannerSubcollections(userId, (combinedData) => {  فایل: src/App.tsx   انتظار: دقیقاً ۱ hit
+    W4) الگو: updateMirrorFromSnapshot(userId, combinedData);                     فایل: src/lib/firestoreSync.ts   انتظار: دقیقاً ۱ hit
+    W5) الگو: export function subscribeToPlannerSubcollections(                   فایل: src/lib/firestoreSync.ts   انتظار: دقیقاً ۱ hit
+    W6) الگو: export default function App() {                                     فایل: src/App.tsx            انتظار: دقیقاً ۱ hit
+    گیت GW (سخت): اگر هر الگو ۰ hit یا بیش از ۱ hit داد = STOP.
+    اگر متن پنجره‌ی W1..W6 با «متن‌های مرجع» در فازهای ب و ج نخواند = STOP (پایه تو با مرجع من فرق دارد).
+
+P4) شمارش‌های پیش از ویرایش اسکرول — اجرا کن و خام بگذار:
+    grep -c 'p-6 shadow-xs flex flex-col min-h-\[400px\]' src/App.tsx            ← انتظار: 3
+    grep -c 'space-y-3 flex-1 overflow-y-auto pr-1' src/App.tsx                  ← انتظار: 3
+    grep -c 'shadow-xs p-5 flex flex-col min-h-\[400px\] min-h-0' src/App.tsx    ← انتظار: 2
+    grep -c 'flex-1 space-y-3 pr-1 overflow-y-auto' src/App.tsx                  ← انتظار: 2
+    grep -c 'max-h-\[65vh\]' src/App.tsx                                         ← انتظار: 0
+    گیت GP4: هر پنج عدد باید دقیقاً برابر انتظار باشد؛ هر مغایرت = STOP.
+
+====================================================================
+فاز الف — اسکرول: ۱۰ ویرایش تک‌خطی (عین T164 اصلی)
+====================================================================
+الگو: کارت‌ها سقف ارتفاع می‌گیرند (max-h-[65vh]) تا overflow-y-auto داخلی لیست‌ها فعال شود؛
+لیست‌ها min-h-0 می‌گیرند تا به‌عنوان فرزند flex اجازه کوچک‌شدن داشته باشند.
+
+A1) تب ۷ — سه کارت (انجام شده / انجام نشده / باقی‌مانده) — انتظار: اعمال روی 3 خط:
+    sed -i 's|p-6 shadow-xs flex flex-col min-h-\[400px\]|p-6 shadow-xs flex flex-col min-h-[400px] max-h-[65vh]|g' src/App.tsx
+
+A2) تب ۷ — سه لیست داخلی — انتظار: اعمال روی 3 خط:
+    sed -i 's|space-y-3 flex-1 overflow-y-auto pr-1|space-y-3 flex-1 min-h-0 overflow-y-auto pr-1|g' src/App.tsx
+
+A3) تب ۵ — دو کارت (رویدادهای هفته / افکار روزانه) — انتظار: اعمال روی 2 خط:
+    sed -i 's|shadow-xs p-5 flex flex-col min-h-\[400px\] min-h-0|shadow-xs p-5 flex flex-col min-h-[400px] max-h-[65vh]|g' src/App.tsx
+
+A4) تب ۵ — دو لیست — انتظار: اعمال روی 2 خط:
+    sed -i 's|flex-1 space-y-3 pr-1 overflow-y-auto|flex-1 min-h-0 space-y-3 pr-1 overflow-y-auto|g' src/App.tsx
+
+A5) تأیید پس از ویرایش — گیت GA5 (هر مغایرت = STOP):
+    grep -c 'max-h-\[65vh\]' src/App.tsx                                  ← انتظار: 5
+    grep -c 'min-h-\[400px\] max-h-\[65vh\]' src/App.tsx                  ← انتظار: 5
+    grep -c 'flex-1 min-h-0' src/App.tsx                                  ← انتظار: 5
+    grep -c 'space-y-3 flex-1 min-h-0 overflow-y-auto pr-1' src/App.tsx   ← انتظار: 3
+    grep -c 'flex-1 min-h-0 space-y-3 pr-1 overflow-y-auto' src/App.tsx   ← انتظار: 2
+    grep -c 'min-h-\[400px\] min-h-0' src/App.tsx                         ← انتظار: 0
+    grep -c 'min-h-0 overflow-y-auto' src/App.tsx                         ← انتظار: 3
+نکته: اگر sed در دسترس نبود، ویرایش دستی با «همین رشته‌های دقیق قبل/بعد» مجاز است.
+
+====================================================================
+فاز ب — گارد سینک ۱: تا اولین اسنپ‌شات کامل، push ممنوع
+====================================================================
+پس‌زمینه (برای فهم تو، بدون اقدام): آینه‌ی سینک فقط بعد از اولین موج اسنپ‌شات سرور پر می‌شود؛
+اگر کاربر در چند ثانیه‌ی اولِ لاگین (وقتی اسنپ‌شات کند است) چیزی تایپ کند، دیبانس ۲.۵ ثانیه‌ای
+ممکن است زودتر بجنبد و diff با «آینه‌ی خالی» = push کاملِ وضعیتِ کهنه = rollback داده‌ی دستگاه دیگر.
+راه‌حل: یک ref گارد + سیگنال onReady از لایه‌ی اشتراک + تعویق flush صف آفلاین.
+
+B1) در src/App.tsx — این بلوک را «بین» این دو خط موجود اضافه کن:
+    خط موجود ۱:   const isRemoteUpdateRef = useRef<boolean>(false);
+    خط موجود ۲:   const lastSavedDataJsonRef = useRef<string>('');
+    بلوک درجی (دقیقاً همین — با همین تورفتگی ۲ فاصله‌ای هم‌راستا با دو خط موجود):
+  // T164-R Phase B: blocks all cloud pushes until the first FULL remote snapshot has been
+  // merged (mirror = server truth). Prevents the stale-local-state boot race from
+  // overwriting newer server data when the first snapshot is slower than the 2.5s debounce.
+  const firstRemoteSyncDoneRef = useRef<boolean>(false);
+
+B2) در src/App.tsx — این سه خط موجود را:
+        setFirebaseUserUid(firebaseUser.uid);
+        flushPendingSyncQueue(firebaseUser.uid).catch(() => {});
+        try {
+    با این چهار خط جایگزین کن (خط flush حذف می‌شود):
+        setFirebaseUserUid(firebaseUser.uid);
+        // T164-R Phase B: the offline queue is NO LONGER flushed at auth time.
+        // It is deferred until the first full remote snapshot (onReady), so a stale
+        // queued payload can never be diffed against an empty mirror.
+        try {
+
+B3) در src/App.tsx — این دو خط موجود (در افکت auto-save که کامنت «Guard 1» دارد):
+    if (!currentUser || !currentUser.id) return;
+
+    // Guard 1: Skip auto-sync if change came from Firestore remote listener
+    با این پنج خط جایگزین کن:
+    if (!currentUser || !currentUser.id) return;
+
+    // T164-R Phase B: no cloud push until the first full remote snapshot has been merged.
+    // (localStorage persistence above still happens, so nothing is lost locally.)
+    if (!firstRemoteSyncDoneRef.current) return;
+
+    // Guard 1: Skip auto-sync if change came from Firestore remote listener
+    توجه: فقط همین یک نمونه؛ اگر همین الگوی دو خطی در جای دیگری هم بود، دست نزن و STOP گزارش کن.
+
+B4) در src/App.tsx — این دو خط موجود (آغاز handleOnline):
+    const handleOnline = async () => {
+      hasNotifiedOfflineThisSessionRef.current = false;
+      if (currentUser && currentUser.id) {
+    با این چهار خط جایگزین کن:
+    const handleOnline = async () => {
+      hasNotifiedOfflineThisSessionRef.current = false;
+      // T164-R Phase B: wait for first full remote sync before reconnect-sync
+      if (!firstRemoteSyncDoneRef.current) return;
+      if (currentUser && currentUser.id) {
+
+B5) در src/lib/firestoreSync.ts — این بلوک موجود (تورفتگی واقعی = صفر):
+export function subscribeToPlannerSubcollections(
+  userId: string,
+  onDataCombined: (data: Partial<PlannerData>) => void,
+  onError?: (error: Error) => void
+): () => void {
+با این بلوک جایگزین کن (بقیه‌ی بدنه‌ی تابع بدون تغییر سر جایش می‌ماند):
+export function subscribeToPlannerSubcollections(
+  userId: string,
+  onDataCombined: (data: Partial<PlannerData>) => void,
+  onError?: (error: Error) => void,
+  onReady?: () => void
+): () => void {
+  // T164-R Phase B: one-time "full first snapshot" readiness signal
+  const T164R_REQUIRED_READY = [
+    'categories', 'classesSchedule', 'dailyTasks', 'coreTasks', 'secondaryTasks', 'secondaryColumns',
+    'reminders', 'detailsColumns', 'examColumns', 'goals', 'postponedEvents', 'todoList',
+    'weeklyEvents', 'dailyThoughts', 'pomodoroHistory', 'waterTrackerHistory', 'habitTracking', 'timebox'
+  ];
+  let readySignalSent = false;
+
+B6) در src/lib/firestoreSync.ts — این سه خط موجود (داخل scheduleNotify):
+      // Update local mirror before invoking callback to prevent echo (B2)
+      updateMirrorFromSnapshot(userId, combinedData);
+      onDataCombined(combinedData);
+    با این دوازده خط جایگزین کن:
+      // Update local mirror before invoking callback to prevent echo (B2)
+      updateMirrorFromSnapshot(userId, combinedData);
+      // T164-R Phase B: fire one-time readiness signal when every collection + settings has delivered
+      // its first snapshot — after this point the sync mirror reflects the server and pushes are safe.
+      if (!readySignalSent && settingsReady && T164R_REQUIRED_READY.every(k => readyCollections.has(k))) {
+        readySignalSent = true;
+        if (onReady) {
+          try { onReady(); } catch (_) {}
+        }
+      }
+      onDataCombined(combinedData);
+
+====================================================================
+فاز ج — گارد سینک ۲: ادغام per-document (LWW) در کال‌بک ریموت
+====================================================================
+پس‌زمینه (برای فهم تو، بدون اقدام): merge فعلی هر کلید سطح-بالای state را با نسخه‌ی سرور
+«کامل جایگزین» می‌کند؛ اگر اسنپ‌شات ریموت در پنجره‌ی دیبانس ۲.۵ ثانیه‌ای برسد، ویرایش محلیِ
+هنوز-push-نشده بی‌صدا پاک می‌شود. راه‌حل: به‌ازای هر سند، سرور می‌برد مگر نسخه‌ی محلی با
+آینه‌ی سینک (آخرین وضعیت push/همگام) فرق داشته باشد = ویرایش محلیِ اعلام‌نشده → محلی می‌ماند
+و بعداً push می‌شود؛ حذفِ ریموت برای اسنادِ تمیز منتشر می‌شود.
+
+C1) در src/App.tsx — بلوک هلپرهای زیر را «دقیقاً بلافاصله قبل از» خط موجود
+    export default function App() {
+    درج کن (کلید تشخیص از P3/W6). کد درجی — دقیقاً همین، بدون تغییر حتی یک نویسه:
+
+// =====================================================================
+// T164-R — Phase J: per-document (LWW) merge helpers
+// Rule: server copy wins UNLESS the local copy carries an un-pushed change
+// (i.e. its content hash differs from the sync mirror of the last push/sync).
+// This preserves local edits that have not been uploaded yet, propagates
+// remote deletions for clean copies, and never resurrects stale data.
+// =====================================================================
+const T164R_LWW_LIST_KEYS = [
+  'categories', 'classesSchedule', 'coreTasks', 'secondaryTasks', 'secondaryTaskColumns',
+  'reminders', 'detailsColumns', 'examColumns', 'todoList', 'weeklyEvents', 'dailyThoughts',
+  'postponedEvents', 'timebox'
+];
+
+const t164rItemId = (it: any): string | undefined => {
+  if (!it || typeof it !== 'object') return undefined;
+  const id = it.id ?? it.goal_id;
+  return id !== undefined && id !== null ? String(id) : undefined;
+};
+
+const t164rMergeList = (userId: string, colName: string, localList: any, serverList: any): any[] => {
+  const mirror = getOrCreateMirror(userId);
+  const colMirror = mirror.collections[colName];
+  const lArr = Array.isArray(localList) ? localList : [];
+  const sArr = Array.isArray(serverList) ? serverList : [];
+  const lMap = new Map<string, any>();
+  for (const it of lArr) { const id = t164rItemId(it); if (id) lMap.set(id, it); }
+  const sMap = new Map<string, any>();
+  for (const it of sArr) { const id = t164rItemId(it); if (id) sMap.set(id, it); }
+  const isDirty = (item: any, id: string): boolean => {
+    const cached = colMirror ? colMirror.get(id) : undefined;
+    return cached === undefined || hashContent(deepStripUndefined(item)) !== cached;
+  };
+  const out: any[] = [];
+  for (const it of sArr) {
+    const id = t164rItemId(it);
+    if (!id) { out.push(it); continue; }
+    const loc = lMap.get(id);
+    out.push(loc && isDirty(loc, id) ? loc : it);
+  }
+  for (const it of lArr) {
+    const id = t164rItemId(it);
+    if (!id || sMap.has(id)) continue;
+    if (isDirty(it, id)) out.push(it);
+  }
+  return out;
+};
+
+const t164rMergeDailyTasks = (userId: string, localMap: any, serverMap: any): Record<string, any[]> => {
+  const mirror = getOrCreateMirror(userId);
+  const out: Record<string, any[]> = { saturday: [], sunday: [], monday: [], tuesday: [], wednesday: [], thursday: [], friday: [] };
+  const lObj = (localMap && typeof localMap === 'object') ? localMap : {};
+  const sObj = (serverMap && typeof serverMap === 'object') ? serverMap : {};
+  const keys = new Set<string>([...Object.keys(lObj), ...Object.keys(sObj)]);
+  for (const dayKey of keys) {
+    const locArr = Array.isArray(lObj[dayKey]) ? lObj[dayKey] : undefined;
+    const srvArr = Array.isArray(sObj[dayKey]) ? sObj[dayKey] : undefined;
+    const cached = mirror.dailyTasks.get(dayKey);
+    const dirty = !!locArr && (cached === undefined || hashContent(deepStripUndefined(locArr)) !== cached);
+    if (srvArr) out[dayKey] = dirty ? locArr! : srvArr;
+    else if (locArr && dirty) out[dayKey] = locArr;
+    // else: remote deletion of the whole day propagates (day stays [])
+  }
+  return out;
+};
+
+const t164rMergeGoals = (userId: string, localGoals: any, serverGoals: any): any[] => {
+  const mirror = getOrCreateMirror(userId);
+  const lArr = Array.isArray(localGoals) ? localGoals : [];
+  const sArr = Array.isArray(serverGoals) ? serverGoals : [];
+  const lMap = new Map<string, any>();
+  for (const g of lArr) { if (g && g.goal_id) lMap.set(String(g.goal_id), g); }
+  const sMap = new Map<string, any>();
+  for (const g of sArr) { if (g && g.goal_id) sMap.set(String(g.goal_id), g); }
+  const topDirty = (g: any, gid: string): boolean => {
+    const colMirror = mirror.collections['goals'];
+    const cached = colMirror ? colMirror.get(gid) : undefined;
+    if (cached === undefined) return true;
+    const { phases: _ph, ...top } = g;
+    return hashContent(deepStripUndefined(top)) !== cached;
+  };
+  const phaseDirty = (gid: string, p: any): boolean => {
+    const pm = mirror.goalPhases.get(gid);
+    if (!pm) return true;
+    const k = String(p.phase_number);
+    const cached = pm.get(k);
+    return cached === undefined || hashContent(deepStripUndefined(sanitizePhaseForStorage(p))) !== cached;
+  };
+  const out: any[] = [];
+  for (const sg of sArr) {
+    const gid = String(sg.goal_id);
+    const lg = lMap.get(gid);
+    if (!lg) { out.push(sg); continue; }
+    const lTopDirty = topDirty(lg, gid);
+    const lpMap = new Map<string, any>();
+    for (const p of (Array.isArray(lg.phases) ? lg.phases : [])) { if (p) lpMap.set(String(p.phase_number), p); }
+    const spMap = new Map<string, any>();
+    for (const p of (Array.isArray(sg.phases) ? sg.phases : [])) { if (p) spMap.set(String(p.phase_number), p); }
+    const phases: any[] = [];
+    for (const p of (Array.isArray(sg.phases) ? sg.phases : [])) {
+      const k = String(p.phase_number);
+      const lp = lpMap.get(k);
+      phases.push(lp && phaseDirty(gid, lp) ? lp : p);
+    }
+    for (const p of (Array.isArray(lg.phases) ? lg.phases : [])) {
+      const k = String(p.phase_number);
+      if (spMap.has(k)) continue;
+      if (phaseDirty(gid, p)) phases.push(p);
+    }
+    out.push({ ...(lTopDirty ? lg : sg), phases });
+  }
+  for (const lg of lArr) {
+    if (!lg || !lg.goal_id) continue;
+    const gid = String(lg.goal_id);
+    if (sMap.has(gid)) continue;
+    const lDirty = topDirty(lg, gid) || (Array.isArray(lg.phases) ? lg.phases : []).some((p: any) => p && phaseDirty(gid, p));
+    if (lDirty) out.push(lg);
+  }
+  return out;
+};
+
+C2) در src/App.tsx — کل بلوک موجود از خط «let isInitial = true;» تا خط «return () => unsub();»
+    (شامل کل کال‌بک subscribeToPlannerSubcollections) را با بلوک زیر جایگزین کن.
+    گیت پیش‌نیاز: بلوک قدیمی باید «مو‌به‌مو» با متن مرجع زیر بخواند؛ هر اختلاف = STOP.
+
+    متن مرجع بلوک قدیمی (باید عیناً موجود باشد):
+    let isInitial = true;
+    const unsub = subscribeToPlannerSubcollections(userId, (combinedData) => {
+      isRemoteUpdateRef.current = true;
+      if (isInitial) {
+        isInitial = false;
+        setDataRaw((prev) => {
+          const merged = { ...prev };
+          for (const [key, val] of Object.entries(combinedData)) {
+            if (val !== undefined) (merged as any)[key] = val;
+          }
+          const updated = syncAllTasksToDetails(merged);
+          lastSavedDataJsonRef.current = JSON.stringify(updated);
+          try {
+            localStorage.setItem('planner_data', JSON.stringify(updated));
+            if (currentUser) {
+              localStorage.setItem('planner_user', JSON.stringify({
+                id: currentUser.id,
+                email: currentUser.email || '',
+                username: currentUser.username || ''
+              }));
+            }
+          } catch (lsErr) {
+            console.warn('LocalStorage write error during initial subcollection sync:', lsErr);
+          }
+          return updated;
+        });
+      } else {
+        setDataRaw((prev) => {
+          const merged = { ...prev };
+          for (const [key, val] of Object.entries(combinedData)) {
+            if (val !== undefined) (merged as any)[key] = val;
+          }
+          const updated = syncAllTasksToDetails(merged);
+          const updatedJson = JSON.stringify(updated);
+          if (JSON.stringify(prev) !== updatedJson) {
+            lastSavedDataJsonRef.current = updatedJson;
+            try {
+              localStorage.setItem('planner_data', updatedJson);
+              if (currentUser) {
+                localStorage.setItem('planner_user', JSON.stringify({
+                  id: currentUser.id,
+                  email: currentUser.email || '',
+                  username: currentUser.username || ''
+                }));
+              }
+            } catch (lsErr) {
+              console.warn('LocalStorage write error during subcollection sync:', lsErr);
+            }
+            return updated;
+          }
+          return prev;
+        });
+      }
+    }, (subErr) => {
+      console.warn('[Firestore Subscription Error]', subErr);
+    });
+
+    return () => unsub();
+
+    بلوک جدید (جایگزین) — دقیقاً همین:
+    let isInitial = true;
+    // T164-R Phase B: fallback — if the readiness signal never arrives (e.g. a listener
+    // exhausted retries), open the push gate after 30s so the app is not permanently muted.
+    const gateFallbackTimer = setTimeout(() => {
+      if (!firstRemoteSyncDoneRef.current) {
+        firstRemoteSyncDoneRef.current = true;
+        console.warn('[T164-R] Push-gate fallback opened after 30s without full readiness.');
+      }
+    }, 30000);
+    const unsub = subscribeToPlannerSubcollections(userId, (combinedData) => {
+      if (isInitial) {
+        isInitial = false;
+        // Initial merge: server wins per top-level key (correct for a stale boot).
+        setDataRaw((prev) => {
+          const merged = { ...prev };
+          for (const [key, val] of Object.entries(combinedData)) {
+            if (val !== undefined) (merged as any)[key] = val;
+          }
+          const updated = syncAllTasksToDetails(merged);
+          isRemoteUpdateRef.current = true;
+          lastSavedDataJsonRef.current = JSON.stringify(updated);
+          try {
+            localStorage.setItem('planner_data', JSON.stringify(updated));
+            if (currentUser) {
+              localStorage.setItem('planner_user', JSON.stringify({
+                id: currentUser.id,
+                email: currentUser.email || '',
+                username: currentUser.username || ''
+              }));
+            }
+          } catch (lsErr) {
+            console.warn('LocalStorage write error during initial subcollection sync:', lsErr);
+          }
+          return updated;
+        });
+      } else {
+        // T164-R Phase J: per-document LWW merge — server wins unless the local copy
+        // carries an un-pushed change (differs from the sync mirror).
+        setDataRaw((prev) => {
+          const merged: any = { ...prev };
+          let keptLocalDirty = false;
+          for (const [key, val] of Object.entries(combinedData)) {
+            if (val === undefined) continue;
+            if (key === 'dailyTasks') {
+              const m = t164rMergeDailyTasks(userId, (prev as any).dailyTasks, val);
+              if (JSON.stringify(m) !== JSON.stringify(val)) keptLocalDirty = true;
+              merged.dailyTasks = m;
+            } else if (key === 'goals') {
+              const m = t164rMergeGoals(userId, (prev as any).goals, val);
+              if (JSON.stringify(m) !== JSON.stringify(val)) keptLocalDirty = true;
+              merged.goals = m;
+            } else if (T164R_LWW_LIST_KEYS.includes(key)) {
+              const m = t164rMergeList(userId, key, (prev as any)[key], val);
+              if (JSON.stringify(m) !== JSON.stringify(val)) keptLocalDirty = true;
+              merged[key] = m;
+            } else {
+              merged[key] = val;
+            }
+          }
+          const updated = syncAllTasksToDetails(merged);
+          const updatedJson = JSON.stringify(updated);
+          if (JSON.stringify(prev) !== updatedJson || keptLocalDirty) {
+            if (keptLocalDirty) {
+              // Local un-pushed work survived the merge — isRemoteUpdateRef stays false
+              // so the auto-save effect treats this as a local edit and pushes it.
+            } else {
+              isRemoteUpdateRef.current = true;
+              lastSavedDataJsonRef.current = updatedJson;
+            }
+            try {
+              localStorage.setItem('planner_data', updatedJson);
+              if (currentUser) {
+                localStorage.setItem('planner_user', JSON.stringify({
+                  id: currentUser.id,
+                  email: currentUser.email || '',
+                  username: currentUser.username || ''
+                }));
+              }
+            } catch (lsErr) {
+              console.warn('LocalStorage write error during subcollection sync:', lsErr);
+            }
+            return updated;
+          }
+          return prev;
+        });
+      }
+    }, (subErr) => {
+      console.warn('[Firestore Subscription Error]', subErr);
+    }, () => {
+      // T164-R Phase B: first FULL snapshot set has been merged (mirror = server truth).
+      firstRemoteSyncDoneRef.current = true;
+      clearTimeout(gateFallbackTimer);
+      flushPendingSyncQueue(userId).catch(() => {});
+    });
+
+    return () => {
+      clearTimeout(gateFallbackTimer);
+      unsub();
+    };
+
+    توجه: پرانتز بستن subscribeToPlannerSubcollections حالا «چهار» آرگومان دارد
+    (onDataCombined، onError، onReady). اگر بلوک قدیمی بعد از
+    console.warn('[Firestore Subscription Error]', subErr);
+    بسته شده بود، الان بستن تابع باید بعد از بلوک onReady باشد — مطابق بلوک جدید بالا.
+
+====================================================================
+فاز د — گیت‌های پایانی (بعد از تمام ویرایش‌های فازهای الف/ب/ج)
+====================================================================
+G1) شمارش‌های جدید — اجرا کن و خام بگذار (گیت GD1 — هر مغایرت = STOP):
+    grep -c 'firstRemoteSyncDoneRef' src/App.tsx                ← انتظار: 6
+    grep -c 'gateFallbackTimer' src/App.tsx                     ← انتظار: 3
+    grep -c 'keptLocalDirty' src/App.tsx                        ← انتظار: 6
+    grep -c 'T164R_LWW_LIST_KEYS' src/App.tsx                   ← انتظار: 2
+    grep -c 't164rItemId' src/App.tsx                           ← انتظار: 5
+    grep -c 't164rMergeList' src/App.tsx                        ← انتظار: 2
+    grep -c 't164rMergeDailyTasks' src/App.tsx                  ← انتظار: 2
+    grep -c 't164rMergeGoals' src/App.tsx                       ← انتظار: 2
+    grep -c "from './lib/plannerSyncEngine.ts'" src/App.tsx     ← انتظار: 1
+    grep -c 'onReady' src/lib/firestoreSync.ts                  ← انتظار: 3
+    grep -c 'T164R_REQUIRED_READY' src/lib/firestoreSync.ts     ← انتظار: 2
+    grep -c 'readySignalSent' src/lib/firestoreSync.ts          ← انتظار: 3
+
+G2) گیت کامپایل ضد-دستکاری:
+    npx tsc --noEmit --pretty false 2>&1 | md5sum
+    گیت GD2: خروجی باید «دقیقاً» باشد:
+      d41d8cd98f00b204e9800998ecf8427e  -
+    (یعنی خروجی tsc کاملاً خالی — حتی یک خطای تایپ = STOP)
+
+G3) گیت بیلد:
+    npx vite build 2>&1 | tail -5
+    گیت GD3: باید خط «✓ built in ...» را ببینی و هیچ «error»ی در tail نباشد.
+
+G4) قفل نهایی:
+    md5sum src/App.tsx src/components/ClassSlotModal.tsx src/types.ts src/lib/plannerSyncEngine.ts src/lib/firestoreSync.ts
+    گیت GD4 (سخت):
+      ClassSlotModal.tsx = 89d18143a3ab00f4213d500254d3a325  (تغییرناپذیر)
+      types.ts           = 0734a56b27ae630b10786ad611a8d248  (تغییرناپذیر)
+      plannerSyncEngine.ts = 5f378ab312b5c56ee28119acd45f7c8d (تغییرناپذیر)
+      App.tsx و firestoreSync.ts = مقادیر «جدید» — عیناً خام گزارش کن (قفل‌های جدید CB-3).
+
+G5) پابرجای فاز الف:
+    grep -c 'max-h-\[65vh\]' src/App.tsx   ← انتظار: 5
+
+====================================================================
+فرمت گزارش پاسخ — دقیقاً همین ترتیب، همه‌ی خروجی‌ها داخل نشانگر BEGIN/END:
+====================================================================
+(۱) خط اول: سه بار T164-R
+(۲) فاز ۰: خروجی خام P1..P4 + verdict گیت‌های GP2/GW/GP4
+(۳) فاز الف: خروجی خام A5 + verdict GA5
+(۴) فاز ب: تایید انجام B1..B6 (برای هر مورد: grep -n بعد از ویرایش با ±۲ خط)
+(۵) فاز ج: برای C1 فقط grep -n 'T164R — Phase J' و grep -n 't164rMergeGoals' با ±۲ خط؛
+    برای C2 grep -n 'Push-gate fallback' و grep -n 'keptLocalDirty' با ±۲ خط
+(۶) فاز د: خروجی خام G1..G5 + verdict های GD1..GD5
+(۷) اگر در هر نقطه STOP شدی: فقط شماره گیت + علت + خروجی خام همان گیت داخل نشانگر.
+
+ممنوعیت‌های پایانی: هیچ git (حتی init/status) / commit / push / tag.
+تغییرات باید «کامیت‌نشده/بدون گیت» روی دیسک بماند — بازبینی hunk به hunk با من است.
+====================================================================
+یادداشت برای کاربر (تو اجرا نکن — فقط در پایان گزارش عیناً نقل کن):
+۱) بعد از این مأموریت، هر بار اپ را روی دستگاهی باز کردی: ۵-۱۰ ثانیه صبر کن تا لیست‌ها
+   به‌روز شوند، بعد شروع به کار کن. ویرایش‌هایی که «قبل از» اولین همگام‌سازی کامل انجام شوند
+   توسط طراحی با نسخه سرور جایگزین می‌شوند (حفاظتی عمدی در برابر rollback).
+۲) قبل از هر ریسک بزرگ (تعویض دستگاه، آپدیت، پاک‌سازی) از داخل تنظیمات برنامه Export بگیر.
+====================================================================

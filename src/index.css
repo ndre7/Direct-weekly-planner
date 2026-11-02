@@ -27,6 +27,125 @@
   --slate-700: #f3f4f6;
   --slate-800: #f9fafb;
   --slate-900: #ffffff;
+
+  --color-emerald-50: #0b0f19;
+  --color-emerald-100: #1f2937;
+  --color-emerald-800: #f9fafb;
+  --color-emerald-900: #ffffff;
+
+  --color-amber-50: #0b0f19;
+  --color-amber-100: #1f2937;
+  --color-amber-800: #f9fafb;
+  --color-amber-900: #ffffff;
+
+  --color-rose-50: #0b0f19;
+  --color-rose-100: #1f2937;
+  --color-rose-800: #f9fafb;
+  --color-rose-900: #ffffff;
+
+  --color-blue-50: #0b0f19;
+  --color-blue-100: #1f2937;
+  --color-blue-800: #f9fafb;
+  --color-blue-900: #ffffff;
+
+  --color-indigo-50: #0b0f19;
+  --color-indigo-100: #1f2937;
+  --color-indigo-800: #f9fafb;
+  --color-indigo-900: #ffffff;
+
+  --color-sky-50: #0b0f19;
+  --color-sky-100: #1f2937;
+  --color-sky-800: #f9fafb;
+  --color-sky-900: #ffffff;
+
+  --color-teal-50: #0b0f19;
+  --color-teal-100: #1f2937;
+  --color-teal-800: #f9fafb;
+  --color-teal-900: #ffffff;
+
+  --color-green-50: #0b0f19;
+  --color-green-100: #1f2937;
+  --color-green-800: #f9fafb;
+  --color-green-900: #ffffff;
+
+  --color-red-50: #0b0f19;
+  --color-red-100: #1f2937;
+  --color-red-800: #f9fafb;
+  --color-red-900: #ffffff;
+
+  --color-purple-50: #0b0f19;
+  --color-purple-100: #1f2937;
+  --color-purple-800: #f9fafb;
+  --color-purple-900: #ffffff;
+
+  --color-violet-50: #0b0f19;
+  --color-violet-100: #1f2937;
+  --color-violet-800: #f9fafb;
+  --color-violet-900: #ffffff;
+
+  --color-fuchsia-50: #0b0f19;
+  --color-fuchsia-100: #1f2937;
+  --color-fuchsia-800: #f9fafb;
+  --color-fuchsia-900: #ffffff;
+
+  --color-pink-50: #0b0f19;
+  --color-pink-100: #1f2937;
+  --color-pink-800: #f9fafb;
+  --color-pink-900: #ffffff;
+
+  --color-cyan-50: #0b0f19;
+  --color-cyan-100: #1f2937;
+  --color-cyan-800: #f9fafb;
+  --color-cyan-900: #ffffff;
+
+  --color-lime-50: #0b0f19;
+  --color-lime-100: #1f2937;
+  --color-lime-800: #f9fafb;
+  --color-lime-900: #ffffff;
+
+  --color-yellow-50: #0b0f19;
+  --color-yellow-100: #1f2937;
+  --color-yellow-800: #f9fafb;
+  --color-yellow-900: #ffffff;
+
+  --color-orange-50: #0b0f19;
+  --color-orange-100: #1f2937;
+  --color-orange-800: #f9fafb;
+  --color-orange-900: #ffffff;
+
+  --color-zinc-50: #0b0f19;
+  --color-zinc-100: #1f2937;
+  --color-zinc-800: #f9fafb;
+  --color-zinc-900: #ffffff;
+
+  --color-stone-50: #0b0f19;
+  --color-stone-100: #1f2937;
+  --color-stone-800: #f9fafb;
+  --color-stone-900: #ffffff;
+}
+
+.dark .text-white {
+  color: #f8fafc;
+}
+
+.dark .text-white\/90 {
+  color: rgba(248, 250, 252, 0.9);
+}
+
+.dark .text-white\/80 {
+  color: rgba(248, 250, 252, 0.8);
+}
+
+.dark .text-white\/70 {
+  color: rgba(248, 250, 252, 0.7);
+}
+
+.dark .text-white\/60 {
+  color: rgba(248, 250, 252, 0.6);
+}
+
+.dark .text-white\/50 {
+  color: rgba(248, 250, 252, 0.5);
 }
 
 @theme {

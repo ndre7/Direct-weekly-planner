@@ -26,11 +26,12 @@ import {
 } from 'lucide-react';
 import { collection, getDocs } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase.ts';
-import { PlannerData, Category } from '../types';
+import { PlannerData, Category, CoreTask, SecondaryTask, DailyTask, DetailsColumn, PostponedEvent, NoteItem } from '../types';
 import { safeParseJson, getCachedGmailToken, connectGmail } from '../lib/auth.ts';
 import { isLeapJalali, jalaliToGregorian, getTodayJalali, JALALI_MONTHS, getDaysInJalaliMonth, getJalaliWeekday } from '../utils/jalali.ts';
 import { buildAnalyticsReport, ReportTimeframe } from '../utils/reportBuilder';
 import { buildAnalyticsEmailHtml, sendGmailEmail } from '../lib/gmailReminders';
+import { apiFetch } from '../services/apiKeyService';
 
 const iconMap: Record<string, any> = {
   AlertTriangle,
@@ -51,6 +52,11 @@ interface AnalyticsTabProps {
 }
 
 type Timeframe = 'weekly' | 'monthly' | '6months' | 'annual';
+
+const getDailyTaskLists = (dailyTasks?: Record<string, DailyTask[]>): DailyTask[][] => {
+  if (!dailyTasks) return [];
+  return Object.values(dailyTasks) as DailyTask[][];
+};
 
 // Parse data.month («1405 خرداد»): year = tokens[0], month = tokens[1] with validation + fallback
 function parseMonthYear(data: PlannerData): { year: number; monthName: string } {
@@ -180,7 +186,91 @@ function getCategoryHexColor(colorStr?: string, defaultIndex: number = 0): strin
   return DEFAULT_CATEGORY_COLORS[defaultIndex % DEFAULT_CATEGORY_COLORS.length];
 }
 
-// P5: Automatically find the month and year with the latest activity
+// Helper that combines active data and all archived weeks for uninterrupted analytics
+export function getCombinedAnalyticsData(data: PlannerData) {
+  const combinedCoreTasks: CoreTask[] = [...(data.coreTasks || [])];
+  const combinedSecondaryTasks: SecondaryTask[] = [...(data.secondaryTasks || [])];
+  const combinedDailyTasks: Record<string, DailyTask[]> = {};
+  if (data.dailyTasks) {
+    for (const [k, v] of Object.entries(data.dailyTasks)) {
+      if (Array.isArray(v)) {
+        combinedDailyTasks[k] = [...v];
+      }
+    }
+  }
+
+  // Combine detailsColumns
+  const detailsColMap = new Map<string, DetailsColumn>();
+  (data.detailsColumns || []).forEach(col => {
+    detailsColMap.set(col.id, { ...col, items: [...(col.items || [])] });
+  });
+
+  // Combine examColumns
+  const examColMap = new Map<string, DetailsColumn>();
+  (data.examColumns || []).forEach(col => {
+    examColMap.set(col.id, { ...col, items: [...(col.items || [])] });
+  });
+
+  const combinedPostponedEvents: PostponedEvent[] = [...(data.postponedEvents || [])];
+  const combinedWeeklyEvents: NoteItem[] = [...(data.weeklyEvents || [])];
+
+  (data.archive || []).forEach(w => {
+    if (w.items) {
+      if (w.items.coreTasks) combinedCoreTasks.push(...w.items.coreTasks);
+      if (w.items.secondaryTasks) combinedSecondaryTasks.push(...w.items.secondaryTasks);
+      if (w.items.dailyTasks) {
+        w.items.dailyTasks.forEach(dt => {
+          if (!combinedDailyTasks[dt.dayKey]) combinedDailyTasks[dt.dayKey] = [];
+          combinedDailyTasks[dt.dayKey].push(...dt.tasks);
+        });
+      }
+      if (w.items.detailItems) {
+        w.items.detailItems.forEach(it => {
+          const col = detailsColMap.get(it.columnId);
+          if (col) {
+            col.items.push(it);
+          } else {
+            detailsColMap.set(it.columnId, {
+              id: it.columnId,
+              titleFa: it.columnTitle || '',
+              titleEn: it.columnTitle || '',
+              items: [it]
+            });
+          }
+        });
+      }
+      if (w.items.examItems) {
+        w.items.examItems.forEach(it => {
+          const col = examColMap.get(it.columnId);
+          if (col) {
+            col.items.push(it);
+          } else {
+            examColMap.set(it.columnId, {
+              id: it.columnId,
+              titleFa: it.columnTitle || '',
+              titleEn: it.columnTitle || '',
+              items: [it]
+            });
+          }
+        });
+      }
+      if (w.items.postponedEvents) combinedPostponedEvents.push(...w.items.postponedEvents);
+      if (w.items.weeklyEvents) combinedWeeklyEvents.push(...w.items.weeklyEvents);
+    }
+  });
+
+  return {
+    coreTasks: combinedCoreTasks,
+    secondaryTasks: combinedSecondaryTasks,
+    dailyTasks: combinedDailyTasks,
+    detailsColumns: Array.from(detailsColMap.values()),
+    examColumns: Array.from(examColMap.values()),
+    postponedEvents: combinedPostponedEvents,
+    weeklyEvents: combinedWeeklyEvents
+  };
+}
+
+// P5: Automatically find the month and year with the latest activity (Active + Archived)
 function findLatestActivityMonth(data: PlannerData): { year: number; monthName: string } {
   let latestDate: { year: number; monthName: string } | null = null;
   let maxWeight = -1;
@@ -202,18 +292,20 @@ function findLatestActivityMonth(data: PlannerData): { year: number; monthName: 
     }
   };
 
-  (data.coreTasks || []).forEach(t => {
+  const combined = getCombinedAnalyticsData(data);
+
+  combined.coreTasks.forEach(t => {
     if (t.status === 'completed') checkDateStr(t.completionDate);
   });
-  (data.secondaryTasks || []).forEach(t => {
+  combined.secondaryTasks.forEach(t => {
     if (t.status === 'completed') checkDateStr(t.completionDate);
   });
-  Object.values(data.dailyTasks || {}).forEach(tasks => {
+  Object.values(combined.dailyTasks).forEach(tasks => {
     tasks.forEach(t => {
       if (t.status === 'completed') checkDateStr(t.completionDate);
     });
   });
-  (data.detailsColumns || []).forEach(col => {
+  combined.detailsColumns.forEach(col => {
     (col.items || []).forEach(item => {
       if (item.completed) checkDateStr(item.date);
     });
@@ -226,7 +318,7 @@ function findLatestActivityMonth(data: PlannerData): { year: number; monthName: 
   return { year: today.year, monthName: today.monthName };
 }
 
-export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) {
+export default function AnalyticsTab({ data: rawData, onUpdateData }: AnalyticsTabProps) {
   const [timeframe, setTimeframe] = useState<Timeframe>('weekly');
   const [viewType, setViewType] = useState<'calendar' | 'semester'>('calendar');
   const [selectedSemester, setSelectedSemester] = useState<'current' | 'prev1' | 'prev2'>('current');
@@ -235,6 +327,19 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
   const [donutType, setDonutType] = useState<'success' | 'failed'>('success');
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
   const [clickedActions, setClickedActions] = useState<Record<string, boolean>>({});
+
+  // Unify active data + all archived weeks for uninterrupted metrics
+  const combined = useMemo(() => getCombinedAnalyticsData(rawData), [rawData]);
+  const data = useMemo<PlannerData>(() => ({
+    ...rawData,
+    coreTasks: combined.coreTasks,
+    secondaryTasks: combined.secondaryTasks,
+    dailyTasks: combined.dailyTasks,
+    detailsColumns: combined.detailsColumns,
+    examColumns: combined.examColumns,
+    postponedEvents: combined.postponedEvents,
+    weeklyEvents: combined.weeklyEvents,
+  }), [rawData, combined]);
 
   // P5 & Capability 1: Dynamic Heatmap Month and Day Inspector
   const defaultHeatmapMonth = useMemo(() => findLatestActivityMonth(data), [data]);
@@ -331,9 +436,23 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
     setIsAnalyzing(true);
     setAiError(null);
     try {
-      const response = await fetch('/api/gemini/analyze-planner', {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      try {
+        const storedKeys = localStorage.getItem('planner_gemini_keys');
+        if (storedKeys) {
+          const parsed = JSON.parse(storedKeys);
+          if (Array.isArray(parsed)) {
+            const valid = parsed.map((k: any) => String(k).trim()).filter(Boolean);
+            if (valid.length > 0) {
+              headers['x-gemini-keys'] = valid.join(',');
+            }
+          }
+        }
+      } catch (_) {}
+
+      const response = await apiFetch('/api/gemini/analyze-planner', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ plannerData: data })
       });
       if (!response.ok) {
@@ -445,7 +564,7 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
     let failedDaily = 0;
 
     if (data.dailyTasks) {
-      Object.values(data.dailyTasks).forEach((dayTasks) => {
+      getDailyTaskLists(data.dailyTasks).forEach((dayTasks) => {
         dayTasks.forEach(t => {
           if (t.categoryId === 'university' && isUniversityInactive) return;
           if (t.categoryId === 'language' && isLanguageInactive) return;
@@ -613,7 +732,7 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
       (data.secondaryTasks || []).forEach(t => {
         if (t.status === 'completed' && t.categoryId === cat.id) count++;
       });
-      Object.values(data.dailyTasks || {}).forEach(tasks => {
+      getDailyTaskLists(data.dailyTasks).forEach(tasks => {
         tasks.forEach(t => {
           if (t.status === 'completed' && t.categoryId === cat.id) count++;
         });
@@ -1023,7 +1142,7 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
             const tasks: Array<{ id: string; title: string; category: string; type: string }> = [];
 
             // 1. Daily tasks
-            Object.values(data.dailyTasks || {}).forEach(taskList => {
+            getDailyTaskLists(data.dailyTasks).forEach(taskList => {
               (taskList || []).forEach(t => {
                 if (t.status === 'completed' && isSameDate(t.completionDate, m.year, m.index, dayNumber)) {
                   count++;
@@ -1124,7 +1243,7 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
         (data.secondaryTasks || []).forEach(t => {
           if (t.status === 'completed' && t.categoryId === cat.id) count++;
         });
-        Object.values(data.dailyTasks || {}).forEach(tasks => {
+        getDailyTaskLists(data.dailyTasks).forEach(tasks => {
           tasks.forEach(t => {
             if (t.status === 'completed' && t.categoryId === cat.id) count++;
           });
@@ -1136,7 +1255,7 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
         (data.secondaryTasks || []).forEach(t => {
           if (t.status === 'failed' && t.categoryId === cat.id) count++;
         });
-        Object.values(data.dailyTasks || {}).forEach(tasks => {
+        getDailyTaskLists(data.dailyTasks).forEach(tasks => {
           tasks.forEach(t => {
             if (t.status === 'failed' && t.categoryId === cat.id) count++;
           });
@@ -1160,7 +1279,7 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
       let totalCompleted = 0;
       (data.coreTasks || []).forEach(t => { if (t.status === 'completed') totalCompleted++; });
       (data.secondaryTasks || []).forEach(t => { if (t.status === 'completed') totalCompleted++; });
-      Object.values(data.dailyTasks || {}).forEach(tasks => {
+      getDailyTaskLists(data.dailyTasks).forEach(tasks => {
         tasks.forEach(t => { if (t.status === 'completed') totalCompleted++; });
       });
       const otherCount = Math.max(0, totalCompleted - sumKnown);
@@ -1181,7 +1300,7 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
       let totalFailed = 0;
       (data.coreTasks || []).forEach(t => { if (t.status === 'failed') totalFailed++; });
       (data.secondaryTasks || []).forEach(t => { if (t.status === 'failed') totalFailed++; });
-      Object.values(data.dailyTasks || {}).forEach(tasks => {
+      getDailyTaskLists(data.dailyTasks).forEach(tasks => {
         tasks.forEach(t => { if (t.status === 'failed') totalFailed++; });
       });
       totalFailed += (data.postponedEvents || []).length;
@@ -1292,7 +1411,7 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
           if (t.status === 'completed') completed++;
         }
       });
-      Object.values(data.dailyTasks || {}).forEach(tasks => {
+      getDailyTaskLists(data.dailyTasks).forEach(tasks => {
         tasks.forEach(t => {
           if (t.categoryId === cat.id) {
             total++;
@@ -2224,8 +2343,16 @@ export default function AnalyticsTab({ data, onUpdateData }: AnalyticsTabProps) 
         </div>
 
         {aiError && (
-          <div dir="rtl" className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200/60 text-xs font-bold text-rose-600 text-right">
-            ⚠️ {aiError}
+          <div dir="rtl" className="mb-4 p-3.5 rounded-2xl bg-rose-50 border border-rose-200/80 text-xs font-bold text-rose-700 text-right space-y-1">
+            <div className="flex items-center gap-1.5">
+              <span>⚠️</span>
+              <span>{aiError}</span>
+            </div>
+            {aiError.includes('تنظیمات') && (
+              <p className="text-[10px] text-rose-600 font-medium">
+                💡 راهنما: از منوی کناری وارد «تنظیمات پیشرفته» شوید و در بخش «کلیدهای Gemini (هوش مصنوعی)» کلید API خود را ذخیره کنید.
+              </p>
+            )}
           </div>
         )}
 

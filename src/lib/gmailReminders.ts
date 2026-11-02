@@ -23,8 +23,14 @@ export function getOffsetLabelFa(offset?: ReminderOffset): string {
 
 export function parseItemDeadlineMs(item: any, defaultYear: number = 1405): number | null {
   try {
-    if (item.date && typeof item.date === 'string') {
-      const parts = item.date.trim().split(' ')[0].split('/');
+    const rawDateStr = (typeof item?.date === 'string' && item.date) 
+      ? item.date 
+      : (typeof item?.deadline === 'string' && item.deadline) 
+      ? item.deadline 
+      : null;
+
+    if (rawDateStr) {
+      const parts = rawDateStr.trim().split(' ')[0].split(/[/.\-]/);
       if (parts.length === 3) {
         const y = parseInt(parts[0], 10);
         const m = parseInt(parts[1], 10);
@@ -33,8 +39,8 @@ export function parseItemDeadlineMs(item: any, defaultYear: number = 1405): numb
           const gDate = jalaliToGregorian(y, m, d);
           let hour = 9;
           let min = 0;
-          if (item.date.includes(' ')) {
-            const timePart = item.date.split(' ')[1];
+          if (rawDateStr.includes(' ')) {
+            const timePart = rawDateStr.split(' ')[1];
             if (timePart.includes(':')) {
               hour = parseInt(timePart.split(':')[0], 10) || 9;
               min = parseInt(timePart.split(':')[1], 10) || 0;

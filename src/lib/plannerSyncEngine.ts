@@ -1,6 +1,6 @@
 import { doc, writeBatch } from 'firebase/firestore';
 import { db } from './firebase.ts';
-import { jalaliToGregorian } from '../utils/jalali.ts';
+import { jalaliToGregorian, getTodayTehranISO } from '../utils/jalali.ts';
 import { 
   PlannerData, 
   Category, 
@@ -57,7 +57,7 @@ export function resetMirror(userId: string): void {
  */
 export function normalizeToDateISO(val: any): string {
   if (!val) {
-    return new Date().toISOString().split('T')[0];
+    return getTodayTehranISO();
   }
 
   const strVal = String(val).trim();
@@ -69,14 +69,14 @@ export function normalizeToDateISO(val: any): string {
 
   // ISO Datetime string (2026-07-28T04:15:00...)
   if (strVal.includes('T') && !isNaN(Date.parse(strVal))) {
-    return new Date(strVal).toISOString().split('T')[0];
+    return getTodayTehranISO(new Date(strVal));
   }
 
   // Numeric timestamp
   if (/^\d+$/.test(strVal)) {
     const num = Number(strVal);
     const ms = num < 10000000000 ? num * 1000 : num;
-    return new Date(ms).toISOString().split('T')[0];
+    return getTodayTehranISO(new Date(ms));
   }
 
   // Jalali format e.g. "1405/05/03" or "1405-05-03"
@@ -95,7 +95,7 @@ export function normalizeToDateISO(val: any): string {
     }
   }
 
-  return new Date().toISOString().split('T')[0];
+  return getTodayTehranISO();
 }
 
 /**
@@ -226,7 +226,8 @@ export function extractScalarSettings(state: Partial<PlannerData>): Record<strin
     'notesTitle', 'todoTitle', 'coreTasksTitle', 'examsAndPresentationsTitle',
     'emailRemindersGlobalEnabled', 'emailReminderDefaultOffset', 'reminderEmailTargetType',
     'reminderCustomEmail', 'notes', 'weekStartDay', 'weekEndDay', 'weekYear', 'weekEndYear',
-    'weekMonth', 'weekEndMonth'
+    'weekMonth', 'weekEndMonth', 'archive',
+    'notesArchive'
   ];
 
   for (const key of allowedScalarKeys) {
@@ -253,7 +254,7 @@ export function extractScalarSettings(state: Partial<PlannerData>): Record<strin
 
   // Ironclad guard: ensure no stray objects or arrays leak to parent doc (preserving 1MB limit)
   for (const [k, v] of Object.entries(scalarSettings)) {
-    if (k !== 'pomodoro' && k !== 'waterTracker' && k !== 'classStatusList' && k !== 'activeDayKeys') {
+    if (k !== 'pomodoro' && k !== 'waterTracker' && k !== 'classStatusList' && k !== 'activeDayKeys' && k !== 'archive') {
       if (typeof v === 'object' && v !== null) {
         console.warn(`[Parent Doc Guard] Stripping unexpected non-scalar field '${k}' from parent document.`);
         delete scalarSettings[k];

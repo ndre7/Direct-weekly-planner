@@ -1,0 +1,700 @@
+T161-F
+T161-F
+T161-F
+NONCE=T161F-8D2M
+====================================================================
+مأموریت: T161-مرحلهٔ ۲ — فیکس کامل «ویرایشگر اهداف + برنشدن نقشهٔ راه AI»
+فایل‌های مجاز ویرایش (فقط این چهار): server.ts / src/types.ts /
+src/components/GoalsTab.tsx / فایل جدید src/components/GoalEditorModal.tsx
+منجمد مطلق (هیچ تغییری حتی یک بایت): src/App.tsx، src/lib/firestoreSync.ts،
+src/lib/plannerSyncEngine.ts، src/components/ClassSlotModal.tsx،
+src/components/AnalyticsTab.tsx و تمام فایل‌های دیگر
+====================================================================
+
+قواعد الزامی (پروتکل همیشگی):
+- چهار خط اول گزارش: سه خط T161-F و بعد NONCE=T161F-8D2M (عیناً).
+- هر خروجی عیناً داخل بلوک با برچسب خودش: ===BEGIN:برچسب=== ... ===END:برچسب===
+- خروجی خالی = بلوک خالی؛ هیچ توضیحی جای آن ننویس.
+- هیچ بخشی خلاصه/تفسیر/بازنویسی نشود. ترتیب فازها عین همین پرامپت.
+- ممنوع مطلق: هر دستور git، نصب پکیج، تغییر package.json، ویرایش هر فایل بیرون
+  از چهار فایل مجاز.
+- قفل صفر: تا پایان فاز ب (E1-E5 + P1) هیچ ویرایشی ممنوع.
+- هر گیت FAIL شد: فوراً STOP و فقط بخش (۹) فرمت گزارش با خروجی خام همان گیت.
+- اگر متن واقعی هر لنگر با «قبل» اعلام‌شده در این پرامپت تفاوت داشت → STOP با
+  برچسب همان هانک (مثلاً GT-S3) — هیچ حدس و تطبیق انعطافی مجاز نیست.
+- پنجره‌های sed حداکثر ۶۰ خط؛ خط فرمان بالای خروجی خودش داخل بلوک می‌آید.
+
+====================================================================
+فاز الف — pre-flight (بدون ویرایش)
+====================================================================
+P1) md5sum src/App.tsx src/components/ClassSlotModal.tsx src/types.ts src/lib/plannerSyncEngine.ts src/lib/firestoreSync.ts
+    گیت GT-P1-الف: پنج مقدار عیناً CB-4 (تطبیق با نام فایل):
+    App=1d8095d6db9c93c2a66a28901a22901d / ClassSlotModal=89d18143a3ab00f4213d500254d3a325 /
+    types=0734a56b27ae630b10786ad611a8d248 / plannerSyncEngine=5f378ab312b5c56ee28119acd45f7c8d /
+    firestoreSync=20bd324785846846756859642594720a
+
+P2) wc -l server.ts src/App.tsx src/components/GoalsTab.tsx src/types.ts
+    گیت GT-P1-ب: server.ts دقیقاً 1827.
+
+P3) sed -n '1506,1807p' server.ts | sha256sum
+    گیت GT-P1-ج: عیناً 5b49f32c93bf3f835942bd30ca13bad4d44e191b09da5202abf7dd84e69ec61a
+
+P4) grep -c "maxOutputTokens" server.ts
+    گیت GT-P1-د: دقیقاً 1.
+    grep -c "max_tokens: 4096" server.ts
+    گیت GT-P1-هـ: دقیقاً 1.
+
+P5) npx tsc --noEmit; echo "TSC_EXIT=$?"
+    گیت GT-P1-و: خط عین TSC_EXIT=0.
+
+====================================================================
+فاز ب — evidence-lock (بدون ویرایش؛ مبنای انکرهای S1/G5/G6)
+====================================================================
+E1) grep -n "GeminiFallbackOptions" server.ts
+    سپس پنجرهٔ کامل تعریف آن (interface یا type) با sed — از خط تعریف تا بستن.
+    اگر نه interface بود نه type-شیءئی → STOP با برچسب GT-E1.
+
+E2) sed -n '265,390p' src/types.ts
+    (کل خانوادهٔ Goal از جمله دنبالهٔ interface Goal که در T161-E بریده بود.)
+
+E3) grep -n "handleDeleteGoal" src/components/GoalsTab.tsx
+    برای هر hit که در JSX است (فراخوانی، نه تعریف در 358): پنجرهٔ sed ±15.
+    (مبنای جای‌گذاری دکمهٔ ویرایش — کنار دکمهٔ حذف در هدر کارت هدف.)
+
+E4) sed -n '800,830p' src/components/GoalsTab.tsx
+    (مبنای جای‌گذاری دکمهٔ «هدف دستی» کنار فرم ساخت AI.)
+
+E5) sed -n '1441,1470p' src/components/GoalsTab.tsx
+    (۳۰ خط انتهایی فایل — مبنای رندر مودال در انتهای JSX.)
+
+بعد از E5 و قبل از فاز ج، این دو شمارش را بگیر و ثبت کن (مقایسهٔ پس-ویرایش):
+    grep -c "import" src/components/GoalsTab.tsx
+    md5sum src/App.tsx src/components/AnalyticsTab.tsx src/lib/firestoreSync.ts src/lib/plannerSyncEngine.ts src/components/ClassSlotModal.tsx
+
+====================================================================
+فاز ج — ویرایش‌های server.ts (هر هانک: پنجرهٔ قبل + ویرایش + پنجرهٔ بعد)
+====================================================================
+S1) بر اساس E1: داخل تعریف GeminiFallbackOptions، پیش از بستن آن، این خط را اضافه کن:
+      maxOutputTokens?: number;
+
+S2) در executeCustomKeyCall، شاخهٔ anthropic:
+قبل:
+        body: JSON.stringify({
+          model,
+          max_tokens: 4096,
+          messages: [{ role: 'user', content: options.prompt }]
+        }),
+بعد:
+        body: JSON.stringify({
+          model,
+          max_tokens: Math.min(options.maxOutputTokens ?? 4096, 8192),
+          messages: [{ role: 'user', content: options.prompt }]
+        }),
+
+S3) در executeCustomKeyCall، شاخهٔ openai-compat:
+قبل:
+      const reqBody: any = {
+        model,
+        messages: [{ role: 'user', content: options.prompt }],
+        temperature: 0.2
+      };
+بعد:
+      const reqBody: any = {
+        model,
+        messages: [{ role: 'user', content: options.prompt }],
+        temperature: 0.2,
+        ...(options.maxOutputTokens ? { max_tokens: options.maxOutputTokens } : {})
+      };
+
+S4) در همان شاخه، بلوک خطای 400:
+قبل:
+      if (resp.status === 400) {
+        const errBody = await resp.text().catch(() => '');
+        if (errBody.toLowerCase().includes('max_completion_tokens')) {
+          delete reqBody.max_tokens;
+          reqBody.max_completion_tokens = 4096;
+          resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${customKey.key}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(reqBody),
+            signal: controller.signal
+          });
+        } else {
+          const err = new Error(errBody || `OpenAI-compat HTTP ${resp.status}`);
+          (err as any).status = resp.status;
+          throw err;
+        }
+      }
+بعد:
+      if (resp.status === 400) {
+        const errBody = await resp.text().catch(() => '');
+        if (errBody.toLowerCase().includes('max_completion_tokens')) {
+          delete reqBody.max_tokens;
+          reqBody.max_completion_tokens = options.maxOutputTokens ?? 4096;
+          resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${customKey.key}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(reqBody),
+            signal: controller.signal
+          });
+        } else if (options.maxOutputTokens && reqBody.max_tokens) {
+          delete reqBody.max_tokens;
+          resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${customKey.key}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(reqBody),
+            signal: controller.signal
+          });
+        } else {
+          const err = new Error(errBody || `OpenAI-compat HTTP ${resp.status}`);
+          (err as any).status = resp.status;
+          throw err;
+        }
+      }
+
+S5) کانفیگ رودمپ:
+قبل:
+  const getConfigForGoalAnalysis = (modelName: string) => {
+    return {
+      temperature: 0.3,
+      responseMimeType: "application/json",
+      responseSchema: goalAnalysisSchema
+    };
+  };
+بعد:
+  const getConfigForGoalAnalysis = (modelName: string) => {
+    return {
+      temperature: 0.3,
+      maxOutputTokens: 32768,
+      responseMimeType: "application/json",
+      responseSchema: goalAnalysisSchema
+    };
+  };
+
+S6) کانفیگ predict — به هر دو return (داخل if و بیرون آن)، بعد از temperature: 0.2،
+این خط اضافه شود:
+      maxOutputTokens: 16384,
+
+S7) call-site رودمپ (کلید شخصی):
+قبل:
+    const result = await callGeminiWithFallback({
+      customKeys,
+      modelMode: req.body?.modelMode || 'auto',
+      prompt,
+      preferredModels: GOAL_ANALYSIS_MODELS,
+      getConfigForModel: getConfigForGoalAnalysis,
+      logPrefix: '[AI Roadmap Generator CustomKey]'
+    });
+بعد: همین بلوک + یک خط قبل از logPrefix:
+      maxOutputTokens: 32768,
+
+S8) call-site predict (کلید شخصی):
+قبل:
+        const result = await callGeminiWithFallback({
+          customKeys,
+          modelMode: req.body?.modelMode || 'auto',
+          prompt,
+          getConfigForModel: getFallbackConfig,
+          logPrefix: '[AI Predict Feasibility CustomKey]'
+        });
+بعد: همین بلوک + یک خط قبل از logPrefix:
+          maxOutputTokens: 16384,
+
+S9) سخت‌سازی پرامپت رودمپ: بلافاصله بعد از خطی که شامل این عبارت است:
+شما باید نقشه راه را برای تمام ${totalWeeks} هفته به صورت کاملاً جداگانه و تک‌تک هفته‌ها
+این خط جدید (یک خط داخل همان template literal) اضافه شود:
+تمام هفته‌ها از ۱ تا ${totalWeeks} را کامل تولید کن؛ بدون placeholder، بدون خلاصه‌سازی، بدون تجمیع هفته‌ها؛ کامل‌ترین و باجزئیات‌ترین پاسخ ممکن را بده.
+
+S10) بلوک coverage + continuation: در انتهای شاخهٔ رودمپ، این دو خط:
+قبل:
+  const parsed = JSON.parse(textVal.trim());
+  return res.json({ success: true, roadmap: parsed });
+بعد: جایگزین کامل با:
+  const parsed = JSON.parse(textVal.trim());
+
+  // T161-F: coverage validation — weeks of phases must cover ai_estimated_weeks
+  const expectedWeeks = Number(parsed.ai_estimated_weeks) || Number(totalWeeks) || 0;
+  const countCovered = (obj: any) => (obj.phases || []).reduce((s: number, ph: any) => s + (((ph.weeks || []).length) || 0), 0);
+  let coveredWeeks = countCovered(parsed);
+  let coverageComplete = expectedWeeks > 0 && coveredWeeks >= expectedWeeks;
+
+  if (!coverageComplete && expectedWeeks > 0) {
+    try {
+      const maxWeekSoFar = (parsed.phases || []).reduce((m: number, ph: any) => Math.max(m, ...((ph.weeks || []).map((w: any) => Number(w.week_number) || 0))), 0);
+      const contPrompt = `ادامهٔ نقشه راه برای هدف "${title}" را تولید کن. هفته‌های ۱ تا ${maxWeekSoFar} قبلاً تولید شده‌اند. فقط هفته‌های ${maxWeekSoFar + 1} تا ${expectedWeeks} را در همان قالب JSON قبلی (آرایهٔ phases با weeks و tasks) تولید کن؛ هیچ متن اضافه و هیچ توضیحی ننویس، فقط JSON.`;
+      let contText = "";
+      if (isCustomKey) {
+        const contResult = await callGeminiWithFallback({
+          customKeys,
+          modelMode: req.body?.modelMode || 'auto',
+          prompt: contPrompt,
+          preferredModels: GOAL_ANALYSIS_MODELS,
+          getConfigForModel: getConfigForGoalAnalysis,
+          maxOutputTokens: 32768,
+          logPrefix: '[AI Roadmap Continuation CustomKey]'
+        });
+        contText = contResult.text;
+      } else {
+        const contResp = await client.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: contPrompt,
+          config: getConfigForGoalAnalysis("gemini-2.5-flash")
+        });
+        contText = contResp.text || "";
+      }
+      const contParsed = JSON.parse(contText.trim());
+      const contPhases: any[] = contParsed.phases || [];
+      const existingByNumber = new Map<number, any>();
+      (parsed.phases || []).forEach((ph: any) => existingByNumber.set(Number(ph.phase_number), ph));
+      for (const cph of contPhases) {
+        const num = Number(cph.phase_number);
+        const target = existingByNumber.get(num);
+        if (target) {
+          const seenWeeks = new Set((target.weeks || []).map((w: any) => Number(w.week_number)));
+          const newWeeks = (cph.weeks || []).filter((w: any) => !seenWeeks.has(Number(w.week_number)));
+          target.weeks = [...(target.weeks || []), ...newWeeks];
+          target.tasks = [...(target.tasks || []), ...((cph.tasks || []))];
+        } else {
+          parsed.phases = parsed.phases || [];
+          parsed.phases.push(cph);
+          existingByNumber.set(num, cph);
+        }
+      }
+      coveredWeeks = countCovered(parsed);
+      coverageComplete = coveredWeeks >= expectedWeeks;
+    } catch (contErr: any) {
+      console.warn("[AI Roadmap Continuation] failed:", contErr?.message || contErr);
+    }
+  }
+
+  return res.json({
+    success: true,
+    roadmap: parsed,
+    coverage: {
+      complete: coverageComplete,
+      expectedWeeks,
+      coveredWeeks,
+      ...(coverageComplete ? {} : { warning: "نقشه راه کامل تولید نشد؛ هفته‌های پوشش‌داده‌شده کمتر از تخمین هوش مصنوعی است." })
+    }
+  });
+
+====================================================================
+فاز د — src/types.ts (فقط-افزودنی)
+====================================================================
+T1) در انتهای interface GoalPhaseTask (بعد از injected?: boolean; و قبل از بستن
+براکت)، این خطوط اضافه شود:
+  // T161-F: full-field editor additions (all optional — legacy data untouched)
+  link?: string;
+  linkTitle?: string;
+  type?: 'core' | 'secondary' | 'habit';
+  description?: string;
+  deadline?: string;
+
+====================================================================
+فاز هـ — فایل جدید src/components/GoalEditorModal.tsx
+====================================================================
+H1) این فایل را عیناً با محتوای زیر بساز (بدون کم‌وکاست):
+
+import { useEffect, useState } from 'react';
+import { X, Plus, Trash2, ChevronDown, ChevronUp, Save } from 'lucide-react';
+import { Goal, GoalPhase, GoalWeek, GoalPhaseTask, Category } from '../types';
+
+// T161-F: full-field goal editor (manual + AI goals) — merge-save via onSave
+interface GoalEditorModalProps {
+  goal: Goal | null;
+  open: boolean;
+  categories: Category[];
+  lang?: 'fa' | 'en';
+  onClose: () => void;
+  onSave: (edited: Goal) => void;
+}
+
+const COLOR_CHOICES = [
+  { name: 'نیلی', value: 'bg-indigo-100 border-indigo-300 text-indigo-900' },
+  { name: 'زمردی', value: 'bg-emerald-100 border-emerald-300 text-emerald-900' },
+  { name: 'آبی', value: 'bg-sky-100 border-sky-300 text-sky-900' },
+  { name: 'بنفش', value: 'bg-purple-100 border-purple-300 text-purple-900' },
+  { name: 'کهربایی', value: 'bg-amber-100 border-amber-300 text-amber-900' },
+  { name: 'رز', value: 'bg-rose-100 border-rose-300 text-rose-900' },
+];
+
+const emptyTask = (pid: string, wid: string, idx: number): GoalPhaseTask => ({
+  id: `gedit_${pid}_${wid}_${idx}_${Date.now()}`,
+  title: '',
+  estimated_hours: 2,
+  completed: false,
+  priority: 'medium',
+  injected: false,
+  type: 'core',
+  description: '',
+  link: '',
+  linkTitle: '',
+  deadline: ''
+});
+
+const emptyWeek = (num: number): GoalWeek => ({
+  week_number: num,
+  week_title: `هفته ${num}`,
+  tasks: []
+});
+
+const emptyPhase = (num: number): GoalPhase => ({
+  phase_number: num,
+  title: `فاز ${num}`,
+  description: '',
+  estimated_weeks: `هفته ${num}`,
+  weeks: [emptyWeek(num)],
+  tasks: []
+});
+
+export default function GoalEditorModal({ goal, open, categories, lang = 'fa', onClose, onSave }: GoalEditorModalProps) {
+  const isRtl = lang === 'fa';
+  const [draft, setDraft] = useState<Goal | null>(null);
+  const [expandedPhase, setExpandedPhase] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (open && goal) {
+      setDraft(JSON.parse(JSON.stringify(goal)));
+      setExpandedPhase(null);
+    }
+  }, [open, goal]);
+
+  if (!open || !draft) return null;
+
+  const t = (fa: string, en: string) => (isRtl ? fa : en);
+  const update = (patch: Partial<Goal>) => setDraft(prev => prev ? { ...prev, ...patch } : prev);
+
+  const updatePhase = (pNum: number, patch: Partial<GoalPhase>) =>
+    setDraft(prev => prev ? ({
+      ...prev,
+      phases: (prev.phases || []).map(p => p.phase_number === pNum ? { ...p, ...patch } : p)
+    }) : prev);
+
+  const updateWeek = (pNum: number, wNum: number, patch: Partial<GoalWeek>) =>
+    setDraft(prev => prev ? ({
+      ...prev,
+      phases: (prev.phases || []).map(p => p.phase_number !== pNum ? p : ({
+        ...p,
+        weeks: (p.weeks || []).map(w => w.week_number === wNum ? { ...w, ...patch } : w)
+      }))
+    }) : prev);
+
+  const updateTask = (pNum: number, wNum: number | null, taskId: string, patch: Partial<GoalPhaseTask>) =>
+    setDraft(prev => prev ? ({
+      ...prev,
+      phases: (prev.phases || []).map(p => {
+        if (p.phase_number !== pNum) return p;
+        if (wNum === null) {
+          return { ...p, tasks: p.tasks.map(tk => tk.id === taskId ? { ...tk, ...patch } : tk) };
+        }
+        return {
+          ...p,
+          weeks: (p.weeks || []).map(w => w.week_number !== wNum ? w : ({
+            ...w,
+            tasks: w.tasks.map(tk => tk.id === taskId ? { ...tk, ...patch } : tk)
+          }))
+        };
+      })
+    }) : prev);
+
+  const addPhase = () => {
+    const nextNum = (draft.phases || []).length + 1;
+    setDraft(prev => prev ? ({ ...prev, phases: [...(prev.phases || []), emptyPhase(nextNum)] }) : prev);
+    setExpandedPhase(nextNum);
+  };
+
+  const addWeek = (p: GoalPhase) => {
+    const wNum = ((p.weeks || []).reduce((m, w) => Math.max(m, w.week_number), 0)) + 1;
+    updatePhase(p.phase_number, { weeks: [...(p.weeks || []), emptyWeek(wNum)] });
+  };
+
+  const addTask = (p: GoalPhase, w: GoalWeek | null) => {
+    const wk = w ? w.week_number : null;
+    const fresh = emptyTask(`${p.phase_number}`, `${wk ?? 'flat'}`, (wk !== null ? (w!.tasks.length) : p.tasks.length) + 1);
+    if (wk === null) {
+      updatePhase(p.phase_number, { tasks: [...p.tasks, fresh] });
+    } else {
+      updateWeek(p.phase_number, wk, { tasks: [...(w!.tasks), fresh] });
+    }
+  };
+
+  const handleSave = () => {
+    if (!draft.title.trim()) return;
+    onSave(draft);
+    onClose();
+  };
+
+  const taskCard = (p: GoalPhase, tk: GoalPhaseTask, wNum: number | null, remove: () => void) => (
+    <div key={tk.id} className="rounded-lg bg-slate-50 p-2 space-y-1">
+      <div className="flex items-center gap-2">
+        <input value={tk.title} placeholder={t('عنوان کار', 'Task title')}
+          onChange={e => updateTask(p.phase_number, wNum, tk.id, { title: e.target.value })}
+          className="flex-1 px-2 py-1 rounded-lg border border-slate-200 text-sm" />
+        <button onClick={remove} className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-100"><Trash2 size={14} /></button>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <input value={tk.link || ''} placeholder={t('لینک (اختیاری)', 'Link (optional)')}
+          onChange={e => updateTask(p.phase_number, wNum, tk.id, { link: e.target.value })}
+          className="px-2 py-1 rounded-lg border border-slate-200 text-xs" dir="ltr" />
+        <input value={tk.linkTitle || ''} placeholder={t('عنوان لینک (اختیاری)', 'Link title (optional)')}
+          onChange={e => updateTask(p.phase_number, wNum, tk.id, { linkTitle: e.target.value })}
+          className="px-2 py-1 rounded-lg border border-slate-200 text-xs" />
+        <select value={tk.type || 'core'}
+          onChange={e => updateTask(p.phase_number, wNum, tk.id, { type: e.target.value as 'core' | 'secondary' | 'habit' })}
+          className="px-2 py-1 rounded-lg border border-slate-200 text-xs">
+          <option value="core">{t('اصلی', 'Core')}</option>
+          <option value="secondary">{t('فرعی', 'Secondary')}</option>
+          <option value="habit">{t('عادت', 'Habit')}</option>
+        </select>
+        <input value={tk.deadline || ''} placeholder={t('ددلاین (متن آزاد)', 'Deadline (free text)')}
+          onChange={e => updateTask(p.phase_number, wNum, tk.id, { deadline: e.target.value })}
+          className="px-2 py-1 rounded-lg border border-slate-200 text-xs" />
+      </div>
+      <textarea value={tk.description || ''} placeholder={t('توضیح', 'Description')}
+        onChange={e => updateTask(p.phase_number, wNum, tk.id, { description: e.target.value })}
+        className="w-full px-2 py-1 rounded-lg border border-slate-200 text-xs" rows={2} />
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3" onClick={onClose}>
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-3xl max-h-[88vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="sticky top-0 bg-white/95 backdrop-blur border-b border-slate-200 p-4 flex items-center justify-between gap-2">
+          <h3 className="font-black text-slate-800">{t('ویرایش هدف', 'Edit Goal')}</h3>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-100"><X size={18} /></button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          <div>
+            <label className="text-xs font-bold text-slate-600">{t('عنوان هدف', 'Goal title')}</label>
+            <input value={draft.title} onChange={e => update({ title: e.target.value })}
+              className="w-full mt-1 px-3 py-2 rounded-xl border border-slate-200 text-sm" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-bold text-slate-600">{t('تعداد کل هفته‌ها', 'Total weeks')}</label>
+              <input type="number" min={1} value={draft.total_weeks}
+                onChange={e => update({ total_weeks: Math.max(1, Number(e.target.value) || 1) })}
+                className="w-full mt-1 px-3 py-2 rounded-xl border border-slate-200 text-sm" />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-slate-600">{t('رنگ دسته', 'Category color')}</label>
+              <select value={draft.categoryColor || COLOR_CHOICES[0].value}
+                onChange={e => update({ categoryColor: e.target.value })}
+                className="w-full mt-1 px-3 py-2 rounded-xl border border-slate-200 text-sm">
+                {COLOR_CHOICES.map(c => <option key={c.value} value={c.value}>{c.name}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-slate-600">{t('دسته', 'Category')}</label>
+            <select value={draft.categoryId || ''}
+              onChange={e => update({ categoryId: e.target.value || undefined })}
+              className="w-full mt-1 px-3 py-2 rounded-xl border border-slate-200 text-sm">
+              <option value="">{t('بدون دسته', 'No category')}</option>
+              {categories.map(c => <option key={c.id} value={c.id}>{c.nameFa}</option>)}
+            </select>
+          </div>
+
+          {(draft.phases || []).map(p => (
+            <div key={p.phase_number} className="rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="flex items-center justify-between gap-2 p-3 bg-slate-50">
+                <input value={p.title} onChange={e => updatePhase(p.phase_number, { title: e.target.value })}
+                  className="flex-1 px-2 py-1 rounded-lg border border-slate-200 text-sm font-bold" />
+                <input value={p.estimated_weeks} onChange={e => updatePhase(p.phase_number, { estimated_weeks: e.target.value })}
+                  className="w-28 px-2 py-1 rounded-lg border border-slate-200 text-xs" />
+                <button onClick={() => setExpandedPhase(expandedPhase === p.phase_number ? null : p.phase_number)}
+                  className="p-2 rounded-lg hover:bg-slate-200">
+                  {expandedPhase === p.phase_number ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
+              </div>
+
+              {expandedPhase === p.phase_number && (
+                <div className="p-3 space-y-3">
+                  {(p.weeks || []).map(w => (
+                    <div key={w.week_number} className="rounded-xl border border-slate-200 p-2 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-black text-slate-500 w-8">#{w.week_number}</span>
+                        <input value={w.week_title} onChange={e => updateWeek(p.phase_number, w.week_number, { week_title: e.target.value })}
+                          className="flex-1 px-2 py-1 rounded-lg border border-slate-200 text-sm" />
+                        <button onClick={() => updatePhase(p.phase_number, { weeks: (p.weeks || []).filter(x => x.week_number !== w.week_number) })}
+                          className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50"><Trash2 size={14} /></button>
+                      </div>
+                      {w.tasks.map(tk => taskCard(p, tk, w.week_number,
+                        () => updateWeek(p.phase_number, w.week_number, { tasks: w.tasks.filter(x => x.id !== tk.id) })))}
+                      <button onClick={() => addTask(p, w)}
+                        className="text-xs font-bold text-indigo-600 hover:underline flex items-center gap-1">
+                        <Plus size={12} /> {t('افزودن کار', 'Add task')}
+                      </button>
+                    </div>
+                  ))}
+                  {(!p.weeks || p.weeks.length === 0) && (
+                    <div className="space-y-2">
+                      {p.tasks.map(tk => taskCard(p, tk, null,
+                        () => updatePhase(p.phase_number, { tasks: p.tasks.filter(x => x.id !== tk.id) })))}
+                      <button onClick={() => addTask(p, null)}
+                        className="text-xs font-bold text-indigo-600 hover:underline flex items-center gap-1">
+                        <Plus size={12} /> {t('افزودن کار', 'Add task')}
+                      </button>
+                    </div>
+                  )}
+                  <button onClick={() => addWeek(p)} className="text-xs font-bold text-indigo-600 hover:underline flex items-center gap-1">
+                    <Plus size={12} /> {t('افزودن هفته', 'Add week')}
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+
+          <button onClick={addPhase} className="text-sm font-bold text-indigo-600 hover:underline flex items-center gap-1">
+            <Plus size={14} /> {t('افزودن فاز', 'Add phase')}
+          </button>
+        </div>
+
+        <div className="sticky bottom-0 bg-white/95 backdrop-blur border-t border-slate-200 p-4 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-100">{t('انصراف', 'Cancel')}</button>
+          <button onClick={handleSave} className="px-4 py-2 rounded-xl text-sm font-black bg-indigo-600 text-white hover:bg-indigo-700 flex items-center gap-1">
+            <Save size={14} /> {t('ذخیره (ادغام کامل)', 'Save (merge)')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+====================================================================
+فاز و — سیم‌کشی src/components/GoalsTab.tsx
+====================================================================
+G1) بعد از خط import { apiFetch } ... این خط اضافه شود:
+import GoalEditorModal from './GoalEditorModal';
+و داخل براکت‌های import از lucide-react، نام PenSquare هم اضافه شود.
+
+G2) بعد از خط const [selectedInjectDay, setSelectedInjectDay] = ... این خط اضافه شود:
+  // T161-F: goal editor state
+  const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
+
+G3) بلافاصله بعد از بستن handleDeleteGoal (بعد از showToast(... 'Goal deleted', 'success'); و };) این بلوک اضافه شود:
+
+  // T161-F: merge-save goal edits (only edited fields override; nothing dropped)
+  const handleSaveGoalEdits = (edited: Goal) => {
+    onUpdateData(prev => ({
+      ...prev,
+      goals: (prev.goals || []).map(g => g.goal_id === edited.goal_id ? { ...g, ...edited } : g)
+    }));
+    showToast(isRtl ? 'هدف با ادغام کامل ذخیره شد' : 'Goal saved with full merge', 'success');
+  };
+  // T161-F: manual goal creation (skeleton, completed via editor)
+  const handleAddManualGoal = () => {
+    const title = window.prompt(isRtl ? 'عنوان هدف دستی:' : 'Manual goal title:');
+    if (!title || !title.trim()) return;
+    const weeks = Number(window.prompt(isRtl ? 'تعداد هفته‌ها:' : 'Number of weeks:', '8')) || 8;
+    const goalId = `goal_${Date.now()}`;
+    const newGoal: Goal = {
+      goal_id: goalId,
+      title: title.trim(),
+      total_weeks: weeks,
+      current_week_index: 1,
+      target_hours_per_week: 10,
+      ai_estimated_weeks: weeks,
+      milestones: [{ milestone_index: 1, title: 'فاز ۱', target_week: weeks }],
+      phases: [{
+        phase_number: 1,
+        title: 'فاز ۱',
+        description: '',
+        estimated_weeks: `هفته ۱ تا ${weeks}`,
+        weeks: Array.from({ length: weeks }, (_, i) => ({ week_number: i + 1, week_title: `هفته ${i + 1}`, tasks: [] })),
+        tasks: []
+      }],
+      active_week_tasks: []
+    };
+    onUpdateData(prev => ({ ...prev, goals: [...(prev.goals || []), newGoal] }));
+    showToast(isRtl ? 'هدف دستی ساخته شد؛ با دکمهٔ ویرایش کاملش کنید' : 'Manual goal created; complete it via Edit', 'success');
+  };
+[قید: اگر tsc گفت interface Goal فیلد الزامی دیگری دارد (از E2 ثابت می‌شود)،
+مقدار پیش‌فرض معقول همان فیلد را در newGoal اضافه کن و انحراف را در گزارش اعلام کن.]
+
+G4) بعد از خط const resData = resJson.roadmap; این بلوک اضافه شود:
+    // T161-F: surface server coverage warning (silence forbidden)
+    if (resJson.coverage && resJson.coverage.complete === false) {
+      showToast(isRtl ? `هشدار: نقشه راه ناقص است (پوشش ${resJson.coverage.coveredWeeks} از ${resJson.coverage.expectedWeeks} هفته)` : `Warning: roadmap incomplete (${resJson.coverage.coveredWeeks}/${resJson.coverage.expectedWeeks} weeks)`, 'error');
+    }
+
+G5) بر اساس E3: در هدر هر کارت هدف، بلافاصله قبل از دکمهٔ حذف (فراخوانی handleDeleteGoal در JSX)، این دکمه اضافه شود:
+                      <button
+                        onClick={() => setEditingGoal(goal)}
+                        className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50"
+                        title={isRtl ? 'ویرایش هدف' : 'Edit goal'}
+                      >
+                        <PenSquare size={14} />
+                      </button>
+و بر اساس E4: کنار فرم ساخت AI (در همان ردیف عنوان فرم)، این دکمه اضافه شود:
+                    <button type="button" onClick={handleAddManualGoal}
+                      className="px-3 py-1.5 rounded-xl text-xs font-bold border border-indigo-200 text-indigo-700 hover:bg-indigo-50">
+                      {isRtl ? '+ هدف دستی' : '+ Manual goal'}
+                    </button>
+
+G6) بر اساس E5: درست قبل از آخرین </div> پیش از ); و } انتهای فایل، این بلوک اضافه شود:
+      <GoalEditorModal
+        goal={editingGoal}
+        open={editingGoal !== null}
+        categories={data.categories || []}
+        lang={lang}
+        onClose={() => setEditingGoal(null)}
+        onSave={handleSaveGoalEdits}
+      />
+
+====================================================================
+فاز ز — گیت‌های پایانی
+====================================================================
+Z1) npx tsc --noEmit; echo "TSC_EXIT=$?"
+    گیت GT-Z1: خط عین TSC_EXIT=0.
+
+Z2) npm run build
+    گیت GT-Z2: بیلد سبز؛ چند خط آخر خام.
+
+Z3) شمارش‌های پس-ویرایش:
+    grep -c "maxOutputTokens" server.ts          → گیت GT-Z3: دقیقاً 13
+    grep -c "max_tokens: 4096" server.ts          → گیت GT-Z4: دقیقاً 0
+    grep -c "coverageComplete" server.ts          → گیت GT-Z5: دقیقاً 5
+    grep -c "AI Roadmap Continuation" server.ts   → گیت GT-Z6: دقیقاً 1
+    grep -c "GoalEditorModal" src/components/GoalsTab.tsx → گیت GT-Z7: دقیقاً 2
+    grep -c "setEditingGoal" src/components/GoalsTab.tsx  → گیت GT-Z8: دقیقاً 3
+    grep -c "handleSaveGoalEdits" src/components/GoalsTab.tsx → گیت GT-Z9: دقیقاً 2
+    grep -c "handleAddManualGoal" src/components/GoalsTab.tsx → گیت GT-Z10: دقیقاً 2
+    grep -c "linkTitle?: string" src/types.ts             → گیت GT-Z11: دقیقاً 1
+    grep -c "deadline?: string" src/types.ts              → گیت GT-Z12: دقیقاً 1
+    grep -c "type?: 'core' | 'secondary' | 'habit';" src/types.ts → گیت GT-Z13: دقیقاً 1
+
+Z4) md5sum src/App.tsx src/components/ClassSlotModal.tsx src/lib/plannerSyncEngine.ts src/lib/firestoreSync.ts src/components/AnalyticsTab.tsx
+    گیت GT-Z14 (اثبات منجمد): هر پنج مقدار باید دقیقاً برابر مقادیر P1/فاز ب باشد.
+
+Z5) md5sum server.ts src/types.ts src/components/GoalsTab.tsx src/components/GoalEditorModal.tsx
+    (پین‌های جدید CB-5 — فقط گزارش؛ مقایسه با فاز ب = تغییر-یافته بودن سه فایل اول و جدیدبودن چهارمی.)
+
+Z6) wc -l server.ts src/types.ts src/components/GoalsTab.tsx src/components/GoalEditorModal.tsx
+    (فقط گزارش.)
+
+====================================================================
+فرمت گزارش (فقط و فقط این بخش‌ها به همین ترتیب)
+====================================================================
+(۱) چهار خط اول: T161-F / T161-F / T161-F / NONCE=T161F-8D2M
+(۲) فاز الف: بلوک‌های P1 تا P5 + حکم هر گیت
+(۳) فاز ب: بلوک‌های E1 تا E5 + دو شمارش
+(۴) فاز ج: برای هر هانک S1-S10 سه چیز: پنجرهٔ قبل (بلوک S<n>-before)، پنجرهٔ بعد (بلوک S<n>-after)، و هیچ توضیحی
+(۵) فاز د: بلوک T1-before / T1-after
+(۶) فاز هـ: بلوک H1 (خروجی wc -l فایل جدید + md5sum آن + sed -n '1,20p' فایل جدید)
+(۷) فاز و: برای هر G1-G6 بلوک before/after (G5 هر دو جای‌گذاری را جدا نشان بده)
+(۸) فاز ز: بلوک‌های Z1 تا Z6 + جدول تک‌خطی GT-Z1 تا GT-Z14 = PASS/FAIL
+(۹) فقط در صورت FAIL یا STOP: شماره گیت/هانک، دلیل، خروجی خام، کدام بخش‌ها اجرا نشدند
+(۱۰) هیچ چیز دیگر — نه توضیح، نه تحلیل، نه پیشنهاد.

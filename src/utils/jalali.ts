@@ -113,11 +113,43 @@ export function gregorianToJalali(gy: number, gm: number, gd: number) {
   return { jy, jm, jd };
 }
 
+export function getTehranDateParts(date: Date = getNow()): { year: number; month: number; day: number } {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Tehran',
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+    });
+    const parts = formatter.formatToParts(date);
+    let year = date.getUTCFullYear();
+    let month = date.getUTCMonth() + 1;
+    let day = date.getUTCDate();
+    for (const p of parts) {
+      if (p.type === 'year') year = parseInt(p.value, 10);
+      if (p.type === 'month') month = parseInt(p.value, 10);
+      if (p.type === 'day') day = parseInt(p.value, 10);
+    }
+    return { year, month, day };
+  } catch (e) {
+    return {
+      year: date.getUTCFullYear(),
+      month: date.getUTCMonth() + 1,
+      day: date.getUTCDate()
+    };
+  }
+}
+
+export function getTodayTehranISO(date: Date = getNow()): string {
+  const { year, month, day } = getTehranDateParts(date);
+  const mm = String(month).padStart(2, '0');
+  const dd = String(day).padStart(2, '0');
+  return `${year}-${mm}-${dd}`;
+}
+
 export function getTodayJalali(date: Date = getNow()) {
   try {
-    const gy = date.getUTCFullYear();
-    const gm = date.getUTCMonth() + 1;
-    const gd = date.getUTCDate();
+    const { year: gy, month: gm, day: gd } = getTehranDateParts(date);
     const { jy, jm, jd } = gregorianToJalali(gy, gm, gd);
     const monthName = JALALI_MONTHS[jm - 1] || 'فروردین';
     return { year: jy, monthIdx: jm - 1, monthName, day: jd };
@@ -201,4 +233,183 @@ export const formatCompletionDate = (day: number, monthName: string, year: numbe
   const dd = day < 10 ? `0${day}` : `${day}`;
   return `${year}/${mm}/${dd}`;
 };
+
+// Convert Persian and Arabic digits to Latin/English digits
+export function toAsciiDigits(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 1776))
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 1632));
+}
+
+// Convert Latin digits to Persian digits
+export function toPersianDigits(str: number | string): string {
+  if (str === undefined || str === null) return '';
+  return String(str).replace(/[0-9]/g, (d) => String.fromCharCode(d.charCodeAt(0) + 1728));
+}
+
+export interface JalaliDeadlineInfo {
+  year: number;
+  month: number;
+  monthName: string;
+  day: number;
+  weekday: string;
+  time?: string;
+  shortDate: string; // YYYY/MM/DD or YYYY/MM/DD HH:mm
+  fullDate: string;  // e.g. "چهارشنبه، ۱۵ خرداد ۱۴۰۵" or "چهارشنبه، ۱۵ خرداد ۱۴۰۵ — ۱۰:۳۰"
+}
+
+export function parseAndFormatJalaliDeadline(val: unknown): JalaliDeadlineInfo | null {
+  if (!val || typeof val !== 'string') return null;
+  const clean = toAsciiDigits(val.trim());
+  const match = clean.match(/^(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})/);
+  if (!match) return null;
+
+  const y = parseInt(match[1], 10);
+  const m = parseInt(match[2], 10);
+  const d = parseInt(match[3], 10);
+
+  if (isNaN(y) || isNaN(m) || isNaN(d) || y < 1300 || y > 1500 || m < 1 || m > 12 || d < 1 || d > 31) {
+    return null;
+  }
+
+  const monthName = JALALI_MONTHS[m - 1] || '';
+  let wd = '';
+  try {
+    const res = getJalaliWeekday(y, m, d);
+    wd = res?.weekday?.fa || '';
+  } catch (_) {}
+
+  // Optional time parsing e.g. "1405/03/15 10:30"
+  const timeMatch = clean.match(/(?:[ T])(\d{1,2}):(\d{2})/);
+  let timeStr = '';
+  if (timeMatch) {
+    const hh = String(parseInt(timeMatch[1], 10)).padStart(2, '0');
+    const mmTime = String(parseInt(timeMatch[2], 10)).padStart(2, '0');
+    timeStr = `${hh}:${mmTime}`;
+  }
+
+  const dFa = toPersianDigits(d);
+  const yFa = toPersianDigits(y);
+  const timeFa = timeStr ? toPersianDigits(timeStr) : '';
+
+  const mm = String(m).padStart(2, '0');
+  const dd = String(d).padStart(2, '0');
+  const shortDate = timeStr ? `${y}/${mm}/${dd} ${timeStr}` : `${y}/${mm}/${dd}`;
+  const baseFullDate = wd ? `${wd}، ${dFa} ${monthName} ${yFa}` : `${dFa} ${monthName} ${yFa}`;
+  const fullDate = timeFa ? `${baseFullDate} — ${timeFa}` : baseFullDate;
+
+  return {
+    year: y,
+    month: m,
+    monthName,
+    day: d,
+    weekday: wd,
+    time: timeStr || undefined,
+    shortDate,
+    fullDate
+  };
+}
+
+export interface OverdueStatus {
+  isOverdue: boolean;
+  daysOverdue: number;
+  deadlineDisplay: string;
+}
+
+export function getDeadlineOverdueStatus(deadline: unknown, fallbackYear?: number): OverdueStatus {
+  if (!deadline) {
+    return { isOverdue: false, daysOverdue: 0, deadlineDisplay: '' };
+  }
+
+  let y: number | null = null;
+  let m: number | null = null;
+  let d: number | null = null;
+  let display = '';
+
+  if (typeof deadline === 'string') {
+    const parsed = parseAndFormatJalaliDeadline(deadline);
+    if (parsed) {
+      y = parsed.year;
+      m = parsed.month;
+      d = parsed.day;
+      display = parsed.fullDate;
+    }
+  } else if (typeof deadline === 'object' && deadline !== null) {
+    const obj = deadline as any;
+    d = typeof obj.day === 'number' ? obj.day : parseInt(obj.day, 10);
+    if (obj.month && typeof obj.month === 'string') {
+      const idx = JALALI_MONTHS.indexOf(obj.month);
+      m = idx !== -1 ? idx + 1 : (parseInt(obj.month, 10) || null);
+    } else if (typeof obj.month === 'number') {
+      m = obj.month;
+    }
+    y = typeof obj.year === 'number' ? obj.year : parseInt(obj.year, 10);
+    if (!y || isNaN(y)) {
+      y = fallbackYear || getTodayJalali().year;
+    }
+    if (d && m && y && !isNaN(d) && !isNaN(m) && !isNaN(y)) {
+      const parsed = parseAndFormatJalaliDeadline(`${y}/${m}/${d}${obj.time ? ' ' + obj.time : ''}`);
+      if (parsed) display = parsed.fullDate;
+    }
+  }
+
+  if (!y || !m || !d || isNaN(y) || isNaN(m) || isNaN(d)) {
+    return { isOverdue: false, daysOverdue: 0, deadlineDisplay: display };
+  }
+
+  try {
+    const today = getTodayJalali();
+    const gToday = jalaliToGregorian(today.year, today.monthIdx + 1, today.day);
+    const gDeadline = jalaliToGregorian(y, m, d);
+    const diffMs = gToday.getTime() - gDeadline.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffDays > 0) {
+      return { isOverdue: true, daysOverdue: diffDays, deadlineDisplay: display };
+    }
+    return { isOverdue: false, daysOverdue: 0, deadlineDisplay: display };
+  } catch (_) {
+    return { isOverdue: false, daysOverdue: 0, deadlineDisplay: display };
+  }
+}
+
+/**
+ * Computes difference in days between two Jalali dates (inclusive of both start and end day).
+ * e.g., Sat 1st to Fri 7th of same month -> 7 days.
+ */
+export function getJalaliDateDiffDays(sy: number, smIdx: number, sd: number, ey: number, emIdx: number, ed: number): number {
+  try {
+    const g1 = jalaliToGregorian(sy, smIdx + 1, sd);
+    const g2 = jalaliToGregorian(ey, emIdx + 1, ed);
+    return Math.round((g2.getTime() - g1.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+  } catch (_) {
+    return 0;
+  }
+}
+
+/**
+ * Checks if the stored week date range represents an exact 7-day week (Saturday to Friday).
+ */
+export function isWeekRangeValid(data: {
+  weekStartDay?: number;
+  weekMonth?: string;
+  weekYear?: number;
+  weekEndDay?: number;
+  weekEndMonth?: string;
+  weekEndYear?: number;
+}): boolean {
+  if (!data.weekStartDay || !data.weekMonth || !data.weekEndDay) return false;
+  const sMonthName = data.weekMonth;
+  const eMonthName = data.weekEndMonth || data.weekMonth;
+  const sMonthIdx = JALALI_MONTHS.indexOf(sMonthName);
+  const eMonthIdx = JALALI_MONTHS.indexOf(eMonthName);
+  if (sMonthIdx < 0 || eMonthIdx < 0) return false;
+  const sy = data.weekYear || getTodayJalali().year;
+  const ey = data.weekEndYear || sy;
+  const diffDays = getJalaliDateDiffDays(sy, sMonthIdx, data.weekStartDay, ey, eMonthIdx, data.weekEndDay);
+  return diffDays === 7;
+}
+
+
 

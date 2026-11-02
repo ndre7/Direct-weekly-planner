@@ -1,3 +1,5 @@
+export const APP_VERSION = "1.7.0";
+
 export type Language = 'fa' | 'en';
 
 export interface Category {
@@ -20,6 +22,10 @@ export interface ClassSlot {
   timeFa: string;
   timeEn: string;
   categoryId?: string;
+  recurrence?: 'weekly' | 'biweekly' | 'quadweekly' | 'monthly' | 'manual';
+  anchorDate?: string;
+  manualDates?: string[];
+  cancelledOccurrences?: { date: string; note?: string }[];
 }
 
 export interface DailyTask {
@@ -103,6 +109,8 @@ export interface SecondaryTask {
     time?: string;
     year?: number;
   };
+  completedLate?: boolean;
+  completedAt?: string;
 }
 
 export type ReminderFrequency =
@@ -155,6 +163,8 @@ export interface CoreTask {
     year?: number;
   };
   completionDate?: string;
+  completedLate?: boolean;
+  completedAt?: string;
 }
 
 export interface PostponedEvent {
@@ -167,6 +177,40 @@ export interface PostponedEvent {
   description?: string;
 }
 
+export interface ArchiveWeek {
+  weekId: string;
+  startLabel: string;
+  endLabel: string;
+  startDay: number;
+  startMonth: string;
+  startYear: number;
+  endDay: number;
+  endMonth: string;
+  endYear: number;
+  archivedAt: string;
+  items: {
+    coreTasks: CoreTask[];
+    secondaryTasks: SecondaryTask[];
+    dailyTasks: { dayKey: string; tasks: DailyTask[] }[];
+    detailItems: (DetailsItem & { columnId: string; columnTitle: string })[];
+    examItems: (DetailsItem & { columnId: string; columnTitle: string })[];
+    weeklyEvents: NoteItem[];
+    postponedEvents: PostponedEvent[];
+    todoList?: NoteItem[];
+    reminders?: ReminderItem[];
+    goalTasks?: any[];
+  };
+}
+
+// NOTE1: notesArchive entry structure
+export interface NotesArchiveEntry {
+  weekId: string;
+  startLabel: string;
+  endLabel: string;
+  text: string;
+  archivedAt: string;
+}
+
 export interface PlannerData {
   month: string; // e.g. "خرداد 1405"
   term: string; // e.g. "ترم دانشگاه : 6"
@@ -175,7 +219,7 @@ export interface PlannerData {
   quoteAuthor: string;
   categories: Category[];
   classesSchedule: ClassSlot[];
-  dailyTasks: { [dayKey: string]: DailyTask[] };
+  dailyTasks: Record<string, DailyTask[]>;
   detailsColumns: DetailsColumn[];
   secondaryTaskColumns: SecondaryTaskColumn[];
   secondaryTasks: SecondaryTask[];
@@ -185,6 +229,8 @@ export interface PlannerData {
   weeklyEvents?: NoteItem[];
   dailyThoughts?: NoteItem[];
   todoList: NoteItem[];
+  archive?: ArchiveWeek[];
+  notesArchive?: NotesArchiveEntry[];
   // Calendar range parameters (hotel/flight booking range style)
   weekStartDay?: number; // 1 to 31
   weekEndDay?: number;   // 1 to 31
@@ -220,6 +266,14 @@ export interface PlannerData {
   pomodoro?: { history?: PomodoroEntry[]; [key: string]: any };
   waterTracker?: { history?: WaterEntry[]; [key: string]: any };
   habitTracking?: Record<string, HabitTrackingWeekDoc>;
+  autoSyncGoogleCalendar?: boolean;
+  plannerCalendarMap?: Record<string, string>; // itemId -> gcalEventId
+  plannerCalendarFingerprints?: Record<string, string>; // itemId -> content fingerprint (W4)
+  gcalAutoSyncIntervalMinutes?: number; // Minimum minutes between auto sync runs (default 10)
+  gcalDailyRequestCap?: number; // Daily request limit (default 400)
+  lastCalendarSyncTime?: string;
+  calendarSyncLog?: string[];
+  updatedAt?: string;
 }
 
 export interface PomodoroEntry {
@@ -267,6 +321,12 @@ export interface GoalPhaseTask {
   suggested_weekday?: string;
   deadline_note?: string;
   completed?: boolean;
+  // T161-F: full-field editor additions (all optional — legacy data untouched)
+  link?: string;
+  linkTitle?: string;
+  deadline?: string;
+  completedLate?: boolean;
+  completedAt?: string;
 }
 
 export interface GoalPracticeExercise {
@@ -306,6 +366,7 @@ export interface Goal {
   categoryId?: string; // Links to Category.id for custom category & color
   categoryName?: string;
   categoryColor?: string;
+  deadline?: string; // Jalali date string 'YYYY/MM/DD'
   milestones: GoalMilestone[];
   phases?: GoalPhase[]; // Entire AI generated roadmap saved in memory
   practical_exercises?: GoalPracticeExercise[]; // Dedicated practical exercises & drills for learning/skills goals
@@ -323,5 +384,6 @@ export interface User {
   avatar?: string;
   expiresAt?: string;
   token?: string;
+  isDirectMode?: boolean;
 }
 

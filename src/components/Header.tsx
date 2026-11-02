@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sparkles, Edit3, CheckCircle, Menu, Calendar, User as UserIcon } from 'lucide-react';
+import { Sparkles, Edit3, CheckCircle, Menu, Calendar, User as UserIcon, RefreshCw, CloudOff } from 'lucide-react';
 import { TRANSLATIONS } from '../translations';
 import { User } from '../types';
 
@@ -13,6 +13,7 @@ interface HeaderProps {
   activeTab: number;
   currentUser: User | null;
   onOpenProfileModal: () => void;
+  syncStatus?: 'synced' | 'syncing' | 'offline' | 'saving' | 'saved' | 'error';
 }
 
 export default function Header({
@@ -25,24 +26,56 @@ export default function Header({
   activeTab,
   currentUser,
   onOpenProfileModal,
+  syncStatus: propSyncStatus,
 }: HeaderProps) {
   const t = TRANSLATIONS[lang];
   const isRtl = lang === 'fa';
 
-  const [isOnline, setIsOnline] = React.useState<boolean>(() =>
-    typeof navigator !== 'undefined' ? navigator.onLine : true
-  );
+  const [internalStatus, setInternalStatus] = React.useState<'synced' | 'syncing' | 'offline'>(() => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return 'offline';
+    try {
+      const raw = localStorage.getItem('planner_pending_sync');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.payload && Object.keys(parsed.payload).length > 0) return 'syncing';
+      }
+    } catch (_) {}
+    return 'synced';
+  });
 
   React.useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
+    const handleOnline = () => {
+      try {
+        const raw = localStorage.getItem('planner_pending_sync');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.payload && Object.keys(parsed.payload).length > 0) {
+            setInternalStatus('syncing');
+            return;
+          }
+        }
+      } catch (_) {}
+      setInternalStatus('synced');
+    };
+    const handleOffline = () => setInternalStatus('offline');
+    const handleSyncStatusEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<{ status: 'synced' | 'syncing' | 'offline' }>;
+      if (customEvent.detail?.status) {
+        setInternalStatus(customEvent.detail.status);
+      }
+    };
+
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    window.addEventListener('app-sync-status', handleSyncStatusEvent);
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('app-sync-status', handleSyncStatusEvent);
     };
   }, []);
+
+  const currentSyncStatus = propSyncStatus || internalStatus;
 
   const tabNames: Record<number, { fa: string; en: string }> = {
     1: { fa: 'کلاس ها و کار های روزانه', en: 'Classes & Daily Tasks' },
@@ -94,26 +127,55 @@ export default function Header({
                   <span>{currentTabName}</span>
                 </span>
 
-                {/* Connection Status Badge (H2) */}
-                <span
-                  className={`text-[10px] sm:text-xs px-2.5 py-0.5 rounded-xl font-bold flex items-center gap-1.5 border transition-all ${
-                    isOnline
-                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                      : 'bg-amber-50 border-amber-300 text-amber-800'
-                  }`}
-                  title={
-                    isOnline
-                      ? (isRtl ? 'اتصال برقرار است — همگام‌سازی فعال' : 'Connected — Sync active')
-                      : (isRtl ? 'حالت آفلاین — تغییرات به صورت محلی ذخیره می‌شوند' : 'Offline — Changes saved locally')
-                  }
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
-                  <span>
-                    {isOnline
-                      ? (isRtl ? 'همگام‌سازی فعال' : 'Sync Active')
-                      : (isRtl ? 'آفلاین — تغییرها ذخیره می‌شوند' : 'Offline — Changes Saved')}
-                  </span>
-                </span>
+                {/* Connection & Save Status Badge */}
+                {(() => {
+                  const status = currentSyncStatus;
+                  const isSaving = status === 'saving' || status === 'syncing';
+                  const isSaved = status === 'saved' || status === 'synced';
+                  const isErr = status === 'error' || status === 'offline';
+
+                  return (
+                    <span
+                      className={`text-[10px] sm:text-xs px-2.5 py-0.5 rounded-xl font-bold flex items-center gap-1.5 border transition-all ${
+                        isSaved
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                          : isSaving
+                          ? 'bg-amber-50 border-amber-300 text-amber-800'
+                          : 'bg-rose-50 border-rose-200 text-rose-700'
+                      }`}
+                      title={
+                        isSaved
+                          ? (isRtl ? 'همه تغییرات با موفقیت ذخیره و همگام شدند' : 'All changes saved and synced')
+                          : isSaving
+                          ? (isRtl ? 'در حال ذخیره‌سازی و همگام‌سازی تغییرات...' : 'Saving and syncing changes...')
+                          : (isRtl ? 'خطا در همگام‌سازی یا حالت آفلاین — تغییرات به صورت محلی ذخیره شده‌اند' : 'Sync error or offline — saved locally')
+                      }
+                    >
+                      {isSaved && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      )}
+                      {isSaving && (
+                        <RefreshCw className="w-3 h-3 text-amber-600 animate-spin" />
+                      )}
+                      {isErr && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                      )}
+                      <span>
+                        {status === 'saving'
+                          ? (isRtl ? 'در حال ذخیره...' : 'Saving...')
+                          : status === 'saved'
+                          ? (isRtl ? 'ذخیره شد ✓' : 'Saved ✓')
+                          : status === 'synced'
+                          ? (isRtl ? 'همگام‌سازی فعال' : 'Sync Active')
+                          : status === 'syncing'
+                          ? (isRtl ? 'در حال همگام‌سازی...' : 'Syncing...')
+                          : status === 'error'
+                          ? (isRtl ? 'خطا در ذخیره' : 'Save Error')
+                          : (isRtl ? 'آفلاین — ذخیره محلی' : 'Offline — Saved Locally')}
+                      </span>
+                    </span>
+                  );
+                })()}
               </div>
             </div>
           </div>

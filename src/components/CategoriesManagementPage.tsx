@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Category, SecondaryTaskColumn } from '../types';
+import { Category } from '../types';
 import { 
   ArrowUp, 
   ArrowDown, 
@@ -15,8 +15,6 @@ import {
 interface CategoriesManagementPageProps {
   categories: Category[];
   onUpdateCategories: (categories: Category[]) => void;
-  secondaryTaskColumns?: SecondaryTaskColumn[];
-  onUpdateSecondaryColumns?: (cols: SecondaryTaskColumn[]) => void;
   onClose: () => void;
   lang?: 'fa' | 'en';
 }
@@ -24,8 +22,6 @@ interface CategoriesManagementPageProps {
 export default function CategoriesManagementPage({
   categories,
   onUpdateCategories,
-  secondaryTaskColumns = [],
-  onUpdateSecondaryColumns,
   onClose,
   lang = 'fa'
 }: CategoriesManagementPageProps) {
@@ -100,14 +96,15 @@ export default function CategoriesManagementPage({
   const handleAddCategory = () => {
     if (!newCatFa.trim()) return;
 
-    if (activeSubTab === 'secondary' && onUpdateSecondaryColumns) {
-      const newCol: SecondaryTaskColumn = {
-        id: 'sc_' + Date.now(),
-        titleFa: newCatFa.trim(),
-        titleEn: newCatFa.trim(),
-        color: `${newColor} hover:opacity-90`
+    if (activeSubTab === 'secondary') {
+      const newCat: Category = {
+        id: 'cat_sec_' + Date.now(),
+        nameFa: newCatFa.trim(),
+        nameEn: newCatFa.trim(),
+        color: `${newColor} hover:opacity-90`,
+        type: 'secondary'
       };
-      onUpdateSecondaryColumns([...secondaryTaskColumns, newCol]);
+      onUpdateCategories([...categories, newCat]);
       setNewCatFa('');
       return;
     }
@@ -142,54 +139,21 @@ export default function CategoriesManagementPage({
   };
 
   const handleDeleteCategory = (id: string) => {
-    if (activeSubTab === 'secondary' && onUpdateSecondaryColumns) {
-      if (window.confirm(labels.deleteConfirm)) {
-        onUpdateSecondaryColumns(secondaryTaskColumns.filter(c => c.id !== id));
-      }
-      return;
-    }
-
     if (id === 'done' || id === 'not_done') {
-      alert(isRtl ? 'دسته‌بندی‌های سیستمی قابل حذف نیستند.' : 'System categories cannot be deleted.');
       return;
     }
-    if (window.confirm(labels.deleteConfirm)) {
-      onUpdateCategories(categories.filter(c => c.id !== id));
-    }
+    onUpdateCategories(categories.filter(c => c.id !== id));
   };
 
-  const handleStartEdit = (cat: any) => {
+  const handleStartEdit = (cat: Category) => {
     setEditingId(cat.id);
-    if (activeSubTab === 'secondary') {
-      setEditNameFa(cat.titleFa || cat.titleEn || '');
-      setEditType('secondary');
-      setEditColor(cat.color ? cat.color.replace(' hover:opacity-90', '').replace(' hover:opacity-80', '') : 'bg-blue-100 border-blue-300 text-blue-900');
-    } else {
-      setEditNameFa(cat.nameFa);
-      setEditType(cat.type || 'core');
-      setEditColor(cat.color.replace(' hover:opacity-90', '').replace(' hover:opacity-80', ''));
-    }
+    setEditNameFa(cat.nameFa);
+    setEditType(cat.type || (activeSubTab === 'secondary' ? 'secondary' : 'core'));
+    setEditColor(cat.color ? cat.color.replace(' hover:opacity-90', '').replace(' hover:opacity-80', '') : 'bg-blue-100 border-blue-300 text-blue-900');
   };
 
   const handleSaveEdit = () => {
-    if (!editNameFa.trim()) return;
-
-    if (activeSubTab === 'secondary' && onUpdateSecondaryColumns) {
-      const updated = secondaryTaskColumns.map(c => {
-        if (c.id === editingId) {
-          return {
-            ...c,
-            titleFa: editNameFa.trim(),
-            titleEn: editNameFa.trim(),
-            color: `${editColor} hover:opacity-90`
-          };
-        }
-        return c;
-      });
-      onUpdateSecondaryColumns(updated);
-      setEditingId(null);
-      return;
-    }
+    if (!editNameFa.trim() || !editingId) return;
 
     const updated = categories.map(c => {
       if (c.id === editingId) {
@@ -197,7 +161,7 @@ export default function CategoriesManagementPage({
           ...c,
           nameFa: editNameFa.trim(),
           nameEn: editNameFa.trim(),
-          type: editType,
+          type: activeSubTab === 'secondary' ? 'secondary' : editType,
           color: `${editColor} hover:opacity-90`
         };
       }
@@ -208,28 +172,28 @@ export default function CategoriesManagementPage({
     setEditingId(null);
   };
 
-  const handleMoveCategory = (index: number, direction: 'up' | 'down') => {
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    
-    if (activeSubTab === 'secondary' && onUpdateSecondaryColumns) {
-      if (targetIndex < 0 || targetIndex >= secondaryTaskColumns.length) return;
-      const listCopy = [...secondaryTaskColumns];
-      const temp = listCopy[index];
-      listCopy[index] = listCopy[targetIndex];
-      listCopy[targetIndex] = temp;
-      onUpdateSecondaryColumns(listCopy);
-      return;
-    }
+  const handleMoveCategory = (indexInActive: number, direction: 'up' | 'down') => {
+    const targetIndexInActive = direction === 'up' ? indexInActive - 1 : indexInActive + 1;
+    if (targetIndexInActive < 0 || targetIndexInActive >= activeList.length) return;
 
-    if (targetIndex < 0 || targetIndex >= categories.length) return;
+    const currentItem = activeList[indexInActive];
+    const targetItem = activeList[targetIndexInActive];
+
+    const idx1 = categories.findIndex(c => c.id === currentItem.id);
+    const idx2 = categories.findIndex(c => c.id === targetItem.id);
+
+    if (idx1 === -1 || idx2 === -1) return;
+
     const listCopy = [...categories];
-    const temp = listCopy[index];
-    listCopy[index] = listCopy[targetIndex];
-    listCopy[targetIndex] = temp;
+    const temp = listCopy[idx1];
+    listCopy[idx1] = listCopy[idx2];
+    listCopy[idx2] = temp;
     onUpdateCategories(listCopy);
   };
 
-  const activeList = activeSubTab === 'secondary' ? secondaryTaskColumns : categories;
+  const activeList = activeSubTab === 'secondary'
+    ? categories.filter(c => c.type === 'secondary')
+    : categories.filter(c => c.type !== 'secondary');
 
   return (
     <div 
@@ -259,38 +223,36 @@ export default function CategoriesManagementPage({
       </div>
 
       {/* Sub-tab selection */}
-      {onUpdateSecondaryColumns && (
-        <div className={`flex bg-slate-100 p-1 rounded-xl border border-slate-200 self-start`}>
-          <button
-            type="button"
-            onClick={() => {
-              setActiveSubTab('core');
-              setEditingId(null);
-            }}
-            className={`px-4 py-2 text-xs font-black rounded-lg transition-all cursor-pointer ${
-              activeSubTab === 'core'
-                ? 'bg-white text-slate-800 shadow-3xs'
-                : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            {labels.tabCore}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setActiveSubTab('secondary');
-              setEditingId(null);
-            }}
-            className={`px-4 py-2 text-xs font-black rounded-lg transition-all cursor-pointer ${
-              activeSubTab === 'secondary'
-                ? 'bg-white text-slate-800 shadow-3xs'
-                : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            {labels.tabSecondary}
-          </button>
-        </div>
-      )}
+      <div className={`flex bg-slate-100 p-1 rounded-xl border border-slate-200 self-start`}>
+        <button
+          type="button"
+          onClick={() => {
+            setActiveSubTab('core');
+            setEditingId(null);
+          }}
+          className={`px-4 py-2 text-xs font-black rounded-lg transition-all cursor-pointer ${
+            activeSubTab === 'core'
+              ? 'bg-white text-slate-800 shadow-3xs'
+              : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          {labels.tabCore}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setActiveSubTab('secondary');
+            setEditingId(null);
+          }}
+          className={`px-4 py-2 text-xs font-black rounded-lg transition-all cursor-pointer ${
+            activeSubTab === 'secondary'
+              ? 'bg-white text-slate-800 shadow-3xs'
+              : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          {labels.tabSecondary}
+        </button>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
@@ -478,7 +440,7 @@ export default function CategoriesManagementPage({
           <div className="space-y-2 max-h-[460px] overflow-y-auto pr-1">
             {activeList.map((cat: any, idx) => {
               const isSystem = cat.id === 'done' || cat.id === 'not_done';
-              const nameDisplay = activeSubTab === 'secondary' ? (cat.titleFa || cat.titleEn) : cat.nameFa;
+              const nameDisplay = cat.nameFa;
               const catTypeLabel = activeSubTab === 'secondary'
                 ? labels.tabSecondary
                 : cat.type === 'secondary' 

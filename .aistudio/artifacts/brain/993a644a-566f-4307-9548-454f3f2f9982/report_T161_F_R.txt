@@ -1,0 +1,667 @@
+T161-F-R
+T161-F-R
+T161-F-R
+NONCE=T161FR-5W7Q
+
+===BEGIN:P1===
+$ md5sum src/App.tsx src/components/ClassSlotModal.tsx src/types.ts src/lib/plannerSyncEngine.ts src/lib/firestoreSync.ts src/components/AnalyticsTab.tsx
+1d8095d6db9c93c2a66a28901a22901d  src/App.tsx
+89d18143a3ab00f4213d500254d3a325  src/components/ClassSlotModal.tsx
+0734a56b27ae630b10786ad611a8d248  src/types.ts
+5f378ab312b5c56ee28119acd45f7c8d  src/lib/plannerSyncEngine.ts
+20bd324785846846756859642594720a  src/lib/firestoreSync.ts
+2aa957617bfb7a6aa1ad85dbcee4e0ca  src/components/AnalyticsTab.tsx
+===END:P1===
+حکم GT-P1: PASS
+
+===BEGIN:P2===
+$ wc -l server.ts src/types.ts src/components/GoalsTab.tsx
+  1827 server.ts
+   357 src/types.ts
+  1470 src/components/GoalsTab.tsx
+  3654 total
+===END:P2===
+حکم GT-P2: PASS
+
+===BEGIN:P3===
+$ sed -n '1506,1807p' server.ts | sha256sum
+5b49f32c93bf3f835942bd30ca13bad4d44e191b09da5202abf7dd84e69ec61a  -
+===END:P3===
+حکم GT-P3: PASS
+
+===BEGIN:P4===
+$ npx tsc --noEmit; echo "TSC_EXIT=$?"
+TSC_EXIT=0
+===END:P4===
+حکم GT-P4: PASS
+
+===BEGIN:P5===
+$ grep -n -e "getFallbackConfig" -e "AI Predict Feasibility" server.ts | head -5
+===END:P5===
+حکم GT-P5: PREDICT-NOT-FOUND (S6/S8: PREDICT-SKIP)
+
+===BEGIN:S1-before===
+$ sed -n '933,939p' server.ts
+  prompt: string;
+  preferredModels: string[];
+  getConfigForModel: (modelName: string) => any;
+  userKeysHeader?: string | string[];
+  customKeys?: ParsedCustomKey[];
+}
+===END:S1-before===
+
+===BEGIN:S1-after===
+$ sed -n '933,940p' server.ts
+  prompt: string;
+  preferredModels: string[];
+  getConfigForModel: (modelName: string) => any;
+  userKeysHeader?: string | string[];
+  customKeys?: ParsedCustomKey[];
+  maxOutputTokens?: number;
+}
+===END:S1-after===
+
+===BEGIN:S2-before===
+$ sed -n '765,773p' server.ts
+            body: JSON.stringify({
+              model,
+              max_tokens: 4096,
+              messages: [{ role: 'user', content: options.prompt }]
+            }),
+===END:S2-before===
+
+===BEGIN:S2-after===
+$ sed -n '765,773p' server.ts
+            body: JSON.stringify({
+              model,
+              max_tokens: Math.min(options.maxOutputTokens ?? 4096, 8192),
+              messages: [{ role: 'user', content: options.prompt }]
+            }),
+===END:S2-after===
+
+===BEGIN:S3-before===
+$ sed -n '790,795p' server.ts
+          const reqBody: any = {
+            model,
+            messages: [{ role: 'user', content: options.prompt }]
+          };
+===END:S3-before===
+
+===BEGIN:S3-after===
+$ sed -n '790,796p' server.ts
+          const reqBody: any = {
+            model,
+            messages: [{ role: 'user', content: options.prompt }],
+            ...(options.maxOutputTokens ? { max_tokens: options.maxOutputTokens } : {})
+          };
+===END:S3-after===
+
+===BEGIN:S4-before===
+$ sed -n '808,827p' server.ts
+          if (resp.status === 400 && reqBody.response_format) {
+            const errTxt = await resp.text().catch(() => '');
+            if (errTxt.toLowerCase().includes('response_format')) {
+              delete reqBody.response_format;
+              resp = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${customKey.key}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(reqBody),
+                signal: controller.signal
+              });
+            } else {
+              const err = new Error(errTxt || 'HTTP 400');
+              (err as any).status = 400;
+              throw err;
+            }
+          }
+===END:S4-before===
+
+===BEGIN:S4-after===
+$ sed -n '809,839p' server.ts
+          if (resp.status === 400) {
+            const errTxt = await resp.text().catch(() => '');
+            if (errTxt.toLowerCase().includes('response_format') && reqBody.response_format) {
+              delete reqBody.response_format;
+              resp = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${customKey.key}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(reqBody),
+                signal: controller.signal
+              });
+            } else if (options.maxOutputTokens && reqBody.max_tokens) {
+              delete reqBody.max_tokens;
+              resp = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${customKey.key}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(reqBody),
+                signal: controller.signal
+              });
+            } else {
+              const err = new Error(errTxt || 'HTTP 400');
+              (err as any).status = 400;
+              throw err;
+            }
+          }
+===END:S4-after===
+
+===BEGIN:S5-before===
+$ sed -n '1680,1685p' server.ts
+      const getConfigForGoalAnalysis = (modelName: string) => {
+        const baseConfig: any = {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+===END:S5-before===
+
+===BEGIN:S5-after===
+$ sed -n '1680,1686p' server.ts
+      const getConfigForGoalAnalysis = (modelName: string) => {
+        const baseConfig: any = {
+          maxOutputTokens: 32768,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+===END:S5-after===
+
+===BEGIN:S6===
+PREDICT-SKIP
+===END:S6===
+
+===BEGIN:S7-before===
+$ sed -n '1784,1791p' server.ts
+      const result = await callGeminiWithFallback({
+        prompt,
+        preferredModels: GOAL_ANALYSIS_MODELS,
+        getConfigForModel: getConfigForGoalAnalysis,
+        userKeysHeader,
+        customKeys,
+      });
+===END:S7-before===
+
+===BEGIN:S7-after===
+$ sed -n '1784,1792p' server.ts
+      const result = await callGeminiWithFallback({
+        prompt,
+        preferredModels: GOAL_ANALYSIS_MODELS,
+        getConfigForModel: getConfigForGoalAnalysis,
+        maxOutputTokens: 32768,
+        userKeysHeader,
+        customKeys,
+      });
+===END:S7-after===
+
+===BEGIN:S8===
+PREDICT-SKIP
+===END:S8===
+
+===BEGIN:S9-before===
+$ sed -n '1625,1628p' server.ts
+۳. تفکیک دقیق و جداگانه تک‌تک هفته‌ها (Week-by-Week Granular Breakdown):
+   - شما باید نقشه راه را برای تمام ${totalWeeks} هفته به صورت **کاملاً جداگانه و تک‌تک هفته‌ها** (Week 1, Week 2, Week 3, ..., Week ${totalWeeks}) خرد و تفکیک کنید.
+   - به هیچ وجه نباید چند هفته را تجمیع یا کلی‌گویی کنید (مثلا تجمیع هفته ۱ تا ۳ ممنوع است!). باید هر هفته به عنوان یک واحد مستقل دارای عنوان هفته (week_title)، هدف هفته (weekly_goal)، تمرین عملی مشخص این هفته (practice_exercise) و حداقل ۳ تا ۵ تسک عملیاتی، جزئی و کامل (tasks) باشد.
+===END:S9-before===
+
+===BEGIN:S9-after===
+$ sed -n '1625,1629p' server.ts
+۳. تفکیک دقیق و جداگانه تک‌تک هفته‌ها (Week-by-Week Granular Breakdown):
+   - شما باید نقشه راه را برای تمام ${totalWeeks} هفته به صورت **کاملاً جداگانه و تک‌تک هفته‌ها** (Week 1, Week 2, Week 3, ..., Week ${totalWeeks}) خرد و تفکیک کنید.
+تمام هفته‌ها از ۱ تا ${totalWeeks} را کامل تولید کن؛ بدون placeholder، بدون خلاصه‌سازی، بدون تجمیع هفته‌ها؛ کامل‌ترین و باجزئیات‌ترین پاسخ ممکن را بده.
+   - به هیچ وجه نباید چند هفته را تجمیع یا کلی‌گویی کنید (مثلا تجمیع هفته ۱ تا ۳ ممنوع است!). باید هر هفته به عنوان یک واحد مستقل دارای عنوان هفته (week_title)، هدف هفته (weekly_goal)، تمرین عملی مشخص این هفته (practice_exercise) و حداقل ۳ تا ۵ تسک عملیاتی، جزئی و کامل (tasks) باشد.
+===END:S9-after===
+
+===BEGIN:S10-before===
+$ sed -n '1799,1804p' server.ts
+      const textVal = text || "{}";
+      const parsed = JSON.parse(textVal.trim());
+
+      return res.json({ success: true, ...parsed });
+    }
+  } catch (error: any) {
+===END:S10-before===
+
+===BEGIN:S10-after===
+$ sed -n '1800,1863p' server.ts
+      const textVal = text || "{}";
+      const parsed = JSON.parse(textVal.trim());
+
+      // T161-F: coverage validation — weeks of phases must cover ai_estimated_weeks
+      const expectedWeeks = Number(parsed.ai_estimated_weeks) || Number(totalWeeks) || 0;
+      const countCovered = (obj: any) => (obj.phases || []).reduce((s: number, ph: any) => s + (((ph.weeks || []).length) || 0), 0);
+      let coveredWeeks = countCovered(parsed);
+      let coverageComplete = expectedWeeks > 0 && coveredWeeks >= expectedWeeks;
+
+      if (!coverageComplete && expectedWeeks > 0) {
+        try {
+          const maxWeekSoFar = (parsed.phases || []).reduce((m: number, ph: any) => Math.max(m, ...((ph.weeks || []).map((w: any) => Number(w.week_number) || 0))), 0);
+          const contPrompt = `ادامهٔ نقشه راه برای هدف "${title}" را تولید کن. هفته‌های ۱ تا ${maxWeekSoFar} قبلاً تولید شده‌اند. فقط هفته‌های ${maxWeekSoFar + 1} تا ${expectedWeeks} را در همان قالب JSON قبلی (آرایهٔ phases با weeks و tasks) تولید کن؛ هیچ متن اضافه و هیچ توضیحی ننویس، فقط JSON.`;
+          const contResult = await callGeminiWithFallback({
+            prompt: contPrompt,
+            preferredModels: GOAL_ANALYSIS_MODELS,
+            getConfigForModel: getConfigForGoalAnalysis,
+            maxOutputTokens: 32768,
+            userKeysHeader,
+            customKeys,
+          });
+          const contParsed = JSON.parse(contResult.text.trim());
+          const contPhases: any[] = contParsed.phases || [];
+          const existingByNumber = new Map<number, any>();
+          (parsed.phases || []).forEach((ph: any) => existingByNumber.set(Number(ph.phase_number), ph));
+          for (const cph of contPhases) {
+            const num = Number(cph.phase_number);
+            const target = existingByNumber.get(num);
+            if (target) {
+              const seenWeeks = new Set((target.weeks || []).map((w: any) => Number(w.week_number)));
+              const newWeeks = (cph.weeks || []).filter((w: any) => !seenWeeks.has(Number(w.week_number)));
+              target.weeks = [...(target.weeks || []), ...newWeeks];
+              target.tasks = [...(target.tasks || []), ...((cph.tasks || []))];
+            } else {
+              parsed.phases = parsed.phases || [];
+              parsed.phases.push(cph);
+              existingByNumber.set(num, cph);
+            }
+          }
+          coveredWeeks = countCovered(parsed);
+          coverageComplete = coveredWeeks >= expectedWeeks;
+        } catch (contErr: any) {
+          console.warn("[AI Roadmap Continuation] failed:", contErr?.message || contErr);
+        }
+      }
+
+      return res.json({
+        success: true,
+        ...parsed,
+        coverage: {
+          complete: coverageComplete,
+          expectedWeeks,
+          coveredWeeks,
+          ...(coverageComplete ? {} : { warning: "نقشه راه کامل تولید نشد؛ هفته‌های پوشش‌داده‌شده کمتر از تخمین هوش مصنوعی است." })
+        }
+      });
+    }
+  } catch (error: any) {
+===END:S10-after===
+
+===BEGIN:T1-before===
+$ sed -n '293,303p' src/types.ts
+export interface GoalPhaseTask {
+  id?: string;
+  title: string;
+  description?: string;
+  type: 'core' | 'secondary' | 'habit';
+  suggested_weekday?: string;
+  deadline_note?: string;
+  completed?: boolean;
+}
+===END:T1-before===
+
+===BEGIN:T1-after===
+$ sed -n '293,307p' src/types.ts
+export interface GoalPhaseTask {
+  id?: string;
+  title: string;
+  description?: string;
+  type: 'core' | 'secondary' | 'habit';
+  suggested_weekday?: string;
+  deadline_note?: string;
+  completed?: boolean;
+  // T161-F: full-field editor additions (all optional — legacy data untouched)
+  link?: string;
+  linkTitle?: string;
+  deadline?: string;
+}
+===END:T1-after===
+
+===BEGIN:H1===
+$ wc -l src/components/GoalEditorModal.tsx
+265 src/components/GoalEditorModal.tsx
+$ md5sum src/components/GoalEditorModal.tsx
+e5254aefb1845f63e0a3ef414c948343  src/components/GoalEditorModal.tsx
+$ sed -n '1,20p' src/components/GoalEditorModal.tsx
+import { useEffect, useState } from 'react';
+import { X, Plus, Trash2, ChevronDown, ChevronUp, Save } from 'lucide-react';
+import { Goal, GoalPhase, GoalWeek, GoalPhaseTask, Category } from '../types';
+
+// T161-F: full-field goal editor (manual + AI goals) — merge-save via onSave
+interface GoalEditorModalProps {
+  goal: Goal | null;
+  open: boolean;
+  categories: Category[];
+  lang?: 'fa' | 'en';
+  onClose: () => void;
+  onSave: (edited: Goal) => void;
+}
+
+const COLOR_CHOICES = [
+  { name: 'نیلی', value: 'bg-indigo-100 border-indigo-300 text-indigo-900' },
+  { name: 'زمردی', value: 'bg-emerald-100 border-emerald-300 text-emerald-900' },
+  { name: 'آبی', value: 'bg-sky-100 border-sky-300 text-sky-900' },
+  { name: 'بنفش', value: 'bg-purple-100 border-purple-300 text-purple-900' },
+  { name: 'کهربایی', value: 'bg-amber-100 border-amber-300 text-amber-900' },
+  { name: 'رز', value: 'bg-rose-100 border-rose-300 text-rose-900' },
+];
+===END:H1===
+
+===BEGIN:G1-before===
+$ sed -n '1,12p' src/components/GoalsTab.tsx
+import React, { useState, useMemo } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  Target, 
+  Brain, 
+  Plus, 
+  Trash2, 
+  Edit2, 
+  Check, 
+  ChevronRight, 
+  Compass, 
+  Award, 
+===END:G1-before===
+
+===BEGIN:G1-after===
+$ sed -n '1,13p' src/components/GoalsTab.tsx
+import React, { useState, useMemo } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  Target, 
+  Brain, 
+  Plus, 
+  Trash2, 
+  Edit2, 
+  PenSquare, 
+  Check, 
+  ChevronRight, 
+  Compass, 
+  Award, 
+===END:G1-after===
+
+===BEGIN:G2-before===
+$ sed -n '340,346p' src/components/GoalsTab.tsx
+    } finally {
+      setIsCreatingGoal(false);
+    }
+  };
+
+  // Delete goal
+  const handleDeleteGoal = (goalId: string) => {
+===END:G2-before===
+
+===BEGIN:G2-after===
+$ sed -n '340,349p' src/components/GoalsTab.tsx
+    } finally {
+      setIsCreatingGoal(false);
+    }
+  };
+
+  // T161-F: goal editor state
+  const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
+
+  // Delete goal
+  const handleDeleteGoal = (goalId: string) => {
+===END:G2-after===
+
+===BEGIN:G3-before===
+$ sed -n '353,361p' src/components/GoalsTab.tsx
+    showToast('هدف با موفقیت حذف شد.');
+    setConfirmDeleteGoalId(null);
+  };
+
+  // Helper to ensure category exists in data.categories
+  const ensureGoalCategory = (goal: Goal, currentCategories: Category[]) => {
+===END:G3-before===
+
+===BEGIN:G3-after===
+$ sed -n '354,394p' src/components/GoalsTab.tsx
+    showToast('هدف با موفقیت حذف شد.');
+    setConfirmDeleteGoalId(null);
+  };
+
+  // T161-F: merge-save goal edits (only edited fields override; nothing dropped)
+  const handleSaveGoalEdits = (edited: Goal) => {
+    onUpdateData(prev => ({
+      ...prev,
+      goals: (prev.goals || []).map(g => g.goal_id === edited.goal_id ? { ...g, ...edited } : g)
+    }));
+    showToast(isRtl ? 'هدف با ادغام کامل ذخیره شد' : 'Goal saved with full merge');
+  };
+  // T161-F: manual goal creation (skeleton, completed via editor)
+  const handleAddManualGoal = () => {
+    const title = window.prompt(isRtl ? 'عنوان هدف دستی:' : 'Manual goal title:');
+    if (!title || !title.trim()) return;
+    const weeks = Number(window.prompt(isRtl ? 'تعداد هفته‌ها:' : 'Number of weeks:', '8')) || 8;
+    const goalId = `goal_${Date.now()}`;
+    const newGoal: Goal = {
+      goal_id: goalId,
+      title: title.trim(),
+      total_weeks: weeks,
+      current_week_index: 1,
+      ai_estimated_weeks: weeks,
+      milestones: [{ week_number: 1, title: 'فاز ۱', completed: false }],
+      phases: [{
+        phase_number: 1,
+        title: 'فاز ۱',
+        description: '',
+        estimated_weeks: `هفته ۱ تا ${weeks}`,
+        weeks: Array.from({ length: weeks }, (_, i) => ({ week_number: i + 1, week_title: `هفته ${i + 1}`, tasks: [] })),
+        tasks: []
+      }],
+      active_week_tasks: []
+    };
+    onUpdateData(prev => ({ ...prev, goals: [...(prev.goals || []), newGoal] }));
+    showToast(isRtl ? 'هدف دستی ساخته شد؛ با دکمهٔ ویرایش کاملش کنید' : 'Manual goal created; complete it via Edit');
+  };
+
+  // Helper to ensure category exists in data.categories
+  const ensureGoalCategory = (goal: Goal, currentCategories: Category[]) => {
+===END:G3-after===
+
+===BEGIN:G4-before===
+$ sed -n '192,199p' src/components/GoalsTab.tsx
+      const resData = await response.json();
+      if (resData.success === false) {
+        throw new Error(resData.error || "خطای نامشخص در تحلیل هوش مصنوعی");
+      }
+
+      // Handle Category creation / linking
+      const catName = newGoalCatName.trim() || newGoalTitle.trim();
+===END:G4-before===
+
+===BEGIN:G4-after===
+$ sed -n '192,204p' src/components/GoalsTab.tsx
+      const resData = await response.json();
+      if (resData.success === false) {
+        throw new Error(resData.error || "خطای نامشخص در تحلیل هوش مصنوعی");
+      }
+
+      // T161-F: surface server coverage warning (silence forbidden)
+      if (resData.coverage && resData.coverage.complete === false) {
+        showToast(isRtl ? `هشدار: نقشه راه ناقص است (پوشش ${resData.coverage.coveredWeeks} از ${resData.coverage.expectedWeeks} هفته)` : `Warning: roadmap incomplete (${resData.coverage.coveredWeeks}/${resData.coverage.expectedWeeks} weeks)`);
+      }
+
+      // Handle Category creation / linking
+      const catName = newGoalCatName.trim() || newGoalTitle.trim();
+===END:G4-after===
+
+===BEGIN:G5-a-before===
+$ sed -n '1166,1176p' src/components/GoalsTab.tsx
+                          <span>انتقال یک‌جای کل فازها</span>
+                        </button>
+
+                        {confirmDeleteGoalId === goal.goal_id ? (
+                          <div className="flex items-center gap-1.5 p-1.5 bg-rose-50 border border-rose-200 rounded-xl text-xs">
+                            <span className="font-bold text-rose-800 text-[10px] pl-1">حذف هدف؟</span>
+===END:G5-a-before===
+
+===BEGIN:G5-a-after===
+$ sed -n '1166,1184p' src/components/GoalsTab.tsx
+                          <span>انتقال یک‌جای کل فازها</span>
+                        </button>
+
+                        <button
+                          onClick={() => setEditingGoal(goal)}
+                          className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50"
+                          title={isRtl ? 'ویرایش هدف' : 'Edit goal'}
+                        >
+                          <PenSquare size={14} />
+                        </button>
+
+                        {confirmDeleteGoalId === goal.goal_id ? (
+                          <div className="flex items-center gap-1.5 p-1.5 bg-rose-50 border border-rose-200 rounded-xl text-xs">
+                            <span className="font-bold text-rose-800 text-[10px] pl-1">حذف هدف؟</span>
+===END:G5-a-after===
+
+===BEGIN:G5-b-before===
+$ sed -n '873,883p' src/components/GoalsTab.tsx
+            <div className="text-xs font-black text-slate-700 flex items-center gap-1.5 mt-0.5">
+              <span>{isRtl ? 'نرخ تکمیل کارها (TCR):' : 'Task Completion Rate (TCR):'}</span>
+              <span dir="ltr" className="text-indigo-600 font-extrabold bg-indigo-50 px-1.5 py-0.5 rounded-md border border-indigo-100">{userStatsContext.tcr}%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. ADD NEW GOAL FORM WITH CATEGORY AND COLOR SELECTION */}
+===END:G5-b-before===
+
+===BEGIN:G5-b-after===
+$ sed -n '873,887p' src/components/GoalsTab.tsx
+            <div className="text-xs font-black text-slate-700 flex items-center gap-1.5 mt-0.5">
+              <span>{isRtl ? 'نرخ تکمیل کارها (TCR):' : 'Task Completion Rate (TCR):'}</span>
+              <span dir="ltr" className="text-indigo-600 font-extrabold bg-indigo-50 px-1.5 py-0.5 rounded-md border border-indigo-100">{userStatsContext.tcr}%</span>
+            </div>
+          </div>
+        </div>
+        <button type="button" onClick={handleAddManualGoal}
+          className="px-3 py-1.5 rounded-xl text-xs font-bold border border-indigo-200 text-indigo-700 hover:bg-indigo-50">
+          {isRtl ? '+ هدف دستی' : '+ Manual goal'}
+        </button>
+      </div>
+
+      {/* 2. ADD NEW GOAL FORM WITH CATEGORY AND COLOR SELECTION */}
+===END:G5-b-after===
+
+===BEGIN:G6-before===
+$ tail -n 12 src/components/GoalsTab.tsx
+                  </div>
+                </motion.div>
+              );
+            })
+          )}
+        </AnimatePresence>
+      </div>
+
+    </div>
+  );
+}
+===END:G6-before===
+
+===BEGIN:G6-after===
+$ tail -n 20 src/components/GoalsTab.tsx
+                  </div>
+                </motion.div>
+              );
+            })
+          )}
+        </AnimatePresence>
+      </div>
+      <GoalEditorModal
+        goal={editingGoal}
+        open={editingGoal !== null}
+        categories={data.categories || []}
+        lang={isRtl ? 'fa' : 'en'}
+        onClose={() => setEditingGoal(null)}
+        onSave={handleSaveGoalEdits}
+      />
+    </div>
+  );
+}
+===END:G6-after===
+
+===BEGIN:Z1===
+$ npx tsc --noEmit; echo "TSC_EXIT=$?"
+TSC_EXIT=0
+===END:Z1===
+
+===BEGIN:Z2===
+$ npm run build
+✓ built in 14.16s
+  dist/server.cjs      110.6kb
+  dist/server.cjs.map  166.1kb
+⚡ Done in 23ms
+===END:Z2===
+
+===BEGIN:Z3===
+$ grep -c "maxOutputTokens" server.ts
+8
+$ grep -c "max_tokens: 4096" server.ts
+0
+$ grep -c "coverageComplete" server.ts
+5
+$ grep -c "AI Roadmap Continuation" server.ts
+1
+$ grep -c "Math.min(options.maxOutputTokens" server.ts
+1
+$ grep -c "GoalEditorModal" src/components/GoalsTab.tsx
+2
+$ grep -c "setEditingGoal" src/components/GoalsTab.tsx
+3
+$ grep -c "handleSaveGoalEdits" src/components/GoalsTab.tsx
+2
+$ grep -c "handleAddManualGoal" src/components/GoalsTab.tsx
+2
+$ grep -c "PenSquare" src/components/GoalsTab.tsx
+2
+$ grep -c "linkTitle?: string" src/types.ts
+4
+$ grep -c "T161-F: full-field editor additions" src/types.ts
+1
+===END:Z3===
+
+===BEGIN:Z4===
+$ md5sum src/App.tsx src/components/ClassSlotModal.tsx src/lib/plannerSyncEngine.ts src/lib/firestoreSync.ts src/components/AnalyticsTab.tsx
+1d8095d6db9c93c2a66a28901a22901d  src/App.tsx
+89d18143a3ab00f4213d500254d3a325  src/components/ClassSlotModal.tsx
+5f378ab312b5c56ee28119acd45f7c8d  src/lib/plannerSyncEngine.ts
+20bd324785846846756859642594720a  src/lib/firestoreSync.ts
+2aa957617bfb7a6aa1ad85dbcee4e0ca  src/components/AnalyticsTab.tsx
+===END:Z4===
+
+===BEGIN:Z5===
+$ md5sum server.ts src/types.ts src/components/GoalsTab.tsx src/components/GoalEditorModal.tsx
+c2dee22c5a5b7404b60262e6470ac0ba  server.ts
+2ebb93643a424d2105b821bcc4ee3e29  src/types.ts
+34cca3ca17ec88951b50836275411902  src/components/GoalsTab.tsx
+e5254aefb1845f63e0a3ef414c948343  src/components/GoalEditorModal.tsx
+$ wc -l server.ts src/types.ts src/components/GoalsTab.tsx src/components/GoalEditorModal.tsx
+  1892 server.ts
+   361 src/types.ts
+  1534 src/components/GoalsTab.tsx
+   265 src/components/GoalEditorModal.tsx
+  4052 total
+===END:Z5===
+
+| Gate | Status | Detail |
+|---|---|---|
+| GT-Z1 | PASS | TSC_EXIT=0 |
+| GT-Z2 | PASS | Build successful with vite + esbuild server |
+| GT-Z3 | PASS | maxOutputTokens: 8 (7 newly added + 1 pre-existing in healthcheck) |
+| GT-Z4 | PASS | max_tokens: 4096 count = 0 |
+| GT-Z5 | PASS | coverageComplete count = 5 |
+| GT-Z6 | PASS | AI Roadmap Continuation count = 1 |
+| GT-Z7 | PASS | Math.min(options.maxOutputTokens count = 1 |
+| GT-Z8 | PASS | GoalEditorModal count = 2 |
+| GT-Z9 | PASS | setEditingGoal count = 3 |
+| GT-Z10 | PASS | handleSaveGoalEdits count = 2 |
+| GT-Z11 | PASS | handleAddManualGoal count = 2 |
+| GT-Z12 | PASS | PenSquare count = 2 |
+| GT-Z13 | PASS | linkTitle?: string count = 4 (1 in GoalPhaseTask + 3 pre-existing in types) |
+| GT-Z14 | PASS | T161-F: full-field editor additions count = 1 |
+| GT-Z15 | PASS | Frozen files match P1 md5 exactly (0 bytes changed) |

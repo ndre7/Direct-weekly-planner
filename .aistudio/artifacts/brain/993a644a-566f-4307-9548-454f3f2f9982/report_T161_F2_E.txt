@@ -1,0 +1,1097 @@
+T161-F2-E
+T161-F2-E
+T161-F2-E
+NONCE=T161F2E-7K4N
+
+===BEGIN:P0===
+$ pwd
+/app/applet
+
+$ ls src/components
+AnalyticsTab.tsx
+ApiKeySettings.tsx
+CategoriesManagementPage.tsx
+CategoriesManager.tsx
+ClassSlotModal.tsx
+DailyTaskModal.tsx
+DateTimeSelect.tsx
+DayInspectorModal.tsx
+FirebaseCloudBackup.tsx
+GoalsTab.tsx
+GoogleCalendarSync.tsx
+Header.tsx
+SessionManager.tsx
+SettingsPage.tsx
+Sidebar.tsx
+UserManagementView.tsx
+UserProfileModal.tsx
+===END:P0===
+
+===BEGIN:P1===
+1d8095d6db9c93c2a66a28901a22901d  src/App.tsx
+89d18143a3ab00f4213d500254d3a325  src/components/ClassSlotModal.tsx
+0734a56b27ae630b10786ad611a8d248  src/types.ts
+5f378ab312b5c56ee28119acd45f7c8d  src/lib/plannerSyncEngine.ts
+20bd324785846846756859642594720a  src/lib/firestoreSync.ts
+2aa957617bfb7a6aa1ad85dbcee4e0ca  src/components/AnalyticsTab.tsx
+===END:P1===
+
+===BEGIN:P2===
+  1827 server.ts
+   357 src/types.ts
+  1470 src/components/GoalsTab.tsx
+===END:P2===
+
+===BEGIN:P3===
+5b49f32c93bf3f835942bd30ca13bad4d44e191b09da5202abf7dd84e69ec61a  -
+===END:P3===
+
+===BEGIN:P4===
+TSC_EXIT=0
+===END:P4===
+
+===BEGIN:W1===
+713:async function executeCustomKeyCall(
+961:async function callGeminiWithFallback(options: GeminiFallbackOptions): Promise<GeminiFallbackResult> {
+966:      const customRes = await executeCustomKeyCall(customKey, options, chainDeadline);
+1455:    const result = await callGeminiWithFallback({
+1576:      const result = await callGeminiWithFallback({
+1773:      const result = await callGeminiWithFallback({
+===END:W1===
+
+===BEGIN:W2===
+760:        } else if (customKey.provider === 'anthropic') {
+761:          const resp = await fetch('https://api.anthropic.com/v1/messages', {
+765:              'anthropic-version': '2023-06-01',
+770:              max_tokens: 4096,
+789:          let endpoint = customKey.baseUrl || providerDef?.defaultBaseUrl || 'https://api.openai.com/v1';
+794:          const reqBody: any = {
+799:            reqBody.response_format = { type: 'json_object' };
+808:            body: JSON.stringify(reqBody),
+812:          if (resp.status === 400 && reqBody.response_format) {
+815:              delete reqBody.response_format;
+822:                body: JSON.stringify(reqBody),
+880:          (status === 400 && (
+1159:      } else if (prov === 'anthropic') {
+1160:        const resp = await fetch('https://api.anthropic.com/v1/messages', {
+1164:            'anthropic-version': '2023-06-01',
+1169:            max_tokens: 16,
+1186:        let endpoint = baseUrl || providerDef?.defaultBaseUrl || 'https://api.openai.com/v1';
+1191:        let reqBody: any = {
+1194:          max_tokens: 16
+1203:          body: JSON.stringify(reqBody),
+1207:        if (resp.status === 400) {
+1209:          if (errBody.toLowerCase().includes('max_completion_tokens')) {
+1210:            delete reqBody.max_tokens;
+1211:            reqBody.max_completion_tokens = 16;
+1218:              body: JSON.stringify(reqBody),
+1316:    } else if (prov === 'anthropic') {
+1317:      const resp = await fetch('https://api.anthropic.com/v1/models', {
+1320:          'anthropic-version': '2023-06-01'
+1334:      let endpoint = baseUrl || providerDef?.defaultBaseUrl || 'https://api.openai.com/v1';
+===END:W2===
+
+===BEGIN:W3===
+$ sed -n '920,949p' server.ts
+  return null;
+}
+
+interface GeminiFallbackOptions {
+  prompt: string;
+  preferredModels: string[];
+  getConfigForModel: (modelName: string) => any;
+  userKeysHeader?: string | string[];
+  customKeys?: ParsedCustomKey[];
+}
+
+interface GeminiFallbackResult {
+  text: string;
+  accountLabel: string;
+  modelName: string;
+  usedCustomKeyId?: string;
+  usedProvider?: string;
+  usedModel?: string;
+  tokenCount?: number;
+  source?: "custom" | "server";
+}
+
+export class GeminiFallbackError extends Error {
+  reason: "quota_exhausted" | "model_unavailable" | "auth_error" | "unknown";
+  userMessage: string;
+
+  constructor(
+    reason: "quota_exhausted" | "model_unavailable" | "auth_error" | "unknown",
+    userMessage: string,
+$ sed -n '920,949p' server.ts | sha256sum
+ad3bd9aad0f30c7c60390055653ee011caef6d5785c99c6a3f478861cc6f4668  -
+$ sed -n '920,949p' server.ts | wc -l
+30
+===END:W3===
+
+===BEGIN:W4===
+--- پنجره ۱: خطوط ۷۵۵ تا ۷۸۰ (پوشش خطوط ۷۶۰ تا ۷۷۰) ---
+$ sed -n '755,780p' server.ts
+            contents: options.prompt,
+            config
+          });
+          text = response.text || '';
+          tokenCount = response.usageMetadata?.totalTokenCount;
+        } else if (customKey.provider === 'anthropic') {
+          const resp = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'x-api-key': customKey.key,
+              'anthropic-version': '2023-06-01',
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              model,
+              max_tokens: 4096,
+              messages: [{ role: 'user', content: options.prompt }]
+            }),
+            signal: controller.signal
+          });
+
+          if (!resp.ok) {
+            const errBody = await resp.text().catch(() => '');
+            const err = new Error(errBody || `Anthropic HTTP ${resp.status}`);
+            (err as any).status = resp.status;
+            throw err;
+$ sed -n '755,780p' server.ts | sha256sum
+bd6e7df4b91c6ffed9b0671751aea63b9c365bfa13fb0e49aff5363080cb8df0  -
+$ sed -n '755,780p' server.ts | wc -l
+26
+
+--- پنجره ۲: خطوط ۷۸۵ تا ۸۱۰ (پوشش خطوط ۷۸۹ تا ۸۰۸) ---
+$ sed -n '785,810p' server.ts
+          if (data.usage) {
+            tokenCount = (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0);
+          }
+        } else {
+          let endpoint = customKey.baseUrl || providerDef?.defaultBaseUrl || 'https://api.openai.com/v1';
+          if (!endpoint.endsWith('/chat/completions')) {
+            endpoint = endpoint.replace(/\/+$/, '') + '/chat/completions';
+          }
+
+          const reqBody: any = {
+            model,
+            messages: [{ role: 'user', content: options.prompt }]
+          };
+
+          if (providerDef?.jsonMode) {
+            reqBody.response_format = { type: 'json_object' };
+          }
+
+          let resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${customKey.key}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(reqBody),
+            signal: controller.signal
+          });
+$ sed -n '785,810p' server.ts | sha256sum
+ab94e63c6e663d2f70f4b6219e54f5828b6cbca6842df0924c327ce79bf2d6c8  -
+$ sed -n '785,810p' server.ts | wc -l
+26
+
+--- پنجره ۳: خطوط ۸۱۰ تا ۸۳۵ (پوشش خطوط ۸۱۲ تا ۸۲۲) ---
+$ sed -n '810,835p' server.ts
+          });
+
+          if (resp.status === 400 && reqBody.response_format) {
+            const errTxt = await resp.text().catch(() => '');
+            if (errTxt.toLowerCase().includes('response_format')) {
+              delete reqBody.response_format;
+              resp = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${customKey.key}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(reqBody),
+                signal: controller.signal
+              });
+            } else {
+              const err = new Error(errTxt || 'HTTP 400');
+              (err as any).status = 400;
+              throw err;
+            }
+          }
+
+          if (!resp.ok) {
+            const errBody = await resp.text().catch(() => '');
+            const err = new Error(errBody || `OpenAI-compatible HTTP ${resp.status}`);
+            (err as any).status = resp.status;
+$ sed -n '810,835p' server.ts | sha256sum
+d2da3e43e362290179f6adf623421cff77256fd2b95d1c84b4bca4fd7a02e2b0  -
+$ sed -n '810,835p' server.ts | wc -l
+26
+
+--- پنجره ۴: خطوط ۸۶۸ تا ۸۹۲ (پوشش خط ۸۸۰) ---
+$ sed -n '868,892p' server.ts
+          msg.includes('permission_denied') ||
+          msg.includes('invalid x-api-key')
+        ) {
+          return null;
+        }
+
+        if (isUserExplicitModel) {
+          return null;
+        }
+
+        if (
+          status === 404 ||
+          (status === 400 && (
+            msg.includes('model_not_found') ||
+            msg.includes('does not exist') ||
+            msg.includes('not supported') ||
+            msg.includes('unknown model') ||
+            msg.includes('not found') ||
+            msg.includes('deprecated') ||
+            msg.includes('retired')
+          )) ||
+          msg.includes('no longer available') ||
+          msg.includes('not found') ||
+          msg.includes('does not exist') ||
+          msg.includes('model_not_found') ||
+$ sed -n '868,892p' server.ts | sha256sum
+50bf46d8c8c64a052262734fc9a4077629a52c26e73cd617547e0bc7a00e53e5  -
+$ sed -n '868,892p' server.ts | wc -l
+25
+===END:W4===
+
+===BEGIN:W5===
+$ sed -n '1665,1694p' server.ts
+    }
+  ]
+}`;
+
+      const getConfigForGoalAnalysis = (modelName: string) => {
+        const baseConfig: any = {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              feasibility_score: {
+                type: Type.INTEGER,
+                description: "نمره احتمال موفقیت واقعی بین 0 تا 100"
+              },
+              ai_estimated_weeks: {
+                type: Type.INTEGER,
+                description: "تخمین هوش مصنوعی از هفته‌های مورد نیاز"
+              },
+              justification: {
+                type: Type.STRING,
+                description: "توجیه کوتاه نمره و تحلیل اولیه به فارسی روان"
+              },
+              practical_exercises: {
+                type: Type.ARRAY,
+                description: "تمرینات عملی، پروژه‌ای و دریل‌های مشخص برای تثبیت مهارت",
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING, description: "عنوان مشخص تمرین به فارسی" },
+$ sed -n '1665,1694p' server.ts | sha256sum
+dfa0aad4193762958e53e90a6bdb40dc84c2cf6b98ab07920bd5f25c15140239  -
+$ sed -n '1665,1694p' server.ts | wc -l
+30
+===END:W5===
+
+===BEGIN:W6===
+$ sed -n '1695,1724p' server.ts
+                    description: { type: Type.STRING, description: "توضیحات کامل نحوه اجرای تمرین" },
+                    target_drill: { type: Type.STRING, description: "تمرین یا مسئله نمونه کاملا مشخص (مثلا: حل ۱۰ سوال فصل ۳)" },
+                    type: { type: Type.STRING, enum: ["project", "drill", "exercise", "assignment"], description: "نوع تمرین" }
+                  },
+                  required: ["title", "description", "target_drill"]
+                }
+              },
+              phases: {
+                type: Type.ARRAY,
+                description: "تمام فازهای نقشه راه کل مسیر یک‌جا",
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    phase_number: { type: Type.INTEGER, description: "شماره فاز" },
+                    title: { type: Type.STRING, description: "عنوان فاز به فارسی" },
+                    description: { type: Type.STRING, description: "توضیحات و اهداف فاز" },
+                    estimated_weeks: { type: Type.STRING, description: "بازه‌های زمانی فاز" },
+                    weeks: {
+                      type: Type.ARRAY,
+                      description: "تفکیک کامل و جداگانه تک‌تک هفته‌های این فاز",
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          week_number: { type: Type.INTEGER, description: "شماره هفته (مثلا ۱، ۲، ۳...)" },
+                          week_title: { type: Type.STRING, description: "عنوان مشخص و جذاب این هفته" },
+                          weekly_goal: { type: Type.STRING, description: "هدف اصلی این هفته مشخص" },
+                          practice_exercise: { type: Type.STRING, description: "تمرین عملی مشخص این هفته" },
+                          tasks: {
+                            type: Type.ARRAY,
+                            description: "لیست تسک‌های ریز و دقیق این هفته",
+$ sed -n '1695,1724p' server.ts | sha256sum
+1c7710f48d5b1faada8c0bb18e23d4ba95180a28fc6399a928afdc940f99dc95  -
+$ sed -n '1695,1724p' server.ts | wc -l
+30
+===END:W6===
+
+===BEGIN:W7===
+$ sed -n '1725,1754p' server.ts
+                            items: {
+                              type: Type.OBJECT,
+                              properties: {
+                                title: { type: Type.STRING, description: "عنوان مشخص تسک به فارسی" },
+                                description: { type: Type.STRING, description: "توضیحات کامل و عملیاتی تسک به فارسی" },
+                                type: { type: Type.STRING, enum: ["core", "secondary", "habit"], description: "نوع تسک" },
+                                suggested_weekday: { type: Type.STRING, description: "روز پیشنهادی هفته" },
+                                deadline_note: { type: Type.STRING, description: "مهلت یا ددلاین پیشنهادی" }
+                              },
+                              required: ["title", "description", "type"]
+                            }
+                          }
+                        },
+                        required: ["week_number", "week_title", "tasks"]
+                      }
+                    },
+                    tasks: {
+                      type: Type.ARRAY,
+                      description: "لیست تسک‌های ریز و دقیق فاز",
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          title: { type: Type.STRING, description: "عنوان مشخص تسک به فارسی" },
+                          description: { type: Type.STRING, description: "توضیحات کامل و عملیاتی تسک به فارسی" },
+                          type: { type: Type.STRING, enum: ["core", "secondary", "habit"], description: "نوع تسک" },
+                          suggested_weekday: { type: Type.STRING, description: "روز پیشنهادی هفته" },
+                          deadline_note: { type: Type.STRING, description: "مهلت یا ددلاین پیشنهادی" }
+                        },
+                        required: ["title", "description", "type"]
+                      }
+$ sed -n '1725,1754p' server.ts | sha256sum
+6d3e2c3ac045d7f33837d3367e97b119448ab3e1c48de440353c45d524a1e9f2  -
+$ sed -n '1725,1754p' server.ts | wc -l
+30
+===END:W7===
+
+===BEGIN:W8===
+$ sed -n '1755,1784p' server.ts
+                    }
+                  },
+                  required: ["phase_number", "title", "description"]
+                }
+              }
+            },
+            required: ["feasibility_score", "ai_estimated_weeks", "justification", "phases"]
+          }
+        };
+
+        if (modelName === "gemini-3.1-pro-preview") {
+          baseConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.HIGH };
+        }
+
+        return baseConfig;
+      };
+
+      const userKeysHeader = req.headers['x-gemini-keys'] as string | undefined;
+      const customKeys = parseCustomApiKeys(req);
+
+      const result = await callGeminiWithFallback({
+        prompt,
+        preferredModels: GOAL_ANALYSIS_MODELS,
+        getConfigForModel: getConfigForGoalAnalysis,
+        userKeysHeader,
+        customKeys,
+      });
+
+      const { text } = result;
+
+      res.setHeader("x-used-custom-key-id", result.usedCustomKeyId || "");
+      res.setHeader("x-used-provider", result.usedProvider || "");
+$ sed -n '1755,1784p' server.ts | sha256sum
+de32eed346bf3c740f1ce7cd830b4e675b7d5de3ebb83c1c96ccbc6c23aa6305  -
+$ sed -n '1755,1784p' server.ts | wc -l
+30
+===END:W8===
+
+===BEGIN:W9===
+$ sed -n '1785,1814p' server.ts
+      res.setHeader("x-used-model", result.usedModel || result.modelName || "");
+      res.setHeader("x-fallback-used", result.source || "server");
+      res.setHeader("x-used-token-count", String(result.tokenCount ?? 0));
+      res.setHeader("Access-Control-Expose-Headers", "x-used-custom-key-id, x-used-provider, x-used-model, x-fallback-used, x-used-token-count");
+
+      const textVal = text || "{}";
+      const parsed = JSON.parse(textVal.trim());
+      return res.json({ success: true, ...parsed });
+    }
+  } catch (error: any) {
+    console.error("Gemini Goal Analysis Error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "خطا در تحلیل هدف",
+      userMessage: error.userMessage || error.message || "خطا در تحلیل هدف",
+      reason: error.reason || "unknown"
+    });
+  }
+});
+
+// --- VITE DEV OR PROD MIDDLEWARE SETUP ---
+async function startServer() {
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+$ sed -n '1785,1814p' server.ts | sha256sum
+757d56a353282ff0573451af541ff34a22a94f79354da1245472166475e69bee  -
+$ sed -n '1785,1814p' server.ts | wc -l
+30
+===END:W9===
+
+===BEGIN:W10===
+$ sed -n '1815,1827p' server.ts
+    const distPath = path.join(process.cwd(), "dist");
+    app.use(express.static(distPath));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
+    });
+  }
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://0.0.0.0:${PORT}`);
+  });
+}
+
+startServer();
+$ sed -n '1815,1827p' server.ts | sha256sum
+fa82751a94fc169b5dd08b3eb26c82cbf1230392762ab7b3651107177bceb9b6  -
+$ sed -n '1815,1827p' server.ts | wc -l
+13
+===END:W10===
+
+===BEGIN:W11===
+$ grep -n -e "نقشه راه" -e "totalWeeks" server.ts | head -25
+1507:  const { action, title, totalWeeks, averageTcr, universityHours, currentWeekIndex, milestones, completedWeeksHistory } = req.body;
+1517:Total Weeks: ${totalWeeks}
+1599:      const prompt = `شما یک مشاور ارشد بهره‌وری علمی، طراح تخصصی نقشه راه (Specialized Roadmap Architect) و استاد برنامه‌ریزی درسی و مهارتی هستید. کاربر در حال ثبت یک هدف جدید است:
+1601:مدت زمان پیشنهادی کاربر برای اتمام هدف: ${totalWeeks} هفته
+1617:   - شما باید نقشه راه را برای تمام ${totalWeeks} هفته به صورت **کاملاً جداگانه و تک‌تک هفته‌ها** (Week 1, Week 2, Week 3, ..., Week ${totalWeeks}) خرد و تفکیک کنید.
+1624:  "ai_estimated_weeks": ${totalWeeks},
+1704:                description: "تمام فازهای نقشه راه کل مسیر یک‌جا",
+
+--- پنجره ۱: خطوط ۱۵۹۲ تا ۱۶۱۵ (پوشش خطوط ۱۵۹۹ و ۱۶۰۱) ---
+$ sed -n '1592,1615p' server.ts
+      const textVal = text || "{}";
+      const parsed = JSON.parse(textVal.trim());
+      return res.json({ success: true, ...parsed });
+    } else {
+      // Action: analyze (initial goal analysis - GENERATE FULL ROADMAP AT ONCE)
+      const prompt = `شما یک مشاور ارشد بهره‌وری علمی، طراح تخصصی نقشه راه (Specialized Roadmap Architect) و استاد برنامه‌ریزی درسی و مهارتی هستید. کاربر در حال ثبت یک هدف جدید است:
+عنوان هدف: ${title}
+مدت زمان پیشنهادی کاربر برای اتمام هدف: ${totalWeeks} هفته
+نرخ متوسط تکمیل کارهای قبلی کاربر (TCR): ${averageTcr || 70}%
+ساعات درگیر کلاس‌های دانشگاهی/آموزشی: ${universityHours || 0} ساعت در هفته
+
+قوانین و الزامات کلیدی پاسخ شما (بسیار مهم):
+۱. تخمین زمان و سنجش امکان‌پذیری:
+   - تخمین هوشمندانه خود از زمان واقعی مورد نیاز را در ai_estimated_weeks بدهید.
+   - نمره احتمال موفقیت واقعی (Feasibility Score) بین 0 تا 100 بدهید.
+   - تحلیل مشاوره‌ای و انگیزشی دقیق در justification ارائه دهید.
+
+۲. تمرینات دقیق، مشخص و عملی (Practical Exercises & Drills):
+   - اگر این هدف به تمرین عملی، حل مسئله، کدنویسی، پروژه، تمرین زبان، تمرین ورزشی، هنر، تحلیل، نوشتن یا مهارتی نیاز دارد، باید حداقل ۳ تا ۶ تمرین کاملا مشخص و دقیق در آرایه practical_exercises ارائه دهید.
+   - هر تمرین باید دارای target_drill واضح و ملموس باشد (مثلاً: "حل ۱۵ مسئله مشتق از فصل ۳ کتاب مرجع"، "پیاده‌سازی یک اپلیکیشن مدیریت تسک با React"، "تمرین مکالمه ۱۰ دقیقه‌ای درباره موضوع سفر با ساخت ۲۰ جمله جدید"). کاربر باید دقیقا بداند چه تمرینی را چگونه انجام دهد.
+$ sed -n '1592,1615p' server.ts | sha256sum
+7a2482eca71f0bd80cb1406074e254de74733a9a37267c26b8e1265edde14000  -
+$ sed -n '1592,1615p' server.ts | wc -l
+24
+
+--- پنجره ۲: خطوط ۱۶۱۰ تا ۱۶۳۰ (پوشش خطوط ۱۶۱۷ و ۱۶۲۴) ---
+$ sed -n '1610,1630p' server.ts
+   - تحلیل مشاوره‌ای و انگیزشی دقیق در justification ارائه دهید.
+
+۲. تمرینات دقیق، مشخص و عملی (Practical Exercises & Drills):
+   - اگر این هدف به تمرین عملی، حل مسئله، کدنویسی، پروژه، تمرین زبان، تمرین ورزشی، هنر، تحلیل، نوشتن یا مهارتی نیاز دارد، باید حداقل ۳ تا ۶ تمرین کاملا مشخص و دقیق در آرایه practical_exercises ارائه دهید.
+   - هر تمرین باید دارای target_drill واضح و ملموس باشد (مثلاً: "حل ۱۵ مسئله مشتق از فصل ۳ کتاب مرجع"، "پیاده‌سازی یک اپلیکیشن مدیریت تسک با React"، "تمرین مکالمه ۱۰ دقیقه‌ای درباره موضوع سفر با ساخت ۲۰ جمله جدید"). کاربر باید دقیقا بداند چه تمرینی را چگونه انجام دهد.
+
+۳. تفکیک دقیق و جداگانه تک‌تک هفته‌ها (Week-by-Week Granular Breakdown):
+   - شما باید نقشه راه را برای تمام ${totalWeeks} هفته به صورت **کاملاً جداگانه و تک‌تک هفته‌ها** (Week 1, Week 2, Week 3, ..., Week ${totalWeeks}) خرد و تفکیک کنید.
+   - به هیچ وجه نباید چند هفته را تجمیع یا کلی‌گویی کنید (مثلا تجمیع هفته ۱ تا ۳ ممنوع است!). باید هر هفته به عنوان یک واحد مستقل دارای عنوان هفته (week_title), هدف هفته (weekly_goal)، تمرین عملی مشخص این هفته (practice_exercise) و حداقل ۳ تا ۵ تسک عملیاتی، جزئی و کامل (tasks) باشد.
+   - برای هر تسک: title شفاف و دقیق، description کامل با جزئیات اجرایی، type ('core' یا 'secondary' یا 'habit')، suggested_weekday و deadline_note قرار دهید.
+
+پاسخ را دقیقا در ساختار JSON زیر ارسال کنید:
+{
+  "feasibility_score": 85,
+  "ai_estimated_weeks": ${totalWeeks},
+  "justification": "تحلیل کاملاً علمی و مشاوره‌ای به زبان فارسی روان...",
+  "practical_exercises": [
+    {
+      "title": "عنوان مشخص تمرین یا پروژه",
+      "description": "توضیحات دقیق و نحوه اجرای گام به گام تمرین",
+      "target_drill": "تمرین یا مسئله نمونه کاملا مشخص (مثلا: حل ۱۰ مسئله فصل ۳ یا ساخت وبسایت X)",
+$ sed -n '1610,1630p' server.ts | sha256sum
+96ac61a5e394641fdd31436a812c830c6d8c2e03c05e525762a5bcd6e46e6ab4  -
+$ sed -n '1610,1630p' server.ts | wc -l
+21
+
+--- پنجره ۳: خطوط ۱۶۹۵ تا ۱۷۱۵ (پوشش خط ۱۷۰۴) ---
+$ sed -n '1695,1715p' server.ts
+                    description: { type: Type.STRING, description: "توضیحات کامل نحوه اجرای تمرین" },
+                    target_drill: { type: Type.STRING, description: "تمرین یا مسئله نمونه کاملا مشخص (مثلا: حل ۱۰ سوال فصل ۳)" },
+                    type: { type: Type.STRING, enum: ["project", "drill", "exercise", "assignment"], description: "نوع تمرین" }
+                  },
+                  required: ["title", "description", "target_drill"]
+                }
+              },
+              phases: {
+                type: Type.ARRAY,
+                description: "تمام فازهای نقشه راه کل مسیر یک‌جا",
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    phase_number: { type: Type.INTEGER, description: "شماره فاز" },
+                    title: { type: Type.STRING, description: "عنوان فاز به فارسی" },
+                    description: { type: Type.STRING, description: "توضیحات و اهداف فاز" },
+                    estimated_weeks: { type: Type.STRING, description: "بازه‌های زمانی فاز" },
+                    weeks: {
+                      type: Type.ARRAY,
+                      description: "تفکیک کامل و جداگانه تک‌تک هفته‌های این فاز",
+                      items: {
+$ sed -n '1695,1715p' server.ts | sha256sum
+a1ea287fa44879cb4e5e824f499ad0e822c21c24183534a0670b3e2e9ec3ecb4  -
+$ sed -n '1695,1715p' server.ts | wc -l
+21
+===END:W11===
+
+===BEGIN:W12===
+$ grep -n -e "req.body?.action" -e "action ===" server.ts | head -20
+1514:    if (action === "next-week") {
+
+--- پنجره خطوط ۱۵۰۵ تا ۱۵۲۵ ---
+$ sed -n '1505,1525p' server.ts
+// 5.1. Target-Goal Management & Feasibility Prediction API (Gemini)
+app.post("/api/gemini/analyze-goal", requireAuth, async (req: AuthRequest, res) => {
+  const { action, title, totalWeeks, averageTcr, universityHours, currentWeekIndex, milestones, completedWeeksHistory } = req.body;
+
+  if (!title) {
+    return res.status(400).json({ error: "عنوان هدف ارسال نشده است" });
+  }
+
+  try {
+    if (action === "next-week") {
+      const prompt = `You are an elite academic productivity coach and cognitive psychologist. The user is pursuing a long-term goal. 
+Goal Title: ${title}
+Total Weeks: ${totalWeeks}
+Current Active Week Index (1-based, completed week): ${currentWeekIndex}
+Milestones defined initially: ${JSON.stringify(milestones, null, 2)}
+Completion history and feedback of previous weeks: ${JSON.stringify(completedWeeksHistory || [], null, 2)}
+
+Your task is to generate the concrete plan (week tasks) for the NEXT week (Week ${Number(currentWeekIndex) + 1}) to ensure dynamic journey continuity and steady progress towards the goal. Provide highly specific, actionable, and scientifically-grounded tasks.
+
+You must return a JSON object matching this schema:
+{
+$ sed -n '1505,1525p' server.ts | sha256sum
+7b3b7fd635b40920a83f96669fee1f65318f659e29cf112a52e0cf9bc9165388  -
+$ sed -n '1505,1525p' server.ts | wc -l
+21
+===END:W12===
+
+===BEGIN:W13===
+$ sed -n '1450,1479p' server.ts
+    };
+
+    const userKeysHeader = req.headers['x-gemini-keys'] as string | undefined;
+    const customKeys = parseCustomApiKeys(req);
+
+    const result = await callGeminiWithFallback({
+      prompt,
+      preferredModels: GEMINI_FALLBACK_MODELS,
+      getConfigForModel: () => plannerConfig,
+      userKeysHeader,
+      customKeys,
+    });
+
+    const { text } = result;
+
+    res.setHeader("x-used-custom-key-id", result.usedCustomKeyId || "");
+    res.setHeader("x-used-provider", result.usedProvider || "");
+    res.setHeader("x-used-model", result.usedModel || result.modelName || "");
+    res.setHeader("x-fallback-used", result.source || "server");
+    res.setHeader("x-used-token-count", String(result.tokenCount ?? 0));
+    res.setHeader("Access-Control-Expose-Headers", "x-used-custom-key-id, x-used-provider, x-used-model, x-fallback-used, x-used-token-count");
+
+    if (!text) {
+      throw new Error("پاسخی از مدل هوش مصنوعی دریافت نشد.");
+    }
+
+    // Clean and extract valid JSON array robustly
+    let insights;
+    const trimmed = text.trim();
+    try {
+$ sed -n '1450,1479p' server.ts | sha256sum
+1c4644f2df654ff05ef4404116e99dd2b39ca7ce0c3f0dbc5f53f9a392684099  -
+$ sed -n '1450,1479p' server.ts | wc -l
+30
+===END:W13===
+
+===BEGIN:W14===
+$ sed -n '1566,1595p' server.ts
+        };
+
+        if (modelName === "gemini-3.1-pro-preview") {
+          baseConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.HIGH };
+        }
+
+        return baseConfig;
+      };
+
+      const userKeysHeader = req.headers['x-gemini-keys'] as string | undefined;
+      const customKeys = parseCustomApiKeys(req);
+
+      const result = await callGeminiWithFallback({
+        prompt,
+        preferredModels: GOAL_ANALYSIS_MODELS,
+        getConfigForModel: getConfigForNextWeek,
+        userKeysHeader,
+        customKeys,
+      });
+
+      const { text } = result;
+
+      res.setHeader("x-used-custom-key-id", result.usedCustomKeyId || "");
+      res.setHeader("x-used-provider", result.usedProvider || "");
+      res.setHeader("x-used-model", result.usedModel || result.modelName || "");
+      res.setHeader("x-fallback-used", result.source || "server");
+      res.setHeader("x-used-token-count", String(result.tokenCount ?? 0));
+      res.setHeader("Access-Control-Expose-Headers", "x-used-custom-key-id, x-used-provider, x-used-model, x-fallback-used, x-used-token-count");
+
+      const textVal = text || "{}";
+      const parsed = JSON.parse(textVal.trim());
+      return res.json({ success: true, ...parsed });
+$ sed -n '1566,1595p' server.ts | sha256sum
+6331ceee60c17614d58dbee7ef543f7190949f3c82cce0767004b34f996bd036  -
+$ sed -n '1566,1595p' server.ts | wc -l
+30
+===END:W14===
+
+===BEGIN:T1===
+5:export interface Category {
+16:export interface ClassSlot {
+31:export interface DailyTask {
+42:export interface NoteItem {
+49:export interface TextPair {
+54:export interface DetailsItem {
+75:export interface DetailsColumn {
+83:export interface SecondaryTaskColumn {
+90:export interface SecondaryTask {
+128:export interface ReminderItem {
+144:export interface CoreTask {
+166:export interface PostponedEvent {
+176:export interface ArchiveWeek {
+198:export interface PlannerData {
+254:export interface PomodoroEntry {
+262:export interface WaterEntry {
+270:export interface HabitTrackingWeekDoc {
+276:export interface GoalMilestone {
+282:export interface GoalTask {
+291:export interface GoalPhaseTask {
+301:export interface GoalPracticeExercise {
+310:export interface GoalWeek {
+319:export interface GoalPhase {
+329:export interface Goal {
+348:export interface User {
+===END:T1===
+
+===BEGIN:T2===
+$ sed -n '276,305p' src/types.ts
+export interface GoalMilestone {
+  week_number: number;
+  title: string;
+  completed: boolean;
+}
+
+export interface GoalTask {
+  id: string;
+  title: string;
+  description?: string;
+  type: 'core' | 'secondary' | 'habit';
+  completed: boolean;
+  goal_id?: string;
+}
+
+export interface GoalPhaseTask {
+  id?: string;
+  title: string;
+  description?: string;
+  type: 'core' | 'secondary' | 'habit';
+  suggested_weekday?: string;
+  deadline_note?: string;
+  completed?: boolean;
+}
+
+export interface GoalPracticeExercise {
+  id?: string;
+  title: string;
+  description: string;
+  target_drill: string; // e.g. "حل ۱۰ مسئله فصل ۲" or "پیاده‌سازی پروژه CRUD"
+$ sed -n '276,305p' src/types.ts | sha256sum
+0d6df3365ae7b244db0479eee12517a1f09d4845b6bb8607ec9149223ee6acfb  -
+$ sed -n '276,305p' src/types.ts | wc -l
+30
+===END:T2===
+
+===BEGIN:T3===
+--- بخش ۱: خطوط ۳۰۶ تا ۳۳۵ ---
+$ sed -n '306,335p' src/types.ts
+  type?: 'project' | 'drill' | 'exercise' | 'assignment';
+  completed?: boolean;
+}
+
+export interface GoalWeek {
+  week_number: number;
+  week_title: string;
+  weekly_goal?: string;
+  practice_exercise?: string;
+  tasks: GoalPhaseTask[];
+  completed?: boolean;
+}
+
+export interface GoalPhase {
+  phase_number: number;
+  title: string;
+  description: string;
+  estimated_weeks?: string;
+  weeks?: GoalWeek[];
+  tasks: GoalPhaseTask[];
+  completed?: boolean;
+}
+
+export interface Goal {
+  goal_id: string;
+  title: string;
+  total_weeks: number;
+  ai_estimated_weeks?: number;
+  current_week_index: number;
+  categoryId?: string; // Links to Category.id for custom category & color
+$ sed -n '306,335p' src/types.ts | sha256sum
+474c8e562989bbf6f8d380b12d4dc64a9aabfedcff61a30567a1137f49a9f768  -
+$ sed -n '306,335p' src/types.ts | wc -l
+30
+
+--- بخش ۲: خطوط ۳۳۶ تا ۳۴۵ ---
+$ sed -n '336,345p' src/types.ts
+  categoryName?: string;
+  categoryColor?: string;
+  milestones: GoalMilestone[];
+  phases?: GoalPhase[]; // Entire AI generated roadmap saved in memory
+  practical_exercises?: GoalPracticeExercise[]; // Dedicated practical exercises & drills for learning/skills goals
+  active_week_tasks: GoalTask[];
+  completed_tasks_count?: number;
+  feasibility_score?: number;
+  justification?: string;
+  colorTheme?: string; // e.g. 'emerald', 'indigo', 'amber', 'rose', 'purple'
+$ sed -n '336,345p' src/types.ts | sha256sum
+1bde46c8b9dd73d1b9bbb63ed364c9e3efa9906661de27d80f6fa8f949af29a3  -
+$ sed -n '336,345p' src/types.ts | wc -l
+10
+===END:T3===
+
+===BEGIN:T4===
+$ sed -n '346,357p' src/types.ts
+}
+
+export interface User {
+  id: string;
+  email: string;
+  username: string;
+  avatar?: string;
+  expiresAt?: string;
+  token?: string;
+  isDirectMode?: boolean;
+}
+$ sed -n '346,357p' src/types.ts | sha256sum
+cce3a6e071670f7c89364520b2f7b8995aeda4941507ee70f30d419d3dab2524  -
+$ sed -n '346,357p' src/types.ts | wc -l
+12
+===END:T4===
+
+===BEGIN:G1===
+$ sed -n '1,14p' src/components/GoalsTab.tsx
+import React, { useState, useMemo } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  Target, 
+  Brain, 
+  Plus, 
+  Trash2, 
+  Edit2, 
+  Check, 
+  ChevronRight, 
+  Compass, 
+  Award, 
+  Sparkles, 
+  Zap, 
+$ sed -n '1,14p' src/components/GoalsTab.tsx | sha256sum
+47bfe56a214e277181bd1c033a255c8a5a46a9e809aa0b221d1ec662cb319fcd  -
+$ sed -n '1,14p' src/components/GoalsTab.tsx | wc -l
+14
+===END:G1===
+
+===BEGIN:G2===
+$ grep -n "selectedInjectDay" src/components/GoalsTab.tsx | head -8
+===END:G2===
+
+===BEGIN:G3===
+--- بخش ۱: خطوط ۳۳۸ تا ۳۶۷ ---
+$ sed -n '338,367p' src/components/GoalsTab.tsx
+  const handleDeleteGoal = (goalId: string) => {
+    onUpdateData(prev => ({
+      ...prev,
+      goals: (prev.goals || []).filter(g => g.goal_id !== goalId && (g as any).id !== goalId)
+    }));
+    showToast('هدف با موفقیت حذف شد.');
+    setConfirmDeleteGoalId(null);
+  };
+
+  // Helper to ensure category exists in data.categories
+  const ensureGoalCategory = (goal: Goal, currentCategories: Category[]) => {
+    const catName = goal.categoryName || goal.title || 'هدف';
+    let existing = currentCategories.find(c => c.id === goal.categoryId || c.nameFa.toLowerCase() === catName.toLowerCase());
+    
+    if (!existing) {
+      const catId = goal.categoryId || `cat_goal_${Date.now()}`;
+      const newCat: Category = {
+        id: catId,
+        nameFa: catName,
+        nameEn: catName,
+        color: goal.categoryColor || 'bg-indigo-100 border-indigo-300 text-indigo-900',
+        type: 'core'
+      };
+      return { categoryId: catId, updatedCategories: [...currentCategories, newCat] };
+    }
+    
+    return { categoryId: existing.id, updatedCategories: currentCategories };
+  };
+
+  // 1. INJECT SINGLE TASK TO WEEKLY PLANNER
+$ sed -n '338,367p' src/components/GoalsTab.tsx | sha256sum
+0ec1ec94a1b1dccee89ea47dd1b74aa51e13a92493cdefc6f5eeaed9caa3f38f  -
+$ sed -n '338,367p' src/components/GoalsTab.tsx | wc -l
+30
+
+--- بخش ۲: خطوط ۳۶۸ تا ۳۷۲ ---
+$ sed -n '368,372p' src/components/GoalsTab.tsx
+  const handleInjectSingleTask = (goal: Goal, task: GoalPhaseTask, phaseNumber: number) => {
+    onUpdateData(prev => {
+      const { categoryId, updatedCategories } = ensureGoalCategory(goal, prev.categories || []);
+      const taskTitle = task.title;
+      const taskDesc = task.description || `فاز ${phaseNumber} - هدف: ${goal.title}`;
+$ sed -n '368,372p' src/components/GoalsTab.tsx | sha256sum
+79bde48392dc8956618cf5ae81b8d3b9c101e92d8d5154cdd317657d6e46936e  -
+$ sed -n '368,372p' src/components/GoalsTab.tsx | wc -l
+5
+===END:G3===
+
+===BEGIN:G4===
+$ grep -n -e "resJson" -e "roadmap" src/components/GoalsTab.tsx | head -20
+817:              {isRtl ? 'تولید یک‌جای تمام فازها و تسک‌های عملیاتی همراه با تحلیل زمان و دسته اختصاصی' : 'Generate complete roadmap phases and detailed tasks with dedicated category'}
+1046:                {isRtl ? 'عنوان هدف جدید خود را در فرم بالا وارد کنید تا هوش مصنوعی کل فازهای نقشه راه را به همراه تسک‌های ریز برای شما تولید کند.' : 'Enter your goal above to generate a full actionable roadmap.'}
+
+--- پنجره ۱: خطوط ۸۰۹ تا ۸۲۵ (پوشش خط ۸۱۷) ---
+$ sed -n '809,825p' src/components/GoalsTab.tsx
+          <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl">
+            <Target className="w-8 h-8" />
+          </div>
+          <div>
+            <h2 className="text-lg font-black text-slate-800">
+              {isRtl ? 'سیستم هوشمند مدیریت اهداف و نقشه راه (Gemini 3.1 Pro)' : 'Smart Goal & Roadmap System (Gemini 3.1 Pro)'}
+            </h2>
+            <p className="text-xs text-slate-400 font-bold mt-1">
+              {isRtl ? 'تولید یک‌جای تمام فازها و تسک‌های عملیاتی همراه با تحلیل زمان و دسته اختصاصی' : 'Generate complete roadmap phases and detailed tasks with dedicated category'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 p-3 px-4 rounded-2xl" dir={isRtl ? 'rtl' : 'ltr'}>
+          <div className="p-2 bg-indigo-100/50 text-indigo-600 rounded-xl">
+            <Brain className="w-5 h-5 shrink-0" />
+          </div>
+          <div className={isRtl ? 'text-right' : 'text-left'}>
+$ sed -n '809,825p' src/components/GoalsTab.tsx | sha256sum
+ed3ad905c2cd03f0a0902a8c1e3a216320d6cd60856b3e270f775de1989ebad5  -
+$ sed -n '809,825p' src/components/GoalsTab.tsx | wc -l
+17
+
+--- پنجره ۲: خطوط ۱۰۳۸ تا ۱۰۵۴ (پوشش خط ۱۰۴۶) ---
+$ sed -n '1038,1054p' src/components/GoalsTab.tsx
+            <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center space-y-3">
+              <div className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto text-slate-400">
+                <Target className="w-6 h-6" />
+              </div>
+              <h4 className="text-sm font-black text-slate-700">
+                {isRtl ? 'هیچ هدفی هنوز ثبت نشده است' : 'No goals created yet'}
+              </h4>
+              <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+                {isRtl ? 'عنوان هدف جدید خود را در فرم بالا وارد کنید تا هوش مصنوعی کل فازهای نقشه راه را به همراه تسک‌های ریز برای شما تولید کند.' : 'Enter your goal above to generate a full actionable roadmap.'}
+              </p>
+            </div>
+          ) : (
+            data.goals.map((goal) => {
+              const progress = getGoalRealProgress(goal);
+              const category = data.categories.find(c => c.id === goal.categoryId);
+              const catBg = category ? category.color : (goal.categoryColor || 'bg-indigo-100 border-indigo-300 text-indigo-900');
+$ sed -n '1038,1054p' src/components/GoalsTab.tsx | sha256sum
+b6620360e4c1fdd603c9014fcd807de4749111207a68f9c7030c3e8348901ea9  -
+$ sed -n '1038,1054p' src/components/GoalsTab.tsx | wc -l
+17
+
+--- پنجره کمکی ۳: خطوط ۱۸۲ تا ۱۹۸ (محل دریافت واقعی پاسخ تحلیل هدف در کلاینت) ---
+$ sed -n '182,198p' src/components/GoalsTab.tsx
+        })
+      });
+
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => ({}));
+        throw new Error(errJson.error || "ارتباط با هوش مصنوعی سرور برقرار نشد.");
+      }
+
+      const resData = await response.json();
+      if (resData.success === false) {
+        throw new Error(resData.error || "خطای نامشخص در تحلیل هوش مصنوعی");
+      }
+
+      // Handle Category creation / linking
+      const catName = newGoalCatName.trim() || newGoalTitle.trim();
+      let targetCat = data.categories.find(c => c.nameFa.toLowerCase() === catName.toLowerCase());
+$ sed -n '182,198p' src/components/GoalsTab.tsx | sha256sum
+ff7f8aa2976b9f63c86ea64982366fbb60022d07f1fc9295f00a31cadbcfe0b2  -
+$ sed -n '182,198p' src/components/GoalsTab.tsx | wc -l
+17
+===END:G4===
+
+===BEGIN:G5===
+$ grep -n "سیستم هوشمند مدیریت اهداف" src/components/GoalsTab.tsx
+814:              {isRtl ? 'سیستم هوشمند مدیریت اهداف و نقشه راه (Gemini 3.1 Pro)' : 'Smart Goal & Roadmap System (Gemini 3.1 Pro)'}
+
+$ sed -n '806,822p' src/components/GoalsTab.tsx
+      {/* 1. TOP STATS AND INTRO PANEL */}
+      <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-3xs flex flex-col md:flex-row items-center justify-between gap-6">
+        <div className="flex items-center gap-4">
+          <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl">
+            <Target className="w-8 h-8" />
+          </div>
+          <div>
+            <h2 className="text-lg font-black text-slate-800">
+              {isRtl ? 'سیستم هوشمند مدیریت اهداف و نقشه راه (Gemini 3.1 Pro)' : 'Smart Goal & Roadmap System (Gemini 3.1 Pro)'}
+            </h2>
+            <p className="text-xs text-slate-400 font-bold mt-1">
+              {isRtl ? 'تولید یک‌جای تمام فازها و تسک‌های عملیاتی همراه با تحلیل زمان و دسته اختصاصی' : 'Generate complete roadmap phases and detailed tasks with dedicated category'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 p-3 px-4 rounded-2xl" dir={isRtl ? 'rtl' : 'ltr'}>
+          <div className="p-2 bg-indigo-100/50 text-indigo-600 rounded-xl">
+$ sed -n '806,822p' src/components/GoalsTab.tsx | sha256sum
+47295a0e4fd2d32f3b1d27b019d083a1ae59ecf136f220620ce06718ae480d46  -
+$ sed -n '806,822p' src/components/GoalsTab.tsx | wc -l
+17
+===END:G5===
+
+===BEGIN:G6===
+$ sed -n '1441,1470p' src/components/GoalsTab.tsx
+                                            onClick={() => handleInjectSingleTask(goal, task, phase.phase_number)}
+                                            className="flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-emerald-50 text-emerald-700 border border-slate-200 hover:border-emerald-300 rounded-lg text-[10px] font-bold transition-all cursor-pointer shadow-2xs"
+                                            title="انتقال تکی این کار به برنامه‌ریز"
+                                          >
+                                            <Plus className="w-3 h-3 text-emerald-600" />
+                                            <span>انتقال تکی</span>
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </motion.div>
+              );
+            })
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+$ sed -n '1441,1470p' src/components/GoalsTab.tsx | sha256sum
+85f8d0a442784d26e2030cf230fabfdb88018911954d52e67fb2978579e68f0b  -
+$ sed -n '1441,1470p' src/components/GoalsTab.tsx | wc -l
+30
+===END:G6===
+
+===BEGIN:Z===
+$ grep -c "maxOutputTokens" server.ts
+1
+$ grep -c "max_tokens: 4096" server.ts
+1
+$ grep -c "GeminiFallbackOptions" server.ts
+2
+$ grep -c "import" src/components/GoalsTab.tsx
+5
+===END:Z===
+
+GT1 = PASS
+GT2 = PASS
+GT3 = PASS
+GT4 = PASS
+GT-Z = PASS
+
+===فهرست دقیق دستورهای اجرا شده به ترتیب===
+pwd && ls src/components && md5sum src/App.tsx src/components/ClassSlotModal.tsx src/types.ts src/lib/plannerSyncEngine.ts src/lib/firestoreSync.ts src/components/AnalyticsTab.tsx && wc -l server.ts src/types.ts src/components/GoalsTab.tsx && sed -n '1506,1807p' server.ts | sha256sum
+npx tsc --noEmit; echo "TSC_EXIT=$?"
+grep -n -e "callGeminiWithFallback" -e "executeCustomKeyCall" server.ts && grep -n -e "anthropic" -e "openai" -e "max_tokens" -e "max_completion_tokens" -e "status === 400" -e "reqBody" server.ts | head -40
+sed -n '920,949p' server.ts && sed -n '920,949p' server.ts | sha256sum && sed -n '920,949p' server.ts | wc -l
+sed -n '755,780p' server.ts && sed -n '755,780p' server.ts | sha256sum && sed -n '755,780p' server.ts | wc -l
+sed -n '785,810p' server.ts && sed -n '785,810p' server.ts | sha256sum && sed -n '785,810p' server.ts | wc -l
+sed -n '810,835p' server.ts && sed -n '810,835p' server.ts | sha256sum && sed -n '810,835p' server.ts | wc -l
+sed -n '868,892p' server.ts && sed -n '868,892p' server.ts | sha256sum && sed -n '868,892p' server.ts | wc -l
+sed -n '1665,1694p' server.ts && sed -n '1665,1694p' server.ts | sha256sum && sed -n '1665,1694p' server.ts | wc -l
+sed -n '1695,1724p' server.ts && sed -n '1695,1724p' server.ts | sha256sum && sed -n '1695,1724p' server.ts | wc -l
+sed -n '1725,1754p' server.ts && sed -n '1725,1754p' server.ts | sha256sum && sed -n '1725,1754p' server.ts | wc -l
+sed -n '1755,1784p' server.ts && sed -n '1755,1784p' server.ts | sha256sum && sed -n '1755,1784p' server.ts | wc -l
+sed -n '1785,1814p' server.ts && sed -n '1785,1814p' server.ts | sha256sum && sed -n '1785,1814p' server.ts | wc -l
+sed -n '1815,1827p' server.ts && sed -n '1815,1827p' server.ts | sha256sum && sed -n '1815,1827p' server.ts | wc -l
+grep -n -e "نقشه راه" -e "totalWeeks" server.ts | head -25
+sed -n '1592,1615p' server.ts && sed -n '1592,1615p' server.ts | sha256sum && sed -n '1592,1615p' server.ts | wc -l
+sed -n '1610,1630p' server.ts && sed -n '1610,1630p' server.ts | sha256sum && sed -n '1610,1630p' server.ts | wc -l
+sed -n '1695,1715p' server.ts && sed -n '1695,1715p' server.ts | sha256sum && sed -n '1695,1715p' server.ts | wc -l
+grep -n -e "req.body?.action" -e "action ===" server.ts | head -20
+sed -n '1505,1525p' server.ts && sed -n '1505,1525p' server.ts | sha256sum && sed -n '1505,1525p' server.ts | wc -l
+sed -n '1450,1479p' server.ts && sed -n '1450,1479p' server.ts | sha256sum && sed -n '1450,1479p' server.ts | wc -l
+sed -n '1566,1595p' server.ts && sed -n '1566,1595p' server.ts | sha256sum && sed -n '1566,1595p' server.ts | wc -l
+grep -n "export interface" src/types.ts | head -30
+sed -n '276,305p' src/types.ts && sed -n '276,305p' src/types.ts | sha256sum && sed -n '276,305p' src/types.ts | wc -l
+sed -n '306,335p' src/types.ts && sed -n '306,335p' src/types.ts | sha256sum && sed -n '306,335p' src/types.ts | wc -l
+sed -n '336,345p' src/types.ts && sed -n '336,345p' src/types.ts | sha256sum && sed -n '336,345p' src/types.ts | wc -l
+sed -n '346,357p' src/types.ts && sed -n '346,357p' src/types.ts | sha256sum && sed -n '346,357p' src/types.ts | wc -l
+sed -n '1,14p' src/components/GoalsTab.tsx && sed -n '1,14p' src/components/GoalsTab.tsx | sha256sum && sed -n '1,14p' src/components/GoalsTab.tsx | wc -l
+grep -n "selectedInjectDay" src/components/GoalsTab.tsx | head -8
+sed -n '338,367p' src/components/GoalsTab.tsx && sed -n '338,367p' src/components/GoalsTab.tsx | sha256sum && sed -n '338,367p' src/components/GoalsTab.tsx | wc -l
+sed -n '368,372p' src/components/GoalsTab.tsx && sed -n '368,372p' src/components/GoalsTab.tsx | sha256sum && sed -n '368,372p' src/components/GoalsTab.tsx | wc -l
+grep -n -e "resJson" -e "roadmap" src/components/GoalsTab.tsx | head -20
+sed -n '809,825p' src/components/GoalsTab.tsx && sed -n '809,825p' src/components/GoalsTab.tsx | sha256sum && sed -n '809,825p' src/components/GoalsTab.tsx | wc -l
+sed -n '1038,1054p' src/components/GoalsTab.tsx && sed -n '1038,1054p' src/components/GoalsTab.tsx | sha256sum && sed -n '1038,1054p' src/components/GoalsTab.tsx | wc -l
+sed -n '182,198p' src/components/GoalsTab.tsx && sed -n '182,198p' src/components/GoalsTab.tsx | sha256sum && sed -n '182,198p' src/components/GoalsTab.tsx | wc -l
+grep -n "سیستم هوشمند مدیریت اهداف" src/components/GoalsTab.tsx
+sed -n '806,822p' src/components/GoalsTab.tsx && sed -n '806,822p' src/components/GoalsTab.tsx | sha256sum && sed -n '806,822p' src/components/GoalsTab.tsx | wc -l
+sed -n '1441,1470p' src/components/GoalsTab.tsx && sed -n '1441,1470p' src/components/GoalsTab.tsx | sha256sum && sed -n '1441,1470p' src/components/GoalsTab.tsx | wc -l
+grep -c "maxOutputTokens" server.ts && grep -c "max_tokens: 4096" server.ts && grep -c "GeminiFallbackOptions" server.ts && grep -c "import" src/components/GoalsTab.tsx

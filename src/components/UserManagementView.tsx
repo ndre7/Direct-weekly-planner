@@ -88,9 +88,6 @@ export default function UserManagementView({ currentUser, onClose }: UserManagem
 
   const handleToggleSuspend = async (targetUser: ManagedUser) => {
     const actionText = targetUser.suspended ? 'رفع تعلیق' : 'تعلیق موقت';
-    if (!window.confirm(`آیا از ${actionText} حساب کاربری "${targetUser.username}" مطمئن هستید؟`)) {
-      return;
-    }
 
     setActionInProgress(targetUser.id);
     try {
@@ -130,10 +127,6 @@ export default function UserManagementView({ currentUser, onClose }: UserManagem
   };
 
   const handleDeleteUser = async (targetUser: ManagedUser) => {
-    if (!window.confirm(`⚠️ توجه: حذف حساب کاربری "${targetUser.username}" دائمی بوده و تمامی اطلاعات تحصیلی و برنامه‌ریزی او حذف خواهد شد.\n\nآیا از حذف کامل این کاربر مطمئن هستید؟`)) {
-      return;
-    }
-
     setActionInProgress(targetUser.id);
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };

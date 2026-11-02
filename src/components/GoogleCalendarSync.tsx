@@ -7,6 +7,11 @@ import {
   setCachedGoogleCalendarToken 
 } from '../lib/auth.ts';
 import { 
+  getTodayGCalUsage, 
+  incrementTodayGCalUsage, 
+  getQuotaBackoffUntil 
+} from '../lib/gcalAutoSyncEngine';
+import { 
   Calendar, 
   Check, 
   Cloud, 
@@ -35,6 +40,7 @@ interface GoogleCalendarSyncProps {
   currentUser: User | null;
   lang: 'fa' | 'en';
   showToast: (msg: string, type?: 'success' | 'error') => void;
+  onUpdateData?: (updater: (prev: PlannerData) => PlannerData) => void;
 }
 
 // Normalize Persian/Arabic characters and whitespace for string comparisons
@@ -126,7 +132,7 @@ const formatLocalISO = (date: Date): string => {
 };
 
 // Sanitizes standard string or UUID to comply with Google Calendar Event ID format rules: lowercase base32hex (a-v, 0-9), between 5 and 1024 characters.
-const sanitizeGCalEventId = (rawId: string): string => {
+export const sanitizeGCalEventId = (rawId: string): string => {
   if (!rawId) rawId = '';
   let cleaned = rawId
     .toLowerCase()
@@ -313,7 +319,8 @@ export default function GoogleCalendarSync({
   weekDates,
   currentUser,
   lang,
-  showToast
+  showToast,
+  onUpdateData
 }: GoogleCalendarSyncProps) {
   const isRtl = lang === 'fa';
   const [isConnected, setIsConnected] = useState<boolean>(false);
@@ -805,17 +812,20 @@ export default function GoogleCalendarSync({
       return;
     }
 
-    const confirmMsg = isRtl
-      ? `آیا مایلید تعداد ${preparedEvents.length} رویداد را به تقویم گوگل منتقل و ثبت کنید؟`
-      : `Are you sure you want to push ${preparedEvents.length} events to your Google Calendar?`;
-    
-    if (!window.confirm(confirmMsg)) {
-      return;
+    const currentUsage = getTodayGCalUsage();
+    const dailyCap = data.gcalDailyRequestCap || 400;
+    if (currentUsage >= dailyCap * 0.8) {
+      showToast(
+        isRtl
+          ? `هشدار سهمیه: امروز ${currentUsage} از ${dailyCap} درخواست استفاده شده است.`
+          : `Quota warning: ${currentUsage} of ${dailyCap} requests used today.`,
+        'error'
+      );
     }
 
     setSyncing(true);
     setDiagnosticLogs([]);
-    addLog('Starting calendar sync execution...');
+    addLog(`Starting calendar sync execution for ${preparedEvents.length} events...`);
 
     try {
       // 1. Determine or Create Google Calendar
@@ -936,6 +946,25 @@ export default function GoogleCalendarSync({
       }
 
       addLog(`Sync process complete. ${successCount} out of ${eventsWithStatus.length} events synced successfully.`);
+
+      if (onUpdateData) {
+        const newMap: Record<string, string> = { ...(data.plannerCalendarMap || {}) };
+        eventsWithStatus.forEach(ev => {
+          if (ev.status === 'success') {
+            newMap[ev.id] = sanitizeGCalEventId(ev.id);
+          }
+        });
+        const nowTimeStr = new Date().toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' });
+        onUpdateData(prev => ({
+          ...prev,
+          plannerCalendarMap: newMap,
+          lastCalendarSyncTime: nowTimeStr,
+          calendarSyncLog: [
+            `همگام‌سازی ${successCount} رویداد در ساعت ${nowTimeStr}`,
+            ...(prev.calendarSyncLog || []).slice(0, 10)
+          ]
+        }));
+      }
 
       showToast(
         isRtl
@@ -1139,6 +1168,128 @@ export default function GoogleCalendarSync({
                   className={`w-4 h-4 rounded-full bg-white transition-transform duration-200 ${ useDedicatedCalendar ? (isRtl ? 'translate-x-[-16px]' : 'translate-x-[16px]') : 'translate-x-0'}`}
                 />
               </button>
+            </div>
+
+            {/* Automatic Sync Checkbox & Quota Controls (W3 & W4) */}
+            <div className="pt-2 border-t border-slate-200 mt-1 space-y-2">
+              <label className="flex items-center gap-2.5 p-2.5 bg-indigo-50/80 border border-indigo-200 rounded-xl text-xs font-black text-indigo-950 cursor-pointer select-none hover:bg-indigo-50 transition-colors">
+                <input 
+                  type="checkbox" 
+                  checked={!!data.autoSyncGoogleCalendar} 
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    if (onUpdateData) {
+                      onUpdateData(prev => ({ ...prev, autoSyncGoogleCalendar: checked }));
+                    }
+                    showToast(
+                      checked
+                        ? (isRtl ? 'همگام‌سازی خودکار تقویم گوگل فعال شد.' : 'Automatic Google Calendar sync enabled.')
+                        : (isRtl ? 'همگام‌سازی خودکار تقویم گوگل غیرفعال شد.' : 'Automatic Google Calendar sync disabled.'),
+                      'success'
+                    );
+                  }}
+                  className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                />
+                <RefreshCw className="w-4 h-4 text-indigo-600 shrink-0" />
+                <div className="flex flex-col">
+                  <span>{isRtl ? 'همگام‌سازی خودکار (بی‌صدا و حفاظت‌شده)' : 'Automatic Google Calendar Sync (Silent & Protected)'}</span>
+                  <span className="text-[10px] font-normal text-indigo-700">
+                    {isRtl 
+                      ? `با ایجاد یا تغییر کارها، تغییرات بدون پیام مزاحم و با رعایت سهمیه مصرف به تقویم منتقل می‌شوند (فاصله حداقل ${data.gcalAutoSyncIntervalMinutes || 10} دقیقه)` 
+                      : `Syncs changes silently with quota protection (min interval ${data.gcalAutoSyncIntervalMinutes || 10} min)`}
+                  </span>
+                </div>
+              </label>
+
+              {data.autoSyncGoogleCalendar && (
+                <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold text-slate-600">
+                      {isRtl ? 'حداقل فاصله زمانی همگام‌سازی خودکار:' : 'Minimum auto-sync interval:'}
+                    </span>
+                    <select
+                      value={data.gcalAutoSyncIntervalMinutes || 10}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10) || 10;
+                        if (onUpdateData) onUpdateData(prev => ({ ...prev, gcalAutoSyncIntervalMinutes: val }));
+                      }}
+                      className="p-1 px-2 text-[11px] font-black border border-slate-200 bg-white rounded-lg text-slate-800"
+                    >
+                      <option value={5}>۵ دقیقه</option>
+                      <option value={10}>۱۰ دقیقه (پیش‌فرض)</option>
+                      <option value={15}>۱۵ دقیقه</option>
+                      <option value={30}>۳۰ دقیقه</option>
+                      <option value={60}>۶۰ دقیقه</option>
+                    </select>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-1.5 border-t border-slate-200/60">
+                    <span className="text-[11px] font-bold text-slate-600">
+                      {isRtl ? 'سقف مجاز درخواست روزانه (بودجه سهمیه):' : 'Daily request quota cap:'}
+                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <select
+                        value={![200, 400, 800, 1500].includes(data.gcalDailyRequestCap || 400) ? 'custom' : (data.gcalDailyRequestCap || 400)}
+                        onChange={(e) => {
+                          if (e.target.value === 'custom') {
+                            if (onUpdateData) onUpdateData(prev => ({ ...prev, gcalDailyRequestCap: 3 }));
+                          } else {
+                            const val = parseInt(e.target.value, 10) || 400;
+                            if (onUpdateData) onUpdateData(prev => ({ ...prev, gcalDailyRequestCap: val }));
+                          }
+                        }}
+                        className="p-1 px-2 text-[11px] font-black border border-slate-200 bg-white rounded-lg text-slate-800"
+                      >
+                        <option value={200}>۲۰۰ درخواست</option>
+                        <option value={400}>۴۰۰ درخواست (پیش‌فرض)</option>
+                        <option value={800}>۸۰۰ درخواست</option>
+                        <option value={1500}>۱۵۰۰ درخواست</option>
+                        <option value="custom">سفارشی...</option>
+                      </select>
+                      {![200, 400, 800, 1500].includes(data.gcalDailyRequestCap || 400) && (
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min={1}
+                            max={2000}
+                            value={data.gcalDailyRequestCap || 3}
+                            onChange={(e) => {
+                              const val = Math.min(2000, Math.max(1, parseInt(e.target.value, 10) || 1));
+                              if (onUpdateData) onUpdateData(prev => ({ ...prev, gcalDailyRequestCap: val }));
+                            }}
+                            className="w-16 p-1 px-2 text-[11px] font-mono font-black border border-indigo-200 bg-white rounded-lg text-indigo-700 text-center"
+                          />
+                          <span className="text-[10px] text-slate-500 font-bold">{isRtl ? 'درخواست' : 'req'}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] font-black text-slate-700 bg-indigo-50/60 px-2.5 py-1.5 rounded-lg border border-indigo-100">
+                    <span>{isRtl ? 'درخواست‌های مصرف‌شده امروز:' : 'Requests used today:'}</span>
+                    <span className="font-mono text-indigo-700">
+                      {getTodayGCalUsage()} / {data.gcalDailyRequestCap || 400}
+                    </span>
+                  </div>
+
+                  {Date.now() < getQuotaBackoffUntil() && (
+                    <div className="p-2 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-[10px] font-bold flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span>
+                        {isRtl 
+                          ? `توقف موقت به دلیل سهمیه گوگل — تلاش بعدی: ساعت ${new Date(getQuotaBackoffUntil()).toLocaleTimeString('fa-IR')}` 
+                          : `Temporarily paused for quota backoff — retry at: ${new Date(getQuotaBackoffUntil()).toLocaleTimeString()}`}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {data.lastCalendarSyncTime && (
+                <div className="text-[10px] font-bold text-slate-400 mt-1.5 px-1">
+                  {isRtl ? `آخرین همگام‌سازی موفق: ساعت ${data.lastCalendarSyncTime}` : `Last successful sync: ${data.lastCalendarSyncTime}`}
+                </div>
+              )}
             </div>
           </div>
 

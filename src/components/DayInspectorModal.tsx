@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { PlannerData } from '../types';
+import { PlannerData, DailyTask, CoreTask, SecondaryTask, PostponedEvent, NoteItem } from '../types';
 import { 
   X, 
   Calendar, 
@@ -23,7 +23,8 @@ import {
   getJalaliWeekday, 
   getDaysInJalaliMonth,
   jalaliToGregorian,
-  getTodayJalali
+  getTodayJalali,
+  addJalaliDays
 } from '../utils/jalali';
 import { db, auth } from '../lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
@@ -58,6 +59,22 @@ const PERS_TO_ENG_DIGITS = (str: string) => {
 const getDaysInMonth = (monthName: string, year: number): number => {
   return getDaysInJalaliMonth(monthName, year);
 };
+
+const WEEKDAY_OFFSETS: Record<string, number> = {
+  saturday: 0,
+  sunday: 1,
+  monday: 2,
+  tuesday: 3,
+  wednesday: 4,
+  thursday: 5,
+  friday: 6,
+};
+
+function getArchivedDayKeyDate(week: { startYear: number; startMonth: string; startDay: number }, dayKey: string) {
+  const offset = WEEKDAY_OFFSETS[dayKey] ?? 0;
+  const mIdx = JALALI_MONTHS.indexOf(week.startMonth);
+  return addJalaliDays(week.startYear, mIdx >= 0 ? mIdx : 0, week.startDay, offset);
+}
 
 export type DayRecordKind = 
   | 'daily' 
@@ -305,39 +322,100 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
     return (data.classesSchedule || []).filter(c => c.dayKey === calculatedWeekdayKey);
   }, [data.classesSchedule, calculatedWeekdayKey]);
 
-  // 2. Daily tasks on this weekday
+  // 2. Daily tasks on this weekday (Active + Archived)
   const todayTasks = useMemo(() => {
-    if (!calculatedWeekdayKey) return [];
-    return (data.dailyTasks || {})[calculatedWeekdayKey] || [];
-  }, [data.dailyTasks, calculatedWeekdayKey]);
+    const list: DailyTask[] = [];
+    const seenIds = new Set<string>();
 
-  // 3. Core tasks with deadline today or completed today
+    if (calculatedWeekdayKey && data.dailyTasks) {
+      const activeList = data.dailyTasks[calculatedWeekdayKey] || [];
+      activeList.forEach(t => {
+        if (!seenIds.has(t.id)) {
+          seenIds.add(t.id);
+          list.push(t);
+        }
+      });
+    }
+
+    // Scan data.archive for daily tasks of this date
+    (data.archive || []).forEach(w => {
+      (w.items?.dailyTasks || []).forEach(dtGroup => {
+        const dateObj = getArchivedDayKeyDate(w, dtGroup.dayKey);
+        const matchesCalculatedDate = dateObj.year === selectedYear && dateObj.monthName === selectedMonth && dateObj.day === selectedDay;
+        dtGroup.tasks.forEach(t => {
+          const matchesCompletion = t.status === 'completed' && matchesTargetDate(t.completionDate);
+          if (matchesCalculatedDate || matchesCompletion) {
+            if (!seenIds.has(t.id)) {
+              seenIds.add(t.id);
+              list.push(t);
+            }
+          }
+        });
+      });
+    });
+
+    return list;
+  }, [data.dailyTasks, data.archive, calculatedWeekdayKey, selectedYear, selectedMonth, selectedDay]);
+
+  // 3. Core tasks with deadline today or completed today (Active + Archived)
   const todayCoreTasks = useMemo(() => {
-    return (data.coreTasks || []).filter(task => {
+    const list: CoreTask[] = [];
+    const seenIds = new Set<string>();
+
+    const checkTask = (task: CoreTask) => {
       const matchesDeadline = task.deadline && 
         task.deadline.day === selectedDay && 
         task.deadline.month === selectedMonth &&
         (!task.deadline.year || task.deadline.year === selectedYear);
       const isCompletedToday = task.status === 'completed' && matchesTargetDate(task.completionDate);
-      return matchesDeadline || isCompletedToday;
-    });
-  }, [data.coreTasks, selectedDay, selectedMonth, selectedYear]);
+      if (matchesDeadline || isCompletedToday) {
+        if (!seenIds.has(task.id)) {
+          seenIds.add(task.id);
+          list.push(task);
+        }
+      }
+    };
 
-  // 4. Secondary tasks: completed on this date OR deadline is today
+    (data.coreTasks || []).forEach(checkTask);
+    (data.archive || []).forEach(w => {
+      (w.items?.coreTasks || []).forEach(checkTask);
+    });
+
+    return list;
+  }, [data.coreTasks, data.archive, selectedDay, selectedMonth, selectedYear]);
+
+  // 4. Secondary tasks: completed on this date OR deadline is today (Active + Archived)
   const todaySecondaryTasks = useMemo(() => {
-    return (data.secondaryTasks || []).filter(task => {
+    const list: SecondaryTask[] = [];
+    const seenIds = new Set<string>();
+
+    const checkTask = (task: SecondaryTask) => {
       const isCompletedToday = task.status === 'completed' && (task.completionDate === dateString || matchesTargetDate(task.completionDate));
       const hasDeadlineToday = task.deadline && 
         task.deadline.day === selectedDay && 
         task.deadline.month === selectedMonth &&
         (!task.deadline.year || task.deadline.year === selectedYear);
-      return isCompletedToday || hasDeadlineToday;
-    });
-  }, [data.secondaryTasks, dateString, selectedDay, selectedMonth, selectedYear]);
+      if (isCompletedToday || hasDeadlineToday) {
+        if (!seenIds.has(task.id)) {
+          seenIds.add(task.id);
+          list.push(task);
+        }
+      }
+    };
 
-  // 5. Exams & Presentations on this day
+    (data.secondaryTasks || []).forEach(checkTask);
+    (data.archive || []).forEach(w => {
+      (w.items?.secondaryTasks || []).forEach(checkTask);
+    });
+
+    return list;
+  }, [data.secondaryTasks, data.archive, dateString, selectedDay, selectedMonth, selectedYear]);
+
+  // 5. Exams & Presentations on this day (Active + Archived)
   const todayExams = useMemo(() => {
     const list: Array<{ id: string; text: string; columnTitle?: string; date?: string; type?: string; description?: string; completed?: boolean; time?: string }> = [];
+    const seenIds = new Set<string>();
+
     (data.examColumns || []).forEach(col => {
       col.items.forEach(item => {
         const matchesDate = matchesTargetDate(item.date);
@@ -346,16 +424,38 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
           item.deadline.month === selectedMonth &&
           (!item.deadline.year || item.deadline.year === selectedYear);
         if (matchesDate || matchesDeadline) {
-          list.push({ ...item, columnTitle: col.titleFa });
+          if (!seenIds.has(item.id)) {
+            seenIds.add(item.id);
+            list.push({ ...item, columnTitle: col.titleFa });
+          }
         }
       });
     });
-    return list;
-  }, [data.examColumns, selectedDay, selectedMonth, selectedYear]);
 
-  // 6. Deadlines from Details columns
+    (data.archive || []).forEach(w => {
+      (w.items?.examItems || []).forEach(item => {
+        const matchesDate = matchesTargetDate(item.date);
+        const matchesDeadline = item.deadline && 
+          item.deadline.day === selectedDay && 
+          item.deadline.month === selectedMonth &&
+          (!item.deadline.year || item.deadline.year === selectedYear);
+        if (matchesDate || matchesDeadline) {
+          if (!seenIds.has(item.id)) {
+            seenIds.add(item.id);
+            list.push({ ...item, columnTitle: item.columnTitle });
+          }
+        }
+      });
+    });
+
+    return list;
+  }, [data.examColumns, data.archive, selectedDay, selectedMonth, selectedYear]);
+
+  // 6. Deadlines from Details columns (Active + Archived)
   const todayDeadlines = useMemo(() => {
     const list: Array<{ id: string; text: string; columnTitle?: string; completed?: boolean; date?: string; description?: string }> = [];
+    const seenIds = new Set<string>();
+
     (data.detailsColumns || []).forEach(col => {
       col.items.forEach(item => {
         const matchesDate = matchesTargetDate(item.date);
@@ -364,30 +464,88 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
           item.deadline.month === selectedMonth &&
           (!item.deadline.year || item.deadline.year === selectedYear);
         if (matchesDate || matchesDeadlineObj) {
-          list.push({ ...item, columnTitle: col.titleFa });
+          if (!seenIds.has(item.id)) {
+            seenIds.add(item.id);
+            list.push({ ...item, columnTitle: col.titleFa });
+          }
         }
       });
     });
+
+    (data.archive || []).forEach(w => {
+      (w.items?.detailItems || []).forEach(item => {
+        const matchesDate = matchesTargetDate(item.date);
+        const matchesDeadlineObj = item.deadline && 
+          item.deadline.day === selectedDay && 
+          item.deadline.month === selectedMonth &&
+          (!item.deadline.year || item.deadline.year === selectedYear);
+        if (matchesDate || matchesDeadlineObj) {
+          if (!seenIds.has(item.id)) {
+            seenIds.add(item.id);
+            list.push({ ...item, columnTitle: item.columnTitle });
+          }
+        }
+      });
+    });
+
     return list;
-  }, [data.detailsColumns, selectedDay, selectedMonth, selectedYear]);
+  }, [data.detailsColumns, data.archive, selectedDay, selectedMonth, selectedYear]);
 
   // 7. Habits active on this day
   const todayHabits = useMemo(() => {
     return data.reminders || [];
   }, [data.reminders]);
 
-  // 8. Postponed / Cancelled events matching today
+  // 8. Postponed / Cancelled events matching today (Active + Archived)
   const todayPostponed = useMemo(() => {
-    return (data.postponedEvents || []).filter(e => {
-      return matchesTargetDate(e.date) || matchesTargetDate(e.newDate);
-    });
-  }, [data.postponedEvents, selectedDay, selectedMonth, selectedYear]);
+    const list: PostponedEvent[] = [];
+    const seenIds = new Set<string>();
 
-  // 9. Weekly Events of this weekday
+    const checkEvent = (e: PostponedEvent) => {
+      if (matchesTargetDate(e.date) || matchesTargetDate(e.newDate)) {
+        if (!seenIds.has(e.id)) {
+          seenIds.add(e.id);
+          list.push(e);
+        }
+      }
+    };
+
+    (data.postponedEvents || []).forEach(checkEvent);
+    (data.archive || []).forEach(w => {
+      (w.items?.postponedEvents || []).forEach(checkEvent);
+    });
+
+    return list;
+  }, [data.postponedEvents, data.archive, selectedDay, selectedMonth, selectedYear]);
+
+  // 9. Weekly Events of this weekday (Active + Archived)
   const todayWeeklyEvents = useMemo(() => {
     if (!calculatedWeekdayKey) return [];
-    return (data.weeklyEvents || []).filter(e => e.weekday === calculatedWeekdayKey);
-  }, [data.weeklyEvents, calculatedWeekdayKey]);
+    const list: NoteItem[] = [];
+    const seenIds = new Set<string>();
+
+    (data.weeklyEvents || []).forEach(e => {
+      if (e.weekday === calculatedWeekdayKey) {
+        if (!seenIds.has(e.id)) {
+          seenIds.add(e.id);
+          list.push(e);
+        }
+      }
+    });
+
+    (data.archive || []).forEach(w => {
+      (w.items?.weeklyEvents || []).forEach(e => {
+        if (e.weekday === calculatedWeekdayKey) {
+          if (!seenIds.has(e.id)) {
+            seenIds.add(e.id);
+            list.push(e);
+          }
+        }
+      });
+    });
+
+    return list;
+  }, [data.weeklyEvents, data.archive, calculatedWeekdayKey]);
 
   // 10. Daily Thoughts of this weekday
   const todayDailyThoughts = useMemo(() => {
@@ -556,7 +714,8 @@ export default function DayInspectorModal({ isOpen, onClose, data, lang }: DayIn
       });
     });
 
-    return records;
+    // Guarantee no duplicates
+    return records.filter((r, idx, self) => self.findIndex(x => x.id === r.id) === idx);
   }, [
     snapshotData,
     todayTasks,

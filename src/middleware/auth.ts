@@ -32,7 +32,30 @@ export const requireAuth = async (
     next();
   } catch (error: any) {
     console.error('Error verifying Firebase ID token:', error);
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
+    const code = String(error?.code || '').toLowerCase();
+    const infraKeywords = [
+      'fetch failed',
+      'enotfound',
+      'econnreset',
+      'etimedout',
+      'eai_again',
+      'timeout',
+      'network',
+      'loading metadata',
+      'public keys',
+      '500',
+      '503'
+    ];
+    const isInfraError = infraKeywords.some(k => msg.includes(k) || code.includes(k));
+    if (isInfraError) {
+      return res.status(503).json({
+        error: 'TEMPORARY_AUTH_INFRA',
+        retryable: true,
+        details: msg,
+        code: error?.code
+      });
+    }
 
     return res.status(401).json({ 
       error: `Unauthorized: Invalid token - ${msg}`, 

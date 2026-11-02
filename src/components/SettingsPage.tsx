@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { PlannerData, User } from '../types';
+import { PlannerData, User, APP_VERSION } from '../types';
 import { 
   RotateCcw, 
   Upload, 
@@ -26,13 +26,16 @@ import {
   Send,
   CheckCircle,
   Clock,
-  FileText
+  FileText,
+  Key,
+  Trash2
 } from 'lucide-react';
+import ApiKeySettings from './ApiKeySettings';
 import CategoriesManagementPage from './CategoriesManagementPage';
 import FirebaseCloudBackup from './FirebaseCloudBackup';
 import { verifyAndRepairPlannerData } from './SessionManager';
 import GoogleCalendarSync from './GoogleCalendarSync';
-import { connectGmail, getCachedGmailToken } from '../lib/auth';
+import { connectGmail, getCachedGmailToken, isGmailTokenExpired } from '../lib/auth';
 import { sendGmailEmail, buildReminderEmailHtml, buildAnalyticsEmailHtml, REMINDER_OFFSET_OPTIONS, ReminderOffset } from '../lib/gmailReminders';
 import { getTimeSourceLabel, getOffsetMs } from '../utils/networkTime';
 import { buildAnalyticsReport } from '../utils/reportBuilder';
@@ -382,8 +385,6 @@ export default function SettingsPage({
       <CategoriesManagementPage
         categories={data.categories || []}
         onUpdateCategories={(updated) => setData(prev => ({ ...prev, categories: updated }))}
-        secondaryTaskColumns={data.secondaryTaskColumns || []}
-        onUpdateSecondaryColumns={(updated) => setData(prev => ({ ...prev, secondaryTaskColumns: updated }))}
         onClose={() => setShowCategoryManager(false)}
       />
     );
@@ -405,6 +406,7 @@ export default function SettingsPage({
           <div className={isRtl ? 'text-right' : 'text-left'}>
             <h2 className="text-lg font-black text-slate-800">{t.title}</h2>
             <p className="text-xs text-slate-400 font-bold mt-0.5">{t.subtitle}</p>
+            <div className="text-[11px] font-bold text-slate-400 mt-1">نسخهٔ برنامه: {APP_VERSION}</div>
           </div>
         </div>
 
@@ -612,6 +614,10 @@ export default function SettingsPage({
 
               </div>
             </div>
+
+            {/* BYOK: Personal AI API Keys Manager */}
+            <ApiKeySettings lang={lang} showToast={showToast} />
+
 
             {/* Card: Email Reminders (Gmail) Settings */}
             <div className={cardClass}>
@@ -837,15 +843,44 @@ export default function SettingsPage({
 
                 {/* Connect Gmail, Test Email, and Monthly Report Buttons */}
                 <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-2.5 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={handleConnectGmail}
-                    disabled={isConnectingGmail}
-                    className="w-full sm:w-auto px-4 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-3xs flex items-center justify-center gap-2 border border-slate-700"
-                  >
-                    <Mail className="w-4 h-4 text-indigo-400" />
-                    <span>{isConnectingGmail ? (isRtl ? 'در حال اتصال...' : 'Connecting...') : (isRtl ? 'اتصال یا تایید دسترسی جیمیل' : 'Connect / Authorize Gmail')}</span>
-                  </button>
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <button
+                      type="button"
+                      onClick={handleConnectGmail}
+                      disabled={isConnectingGmail}
+                      className="px-4 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-3xs flex items-center justify-center gap-2 border border-slate-700"
+                    >
+                      <Mail className="w-4 h-4 text-indigo-400" />
+                      <span>{isConnectingGmail ? (isRtl ? 'در حال اتصال...' : 'Connecting...') : (isRtl ? 'اتصال مجدد / تایید دسترسی جیمیل' : 'Reconnect / Authorize Gmail')}</span>
+                    </button>
+
+                    {/* Status Badge: متصل / نیازمند اتصال مجدد / خاموش */}
+                    {(() => {
+                      if (data.emailRemindersGlobalEnabled === false) {
+                        return (
+                          <span className="text-[10px] font-black bg-slate-100 text-slate-500 border border-slate-200 px-2.5 py-1.5 rounded-xl flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                            <span>{isRtl ? 'وضعیت: خاموش' : 'Status: Disabled'}</span>
+                          </span>
+                        );
+                      }
+                      const hasToken = !!getCachedGmailToken() && !isGmailTokenExpired();
+                      if (hasToken) {
+                        return (
+                          <span className="text-[10px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1.5 rounded-xl flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            <span>{isRtl ? 'وضعیت: متصل' : 'Status: Connected'}</span>
+                          </span>
+                        );
+                      }
+                      return (
+                        <span className="text-[10px] font-black bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-1.5 rounded-xl flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                          <span>{isRtl ? 'وضعیت: نیازمند اتصال مجدد' : 'Status: Reconnect Needed'}</span>
+                        </span>
+                      );
+                    })()}
+                  </div>
 
                   <div className="flex flex-col sm:flex-row items-center gap-2.5 w-full sm:w-auto">
                     <button
@@ -901,6 +936,7 @@ export default function SettingsPage({
               currentUser={currentUser || null}
               lang={lang}
               showToast={showToast}
+              onUpdateData={setData}
             />
 
           </div>
@@ -986,9 +1022,7 @@ export default function SettingsPage({
               <button
                 type="button"
                 onClick={() => {
-                  if (window.confirm(isRtl ? 'آیا مطمئن هستید که می‌خواهید تمام تغییرات را بازنشانی کرده و به قالب اولیه برگردید؟' : 'Are you sure you want to restore default template? All current customizations will be lost.')) {
-                    onReset();
-                  }
+                  onReset();
                 }}
                 className="w-full flex items-center justify-center gap-2 p-3 bg-red-600 hover:bg-red-700 text-white rounded-2xl font-black text-xs transition-all shadow-sm active:scale-98 cursor-pointer"
               >

@@ -2,7 +2,7 @@
  * networkTime.ts
  * Real internet network time with seamless offline continuation.
  *
- * Safe implementation: No window.fetch monkey-patching (avoids read-only getter errors).
+ * Safe implementation: No global fetch monkey-patching (avoids read-only getter errors).
  * Uses standalone timeSyncFetch wrapper and dedicated event listeners.
  *
  * Limitation note (G6):
@@ -87,7 +87,7 @@ export function updateNetworkTimeFromResponse(response: Response, requestStartTi
 }
 
 /**
- * Safe standalone fetch wrapper that intercepts Date headers without touching window.fetch.
+ * Safe standalone fetch wrapper that intercepts Date headers without touching global fetch.
  */
 export async function timeSyncFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const startTime = Date.now();
@@ -126,7 +126,7 @@ export async function refreshNetworkTime(): Promise<void> {
  * Initializes network time synchronization safely:
  * - Hooks into the 'online' event to refresh time upon reconnection.
  * - Triggers an initial background sync via timeSyncFetch.
- * - Never touches or rewrites window.fetch!
+ * - Never touches or rewrites global fetch!
  */
 export function initNetworkTime(): void {
   if (typeof window === 'undefined' || isInitialized) return;

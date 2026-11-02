@@ -6,6 +6,7 @@ import {
   Plus, 
   Trash2, 
   Edit2, 
+  PenSquare, 
   Check, 
   ChevronRight, 
   Compass, 
@@ -31,7 +32,13 @@ import {
   CheckSquare,
   ListChecks
 } from 'lucide-react';
+import { apiFetch } from '../services/apiKeyService';
+import { auth } from '../lib/firebase.ts';
+import { deleteGoalDoc } from '../lib/firestoreSync.ts';
 import { PlannerData, Goal, GoalMilestone, GoalTask, GoalPhase, GoalPhaseTask, GoalWeek, GoalPracticeExercise, CoreTask, SecondaryTask, ReminderItem, Category } from '../types';
+import GoalEditorModal from './GoalEditorModal';
+import { DateTimeSelect } from './DateTimeSelect';
+import { parseAndFormatJalaliDeadline, getDeadlineOverdueStatus, toPersianDigits } from '../utils/jalali';
 
 interface GoalsTabProps {
   data: PlannerData;
@@ -69,12 +76,14 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
   // Goal Form State
   const [newGoalTitle, setNewGoalTitle] = useState('');
   const [newGoalWeeks, setNewGoalWeeks] = useState(4);
+  const [newGoalDeadline, setNewGoalDeadline] = useState('');
   const [selectedTheme, setSelectedTheme] = useState('indigo');
   const [newGoalCatName, setNewGoalCatName] = useState('');
   const [newGoalCatColor, setNewGoalCatColor] = useState('bg-indigo-100 border-indigo-300 text-indigo-900');
   const [newGoalCatType, setNewGoalCatType] = useState<'core' | 'secondary' | 'both'>('core');
   
   const [isCreatingGoal, setIsCreatingGoal] = useState(false);
+  const [goalError, setGoalError] = useState<string | null>(null);
   const [loadingGoalId, setLoadingGoalId] = useState<string | null>(null);
 
   // State for confirming goal deletion
@@ -152,11 +161,25 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
     setIsCreatingGoal(true);
 
     try {
-      const response = await fetch("/api/gemini/analyze-goal", {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json"
+      };
+      try {
+        const storedKeys = localStorage.getItem('planner_gemini_keys');
+        if (storedKeys) {
+          const parsed = JSON.parse(storedKeys);
+          if (Array.isArray(parsed)) {
+            const valid = parsed.map((k: any) => String(k).trim()).filter(Boolean);
+            if (valid.length > 0) {
+              headers['x-gemini-keys'] = valid.join(',');
+            }
+          }
+        }
+      } catch (_) {}
+
+      const response = await apiFetch("/api/gemini/analyze-goal", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers,
         body: JSON.stringify({
           action: "analyze",
           title: newGoalTitle.trim(),
@@ -174,6 +197,11 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
       const resData = await response.json();
       if (resData.success === false) {
         throw new Error(resData.error || "خطای نامشخص در تحلیل هوش مصنوعی");
+      }
+
+      // T161-F: surface server coverage warning (silence forbidden)
+      if (resData.coverage && resData.coverage.complete === false) {
+        showToast(isRtl ? `هشدار: نقشه راه ناقص است (پوشش ${resData.coverage.coveredWeeks} از ${resData.coverage.expectedWeeks} هفته)` : `Warning: roadmap incomplete (${resData.coverage.coveredWeeks}/${resData.coverage.expectedWeeks} weeks)`);
       }
 
       // Handle Category creation / linking
@@ -208,13 +236,13 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
       }));
 
       // Extract phases & week-by-week granular breakdown
-      const phases: GoalPhase[] = (resData.phases || []).map((p: any, pIdx: number) => {
-        const weeks: GoalWeek[] = (p.weeks || []).map((w: any, wIdx: number) => ({
-          week_number: w.week_number || (wIdx + 1),
+      const phases: GoalPhase[] = (Array.isArray(resData.phases) ? resData.phases : []).map((p: any, pIdx: number) => {
+        const weeks: GoalWeek[] = (Array.isArray(p.weeks) ? p.weeks : []).map((w: any, wIdx: number) => ({
+          week_number: Number(w.week_number) || (wIdx + 1),
           week_title: w.week_title || `هفته ${w.week_number || (wIdx + 1)}`,
           weekly_goal: w.weekly_goal || '',
           practice_exercise: w.practice_exercise || '',
-          tasks: (w.tasks || []).map((t: any, tIdx: number) => ({
+          tasks: (Array.isArray(w.tasks) ? w.tasks : []).map((t: any, tIdx: number) => ({
             id: `gpt_${newGoalId}_p${pIdx}_w${wIdx}_t${tIdx}`,
             title: t.title || 'تسک جدید',
             description: t.description || '',
@@ -228,10 +256,12 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
         let phaseFlatTasks: GoalPhaseTask[] = [];
         if (weeks.length > 0) {
           weeks.forEach(w => {
-            phaseFlatTasks.push(...w.tasks);
+            if (Array.isArray(w.tasks)) {
+              phaseFlatTasks.push(...w.tasks);
+            }
           });
-        } else if (p.tasks && p.tasks.length > 0) {
-          phaseFlatTasks = (p.tasks || []).map((t: any, tIdx: number) => ({
+        } else if (Array.isArray(p.tasks) && p.tasks.length > 0) {
+          phaseFlatTasks = (Array.isArray(p.tasks) ? p.tasks : []).map((t: any, tIdx: number) => ({
             id: `gpt_${newGoalId}_${pIdx}_${tIdx}`,
             title: t.title || 'تسک جدید',
             description: t.description || '',
@@ -243,7 +273,7 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
         }
 
         return {
-          phase_number: p.phase_number || (pIdx + 1),
+          phase_number: Number(p.phase_number) || (pIdx + 1),
           title: p.title || `فاز ${pIdx + 1}`,
           description: p.description || '',
           estimated_weeks: p.estimated_weeks || `هفته ${pIdx + 1}`,
@@ -260,7 +290,9 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
       }));
 
       // Week 1 active tasks from week 1 of phase 1 or returned week_tasks
-      const firstWeekTasks = phases[0]?.weeks?.[0]?.tasks || phases[0]?.tasks || [];
+      const firstWeekTasks = (phases[0]?.weeks && phases[0].weeks[0] && Array.isArray(phases[0].weeks[0].tasks))
+        ? phases[0].weeks[0].tasks
+        : (Array.isArray(phases[0]?.tasks) ? phases[0].tasks : []);
       const activeWeekTasks: GoalTask[] = firstWeekTasks.length > 0 
         ? firstWeekTasks.map(t => ({
             id: `gt_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
@@ -270,7 +302,7 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
             completed: false,
             goal_id: newGoalId
           }))
-        : (resData.week_tasks || []).map((t: any, idx: number) => ({
+        : (Array.isArray(resData.week_tasks) ? resData.week_tasks : []).map((t: any, idx: number) => ({
             id: `gt_${Date.now()}_${idx}`,
             title: t.title,
             description: t.description || '',
@@ -288,6 +320,7 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
         categoryId: catId,
         categoryName: catName,
         categoryColor: newGoalCatColor,
+        deadline: newGoalDeadline || undefined,
         feasibility_score: resData.feasibility_score || 80,
         justification: resData.justification || 'نقشه راه تخصصی هدف بر اساس توانمندی شما به تفکیک هفته به هفته تولید گردید.',
         colorTheme: selectedTheme,
@@ -306,23 +339,146 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
 
       showToast('هدف جدید و نقشه راه جامع آن با موفقیت تولید و ذخیره شد!');
       setNewGoalTitle('');
+      setNewGoalDeadline('');
       setNewGoalCatName('');
+      setGoalError(null);
     } catch (error: any) {
       console.error(error);
-      showToast(error.message || 'خطا در تولید نقشه راه هدف! لطفاً مجدداً تلاش کنید.');
+      const errMsg = error.message || 'خطا در تولید نقشه راه هدف! لطفاً مجدداً تلاش کنید.';
+      setGoalError(errMsg);
+      showToast(errMsg);
     } finally {
       setIsCreatingGoal(false);
     }
   };
 
-  // Delete goal
-  const handleDeleteGoal = (goalId: string) => {
+  // T161-F: goal editor state
+  const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
+
+  // Delete goal with immediate cloud & local storage persistence
+  const handleDeleteGoal = async (goalId: string) => {
+    const previousGoals = data.goals || [];
+    const updatedGoals = previousGoals.filter(g => g.goal_id !== goalId && (g as any).id !== goalId);
+
+    // Optimistically update parent state
     onUpdateData(prev => ({
       ...prev,
       goals: (prev.goals || []).filter(g => g.goal_id !== goalId && (g as any).id !== goalId)
     }));
-    showToast('هدف با موفقیت حذف شد.');
     setConfirmDeleteGoalId(null);
+
+    // Immediate persistence to localStorage and Firestore
+    try {
+      try {
+        const cached = localStorage.getItem('planner_data');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          parsed.goals = updatedGoals;
+          localStorage.setItem('planner_data', JSON.stringify(parsed));
+        }
+      } catch (lsErr) {
+        console.warn('LocalStorage error during goal deletion:', lsErr);
+      }
+
+      const user = auth.currentUser;
+      if (user && user.uid) {
+        await deleteGoalDoc(user.uid, goalId);
+      }
+      showToast(isRtl ? 'هدف با موفقیت حذف شد.' : 'Goal deleted successfully.');
+    } catch (err: any) {
+      console.error('Failed to delete goal doc from cloud:', err);
+      // Revert state on failure
+      onUpdateData(prev => ({
+        ...prev,
+        goals: previousGoals
+      }));
+      showToast(isRtl ? 'خطا در حذف دائمی هدف؛ لطفاً دوباره تلاش کنید.' : 'Failed to delete goal permanently. Please try again.');
+    }
+  };
+
+  // T161-F: merge-save goal edits (only edited fields override; nothing dropped)
+  const handleSaveGoalEdits = (edited: Goal) => {
+    onUpdateData(prev => ({
+      ...prev,
+      goals: (prev.goals || []).map(g => g.goal_id === edited.goal_id ? { ...g, ...edited } : g)
+    }));
+    showToast(isRtl ? 'هدف با ادغام کامل ذخیره شد' : 'Goal saved with full merge');
+  };
+
+  // Manual goal creation using the existing form state directly
+  const handleAddManualGoal = () => {
+    if (!newGoalTitle || !newGoalTitle.trim()) {
+      showToast(isRtl ? 'لطفاً ابتدا عنوان هدف را در فرم بالا وارد کنید' : 'Please enter goal title in the form above');
+      return;
+    }
+
+    const title = newGoalTitle.trim();
+    const weeks = Math.max(1, Number(newGoalWeeks) || 8);
+    const goalId = `goal_${Date.now()}`;
+
+    // Handle Category creation / linking like handleCreateGoal
+    const catName = newGoalCatName.trim() || title;
+    let targetCat = data.categories.find(c => c.nameFa.toLowerCase() === catName.toLowerCase());
+    let catId = targetCat?.id;
+    let updatedCategories = [...data.categories];
+
+    if (!targetCat) {
+      catId = `cat_goal_${Date.now()}`;
+      const newCat: Category = {
+        id: catId,
+        nameFa: catName,
+        nameEn: catName,
+        color: `${newGoalCatColor} hover:opacity-90`,
+        type: newGoalCatType
+      };
+      updatedCategories.push(newCat);
+    }
+
+    const newGoal: Goal = {
+      goal_id: goalId,
+      title: title,
+      total_weeks: weeks,
+      ai_estimated_weeks: weeks,
+      current_week_index: 1,
+      categoryId: catId,
+      categoryName: catName,
+      categoryColor: newGoalCatColor,
+      colorTheme: selectedTheme,
+      deadline: newGoalDeadline || undefined,
+      feasibility_score: 100,
+      justification: isRtl ? 'هدف دستی ایجاد شده توسط کاربر.' : 'Manual goal created by user.',
+      milestones: [{ week_number: 1, title: isRtl ? 'شروع هدف' : 'Goal Start', completed: false }],
+      phases: [{
+        phase_number: 1,
+        title: isRtl ? 'فاز اصلی' : 'Main Phase',
+        description: isRtl ? 'برنامه دستی هفتگی' : 'Manual weekly plan',
+        estimated_weeks: `هفته ۱ تا ${weeks}`,
+        weeks: Array.from({ length: weeks }, (_, i) => ({
+          week_number: i + 1,
+          week_title: isRtl ? `هفته ${i + 1}` : `Week ${i + 1}`,
+          weekly_goal: '',
+          practice_exercise: '',
+          tasks: []
+        })),
+        tasks: []
+      }],
+      active_week_tasks: [],
+      completed_tasks_count: 0
+    };
+
+    onUpdateData(prev => ({
+      ...prev,
+      categories: updatedCategories,
+      goals: [...(prev.goals || []), newGoal]
+    }));
+
+    // Reset form
+    setNewGoalTitle('');
+    setNewGoalWeeks(4);
+    setNewGoalDeadline('');
+    setNewGoalCatName('');
+
+    showToast(isRtl ? 'هدف دستی با موفقیت ساخته شد؛ با دکمه ویرایش می‌توانید تسک‌های آن را اضافه کنید.' : 'Manual goal created successfully; use Edit button to add tasks.');
   };
 
   // Helper to ensure category exists in data.categories
@@ -407,41 +563,43 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
       const newSecTasks = [...(prev.secondaryTasks || [])];
       const newReminders = [...(prev.reminders || [])];
 
-      week.tasks.forEach(task => {
-        const taskTitle = task.title;
-        const taskDesc = task.description || `فاز ${phaseNumber} - ${week.week_title} (هدف: ${goal.title})`;
+      if (Array.isArray(week.tasks)) {
+        week.tasks.forEach(task => {
+          const taskTitle = task.title;
+          const taskDesc = task.description || `فاز ${phaseNumber} - ${week.week_title} (هدف: ${goal.title})`;
 
-        if (task.type === 'core') {
-          newCoreTasks.push({
-            id: `ct_wk_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-            categoryId: categoryId,
-            title: taskTitle,
-            description: taskDesc,
-            status: 'pending',
-            deadline: task.suggested_weekday ? { weekday: task.suggested_weekday } : undefined
-          });
-        } else if (task.type === 'secondary') {
-          newSecTasks.push({
-            id: `st_wk_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-            columnId: prev.secondaryTaskColumns?.[0]?.id || 'learn',
-            categoryId: categoryId,
-            textFa: taskTitle,
-            textEn: taskTitle,
-            description: taskDesc,
-            status: 'pending',
-            deadline: task.suggested_weekday ? { weekday: task.suggested_weekday } : undefined
-          });
-        } else {
-          newReminders.push({
-            id: `rem_wk_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-            textFa: taskTitle,
-            textEn: taskTitle,
-            checkedDays: [],
-            frequency: 'every_day'
-          });
-        }
-        count++;
-      });
+          if (task.type === 'core') {
+            newCoreTasks.push({
+              id: `ct_wk_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+              categoryId: categoryId,
+              title: taskTitle,
+              description: taskDesc,
+              status: 'pending',
+              deadline: task.suggested_weekday ? { weekday: task.suggested_weekday } : undefined
+            });
+          } else if (task.type === 'secondary') {
+            newSecTasks.push({
+              id: `st_wk_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+              columnId: prev.secondaryTaskColumns?.[0]?.id || 'learn',
+              categoryId: categoryId,
+              textFa: taskTitle,
+              textEn: taskTitle,
+              description: taskDesc,
+              status: 'pending',
+              deadline: task.suggested_weekday ? { weekday: task.suggested_weekday } : undefined
+            });
+          } else {
+            newReminders.push({
+              id: `rem_wk_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+              textFa: taskTitle,
+              textEn: taskTitle,
+              checkedDays: [],
+              frequency: 'every_day'
+            });
+          }
+          count++;
+        });
+      }
 
       return {
         ...prev,
@@ -493,43 +651,45 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
       const newSecTasks = [...(prev.secondaryTasks || [])];
       const newReminders = [...(prev.reminders || [])];
 
-      phase.tasks.forEach(task => {
-        const taskTitle = task.title;
-        const taskDesc = task.description || `مرتبط با فاز ${phase.phase_number} از هدف: ${goal.title}`;
+      if (Array.isArray(phase.tasks)) {
+        phase.tasks.forEach(task => {
+          const taskTitle = task.title;
+          const taskDesc = task.description || `مرتبط با فاز ${phase.phase_number} از هدف: ${goal.title}`;
 
-        if (task.type === 'core') {
-          newCoreTasks.push({
-            id: `ct_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-            categoryId: categoryId,
-            title: taskTitle,
-            description: taskDesc,
-            status: 'pending',
-            deadline: task.suggested_weekday ? { weekday: task.suggested_weekday } : undefined
-          });
-          coreInjected++;
-        } else if (task.type === 'secondary') {
-          newSecTasks.push({
-            id: `st_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-            columnId: prev.secondaryTaskColumns?.[0]?.id || 'learn',
-            categoryId: categoryId,
-            textFa: taskTitle,
-            textEn: taskTitle,
-            description: taskDesc,
-            status: 'pending',
-            deadline: task.suggested_weekday ? { weekday: task.suggested_weekday } : undefined
-          });
-          secInjected++;
-        } else if (task.type === 'habit') {
-          newReminders.push({
-            id: `rem_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-            textFa: taskTitle,
-            textEn: taskTitle,
-            checkedDays: [],
-            frequency: 'every_day'
-          });
-          habitInjected++;
-        }
-      });
+          if (task.type === 'core') {
+            newCoreTasks.push({
+              id: `ct_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+              categoryId: categoryId,
+              title: taskTitle,
+              description: taskDesc,
+              status: 'pending',
+              deadline: task.suggested_weekday ? { weekday: task.suggested_weekday } : undefined
+            });
+            coreInjected++;
+          } else if (task.type === 'secondary') {
+            newSecTasks.push({
+              id: `st_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+              columnId: prev.secondaryTaskColumns?.[0]?.id || 'learn',
+              categoryId: categoryId,
+              textFa: taskTitle,
+              textEn: taskTitle,
+              description: taskDesc,
+              status: 'pending',
+              deadline: task.suggested_weekday ? { weekday: task.suggested_weekday } : undefined
+            });
+            secInjected++;
+          } else if (task.type === 'habit') {
+            newReminders.push({
+              id: `rem_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+              textFa: taskTitle,
+              textEn: taskTitle,
+              checkedDays: [],
+              frequency: 'every_day'
+            });
+            habitInjected++;
+          }
+        });
+      }
 
       return {
         ...prev,
@@ -559,41 +719,45 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
       const newSecTasks = [...(prev.secondaryTasks || [])];
       const newReminders = [...(prev.reminders || [])];
 
-      goal.phases!.forEach(phase => {
-        phase.tasks.forEach(task => {
-          const taskTitle = `[فاز ${phase.phase_number}] ${task.title}`;
-          const taskDesc = task.description || `بخشی از فاز ${phase.phase_number}: ${phase.title}`;
+      if (Array.isArray(goal.phases)) {
+        goal.phases.forEach(phase => {
+          if (Array.isArray(phase.tasks)) {
+            phase.tasks.forEach(task => {
+              const taskTitle = `[فاز ${phase.phase_number}] ${task.title}`;
+              const taskDesc = task.description || `بخشی از فاز ${phase.phase_number}: ${phase.title}`;
 
-          if (task.type === 'core') {
-            newCoreTasks.push({
-              id: `ct_all_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-              categoryId: categoryId,
-              title: taskTitle,
-              description: taskDesc,
-              status: 'pending'
-            });
-          } else if (task.type === 'secondary') {
-            newSecTasks.push({
-              id: `st_all_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-              columnId: prev.secondaryTaskColumns?.[0]?.id || 'learn',
-              categoryId: categoryId,
-              textFa: taskTitle,
-              textEn: task.title,
-              description: taskDesc,
-              status: 'pending'
-            });
-          } else if (task.type === 'habit') {
-            newReminders.push({
-              id: `rem_all_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-              textFa: taskTitle,
-              textEn: task.title,
-              checkedDays: [],
-              frequency: 'every_day'
+              if (task.type === 'core') {
+                newCoreTasks.push({
+                  id: `ct_all_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                  categoryId: categoryId,
+                  title: taskTitle,
+                  description: taskDesc,
+                  status: 'pending'
+                });
+              } else if (task.type === 'secondary') {
+                newSecTasks.push({
+                  id: `st_all_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                  columnId: prev.secondaryTaskColumns?.[0]?.id || 'learn',
+                  categoryId: categoryId,
+                  textFa: taskTitle,
+                  textEn: task.title,
+                  description: taskDesc,
+                  status: 'pending'
+                });
+              } else if (task.type === 'habit') {
+                newReminders.push({
+                  id: `rem_all_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                  textFa: taskTitle,
+                  textEn: task.title,
+                  checkedDays: [],
+                  frequency: 'every_day'
+                });
+              }
+              totalInjected++;
             });
           }
-          totalInjected++;
         });
-      });
+      }
 
       return {
         ...prev,
@@ -634,7 +798,13 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
             if (t.id === taskId) {
               nextStatus = !isTaskReallyCompleted(g, t);
               targetTaskText = t.title;
-              return { ...t, completed: nextStatus };
+              const overdue = getDeadlineOverdueStatus(t.deadline);
+              return {
+                ...t,
+                completed: nextStatus,
+                completedLate: nextStatus ? overdue.isOverdue : undefined,
+                completedAt: nextStatus ? new Date().toISOString() : undefined
+              };
             }
             return t;
           });
@@ -706,22 +876,20 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
 
   // Delete a task from goal
   const handleDeleteTask = (goalId: string, taskId: string) => {
-    if (window.confirm('آیا می‌خواهید این تسک را حذف کنید؟')) {
-      onUpdateData(prev => {
-        const updatedGoals = (prev.goals || []).map(g => {
-          if (g.goal_id === goalId) {
-            return {
-              ...g,
-              active_week_tasks: g.active_week_tasks.filter(t => t.id !== taskId)
-            };
-          }
-          return g;
-        });
-
-        return { ...prev, goals: updatedGoals };
+    onUpdateData(prev => {
+      const updatedGoals = (prev.goals || []).map(g => {
+        if (g.goal_id === goalId) {
+          return {
+            ...g,
+            active_week_tasks: g.active_week_tasks.filter(t => t.id !== taskId)
+          };
+        }
+        return g;
       });
-      showToast('تسک حذف شد');
-    }
+
+      return { ...prev, goals: updatedGoals };
+    });
+    showToast(isRtl ? 'تسک حذف شد' : 'Task deleted');
   };
 
   // Add a new manual task to goal
@@ -765,12 +933,24 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
     let phaseTasksTotal = 0;
     let phaseTasksCompleted = 0;
 
-    if (goal.phases) {
+    if (Array.isArray(goal.phases)) {
       goal.phases.forEach(p => {
-        p.tasks.forEach(t => {
-          phaseTasksTotal++;
-          if (t.completed) phaseTasksCompleted++;
-        });
+        if (Array.isArray(p.weeks)) {
+          p.weeks.forEach(w => {
+            if (Array.isArray(w.tasks)) {
+              w.tasks.forEach(t => {
+                phaseTasksTotal++;
+                if (t.completed) phaseTasksCompleted++;
+              });
+            }
+          });
+        }
+        if (Array.isArray(p.tasks)) {
+          p.tasks.forEach(t => {
+            phaseTasksTotal++;
+            if (t.completed) phaseTasksCompleted++;
+          });
+        }
       });
     }
 
@@ -813,6 +993,10 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
             </div>
           </div>
         </div>
+        <button type="button" onClick={handleAddManualGoal}
+          className="px-3 py-1.5 rounded-xl text-xs font-bold border border-indigo-200 text-indigo-700 hover:bg-indigo-50">
+          {isRtl ? '+ هدف دستی' : '+ Manual goal'}
+        </button>
       </div>
 
       {/* 2. ADD NEW GOAL FORM WITH CATEGORY AND COLOR SELECTION */}
@@ -824,11 +1008,25 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
           </h3>
         </div>
 
+        {goalError && (
+          <div dir={isRtl ? 'rtl' : 'ltr'} className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200/80 text-xs font-bold text-rose-700 text-right space-y-1">
+            <div className="flex items-center gap-1.5">
+              <span>⚠️</span>
+              <span>{goalError}</span>
+            </div>
+            {goalError.includes('تنظیمات') && (
+              <p className="text-[10px] text-rose-600 font-medium">
+                💡 راهنما: از منوی کناری وارد «تنظیمات پیشرفته» شوید و در بخش «کلیدهای Gemini (هوش مصنوعی)» کلید API خود را ذخیره کنید.
+              </p>
+            )}
+          </div>
+        )}
+
         <form onSubmit={handleCreateGoal} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
             
             {/* Goal Title Input */}
-            <div className="md:col-span-5 space-y-1.5">
+            <div className="md:col-span-4 space-y-1.5">
               <label className="text-xs font-black text-slate-600 block">
                 {isRtl ? 'عنوان اصلی هدف:' : 'Goal Title:'}
               </label>
@@ -845,9 +1043,9 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
             </div>
 
             {/* Target Duration Input (Manual Number Input) */}
-            <div className="md:col-span-3 space-y-1.5">
+            <div className="md:col-span-2 space-y-1.5">
               <label className="text-xs font-black text-slate-600 block">
-                {isRtl ? 'مدت زمان درخواستی شما (تعداد هفته):' : 'Requested Duration (Weeks):'}
+                {isRtl ? 'مدت زمان (هفته):' : 'Duration (Weeks):'}
               </label>
               <div className="relative flex items-center">
                 <input
@@ -865,10 +1063,25 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
               </div>
             </div>
 
+            {/* Dedicated Goal Deadline (Persian Date Picker) */}
+            <div className="md:col-span-3 space-y-1.5">
+              <label className="text-xs font-black text-slate-600 flex items-center gap-1.5">
+                <Calendar className="w-4 h-4 text-indigo-600" />
+                <span>{isRtl ? 'ددلاین هدف (تاریخ شمسی):' : 'Deadline (Jalali):'}</span>
+              </label>
+              <div className="p-2 bg-slate-50/70 border border-slate-200 rounded-2xl">
+                <DateTimeSelect
+                  value={newGoalDeadline}
+                  onChange={setNewGoalDeadline}
+                  showTime={false}
+                />
+              </div>
+            </div>
+
             {/* Goal Category Selection / Input */}
-            <div className="md:col-span-4 space-y-1.5">
+            <div className="md:col-span-3 space-y-1.5">
               <label className="text-xs font-black text-slate-600 block">
-                {isRtl ? 'نام دسته‌بندی اختصاصی هدف:' : 'Dedicated Category Name:'}
+                {isRtl ? 'نام دسته‌بندی اختصاصی:' : 'Category Name:'}
               </label>
               <div className="flex flex-col gap-1.5">
                 {data.categories && data.categories.length > 0 && (
@@ -885,7 +1098,7 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
                     }}
                     className="text-[11px] font-bold p-2 bg-slate-100/80 border border-slate-200 rounded-xl focus:outline-none text-slate-700 cursor-pointer"
                   >
-                    <option value="">{isRtl ? '-- انتخاب از دسته‌بندی‌های موجود --' : '-- Choose from existing categories --'}</option>
+                    <option value="">{isRtl ? '-- انتخاب دسته موجود --' : '-- Existing Category --'}</option>
                     {data.categories.map(c => (
                       <option key={c.id} value={c.id}>
                         {c.nameFa}
@@ -894,10 +1107,10 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
                   </select>
                 )}
                 <input 
-                  type="text"
+                  type="text" 
                   value={newGoalCatName}
                   onChange={(e) => setNewGoalCatName(e.target.value)}
-                  placeholder={isRtl ? 'یا تایپ نام دسته‌بندی جدید...' : 'or type a new category name...'}
+                  placeholder={isRtl ? 'یا تایپ نام دسته جدید...' : 'or new category...'}
                   className="w-full text-xs font-bold p-3 border border-slate-200 rounded-2xl focus:outline-none focus:border-indigo-500 bg-slate-50/50"
                 />
               </div>
@@ -999,7 +1212,7 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
       </div>
 
       {/* 3. GOALS LIST & EXPANDABLE ROADMAP PHASES */}
-      <div className="space-y-6">
+      <div className="flex flex-col gap-6">
         <AnimatePresence>
           {(!data.goals || data.goals.length === 0) ? (
             <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center space-y-3">
@@ -1021,10 +1234,11 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
 
               return (
                 <motion.div
-                  key={goal.goal_id}
+                  layout
+                  key={goal.goal_id || (goal as any).id}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
+                  exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.15 } }}
                   className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden"
                 >
                   {/* Card Header */}
@@ -1063,6 +1277,17 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
                             </span>
                           )}
 
+                          {goal.deadline && (() => {
+                            const dInfo = parseAndFormatJalaliDeadline(goal.deadline);
+                            const text = dInfo ? dInfo.fullDate : goal.deadline;
+                            return (
+                              <span className="text-[10px] font-black bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-1 rounded-xl flex items-center gap-1" title={dInfo?.shortDate}>
+                                <Calendar className="w-3 h-3 text-amber-600 shrink-0" />
+                                <span>{isRtl ? `ددلاین: ${text}` : `Deadline: ${dInfo ? dInfo.shortDate : goal.deadline}`}</span>
+                              </span>
+                            );
+                          })()}
+
                           <span className="text-[10px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-xl flex items-center gap-1">
                             <Award className="w-3 h-3" />
                             <span>شانس موفقیت: {goal.feasibility_score}%</span>
@@ -1083,6 +1308,14 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
                         >
                           <ArrowUpRight className="w-4 h-4" />
                           <span>انتقال یک‌جای کل فازها</span>
+                        </button>
+
+                        <button
+                          onClick={() => setEditingGoal(goal)}
+                          className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50"
+                          title={isRtl ? 'ویرایش هدف' : 'Edit goal'}
+                        >
+                          <PenSquare size={14} />
                         </button>
 
                         {confirmDeleteGoalId === goal.goal_id ? (
@@ -1142,7 +1375,7 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
                     )}
 
                     {/* PRACTICAL EXERCISES & DRILLS SECTION */}
-                    {goal.practical_exercises && goal.practical_exercises.length > 0 && (
+                    {Array.isArray(goal.practical_exercises) && goal.practical_exercises.length > 0 && (
                       <div className="bg-gradient-to-r from-indigo-900/5 via-purple-900/5 to-slate-900/5 p-4.5 rounded-2xl border border-indigo-200/80 space-y-3.5">
                         <div className="flex items-center justify-between border-b border-indigo-100 pb-2.5">
                           <div className="flex items-center gap-2">
@@ -1158,7 +1391,7 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          {goal.practical_exercises.map((pe, peIdx) => (
+                          {(Array.isArray(goal.practical_exercises) ? goal.practical_exercises : []).map((pe, peIdx) => (
                             <div 
                               key={pe.id || peIdx}
                               className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs space-y-2 flex flex-col justify-between"
@@ -1219,7 +1452,7 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
 
                     {/* Phases Grid / Accordion */}
                     <div className="space-y-4">
-                      {goal.phases && goal.phases.map((phase) => {
+                      {Array.isArray(goal.phases) && goal.phases.map((phase) => {
                         const phaseKey = `${goal.goal_id}_p_${phase.phase_number}`;
                         const isExpanded = expandedPhases[phaseKey] ?? true;
 
@@ -1282,9 +1515,9 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
                                 </p>
 
                                 {/* Week-by-Week Granular Rendering */}
-                                {phase.weeks && phase.weeks.length > 0 ? (
+                                {Array.isArray(phase.weeks) && phase.weeks.length > 0 ? (
                                   <div className="space-y-3.5 pt-1">
-                                    {phase.weeks.map((week) => (
+                                    {(Array.isArray(phase.weeks) ? phase.weeks : []).map((week) => (
                                       <div 
                                         key={week.week_number} 
                                         className="bg-slate-50/60 border border-slate-200/90 rounded-2xl p-3.5 space-y-2.5"
@@ -1328,7 +1561,7 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
 
                                         {/* Week Tasks */}
                                         <div className="space-y-2">
-                                          {week.tasks.map((task, tIdx) => (
+                                          {(Array.isArray(week.tasks) ? week.tasks : []).map((task, tIdx) => (
                                             <div 
                                               key={task.id || tIdx}
                                               className="p-3 bg-white border border-slate-200/80 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-2 text-right"
@@ -1351,11 +1584,40 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
                                               </div>
 
                                               <div className="flex items-center gap-2 self-start md:self-auto shrink-0">
-                                                {task.deadline_note && (
-                                                  <span className="text-[9px] text-slate-400 font-bold bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg">
-                                                    مهلت: {task.deadline_note}
-                                                  </span>
-                                                )}
+                                                {(() => {
+                                                  const dInfo = parseAndFormatJalaliDeadline(task.deadline);
+                                                  const overdue = getDeadlineOverdueStatus(task.deadline);
+                                                  return (
+                                                    <div className="flex flex-wrap items-center gap-1.5">
+                                                      {dInfo ? (
+                                                        <span className="text-[9px] text-amber-800 font-bold bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg flex items-center gap-1" title={dInfo.shortDate}>
+                                                          <Calendar className="w-3 h-3 text-amber-600 shrink-0" />
+                                                          <span>مهلت: {dInfo.fullDate}</span>
+                                                        </span>
+                                                      ) : task.deadline_note ? (
+                                                        <span className="text-[9px] text-slate-500 font-bold bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg flex items-center gap-1">
+                                                          <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                                                          <span>مهلت: {task.deadline_note}</span>
+                                                        </span>
+                                                      ) : task.suggested_weekday ? (
+                                                        <span className="text-[9px] text-indigo-700 font-bold bg-indigo-50 border border-indigo-200 px-2 py-1 rounded-lg flex items-center gap-1">
+                                                          <Clock className="w-3 h-3 text-indigo-500 shrink-0" />
+                                                          <span>{task.suggested_weekday}</span>
+                                                        </span>
+                                                      ) : null}
+                                                      {!task.completed && overdue.isOverdue && (
+                                                        <span className="text-[9px] text-rose-800 font-bold bg-rose-50 border border-rose-300 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                                                          ⚠️ سرسید گذشته ({toPersianDigits(overdue.daysOverdue)} روز)
+                                                        </span>
+                                                      )}
+                                                      {task.completedLate && (
+                                                        <span className="text-[9px] text-amber-800 font-bold bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                                                          ⚠️ انجام شده (دیرهنگام)
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                  );
+                                                })()}
                                                 <button
                                                   type="button"
                                                   onClick={() => handleInjectSingleTask(goal, task, phase.phase_number)}
@@ -1375,7 +1637,7 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
                                 ) : (
                                   /* Fallback for flat phase tasks */
                                   <div className="space-y-2">
-                                    {phase.tasks.map((task, idx) => (
+                                    {(Array.isArray(phase.tasks) ? phase.tasks : []).map((task, idx) => (
                                       <div 
                                         key={task.id || idx}
                                         className="p-3 bg-slate-50/50 border border-slate-200/70 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-2 text-right"
@@ -1398,11 +1660,35 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
                                         </div>
 
                                         <div className="flex items-center gap-2 self-start md:self-auto shrink-0">
-                                          {task.deadline_note && (
-                                            <span className="text-[9px] text-slate-400 font-bold bg-white border border-slate-200 px-2 py-1 rounded-lg">
-                                              مهلت: {task.deadline_note}
-                                            </span>
-                                          )}
+                                          {(() => {
+                                            const dInfo = parseAndFormatJalaliDeadline(task.deadline);
+                                            const overdue = getDeadlineOverdueStatus(task.deadline);
+                                            return (
+                                              <div className="flex flex-wrap items-center gap-1.5">
+                                                {dInfo ? (
+                                                  <span className="text-[9px] text-amber-800 font-bold bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg flex items-center gap-1" title={dInfo.shortDate}>
+                                                    <Calendar className="w-3 h-3 text-amber-600 shrink-0" />
+                                                    <span>مهلت: {dInfo.fullDate}</span>
+                                                  </span>
+                                                ) : task.deadline_note ? (
+                                                  <span className="text-[9px] text-slate-500 font-bold bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg flex items-center gap-1">
+                                                    <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                                                    <span>مهلت: {task.deadline_note}</span>
+                                                  </span>
+                                                ) : null}
+                                                {!task.completed && overdue.isOverdue && (
+                                                  <span className="text-[9px] text-rose-800 font-bold bg-rose-50 border border-rose-300 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                                                    ⚠️ سرسید گذشته ({toPersianDigits(overdue.daysOverdue)} روز)
+                                                  </span>
+                                                )}
+                                                {task.completedLate && (
+                                                  <span className="text-[9px] text-amber-800 font-bold bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                                                    ⚠️ انجام شده (دیرهنگام)
+                                                  </span>
+                                                )}
+                                              </div>
+                                            );
+                                          })()}
                                           <button
                                             type="button"
                                             onClick={() => handleInjectSingleTask(goal, task, phase.phase_number)}
@@ -1431,7 +1717,14 @@ export default function GoalsTab({ data, onUpdateData, showToast, lang = 'fa' }:
           )}
         </AnimatePresence>
       </div>
-
+      <GoalEditorModal
+        goal={editingGoal}
+        open={editingGoal !== null}
+        categories={data.categories || []}
+        lang={isRtl ? 'fa' : 'en'}
+        onClose={() => setEditingGoal(null)}
+        onSave={handleSaveGoalEdits}
+      />
     </div>
   );
 }

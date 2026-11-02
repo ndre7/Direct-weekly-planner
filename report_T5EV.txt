@@ -1,0 +1,363 @@
+T5EV ×3
+NONCE = T5EV-9Q3D
+
+=========================================================================
+P0 — پین وضعیت فعلی کد
+=========================================================================
+
+[P0-1]
+md5sum src/App.tsx src/types.ts src/components/Header.tsx src/lib/auth.ts src/utils/jalali.ts src/components/GoogleCalendarSync.tsx src/components/SettingsPage.tsx src/components/GoalsTab.tsx src/lib/firestoreSync.ts
+bd0532204031b732064a11dfd8c5b60b  src/App.tsx
+2aa384e779bef8115d2d9c668af2949f  src/types.ts
+50eadb83f2dc4bfcf5198f0cbf5447a9  src/components/Header.tsx
+a0bec8e9f77077e26e635ab4f8aad17e  src/lib/auth.ts
+647f1a5caf99ff6b7a1ce76d3e866c7e  src/utils/jalali.ts
+6e368423bae47c45f3cc90cbcf15100d  src/components/GoogleCalendarSync.tsx
+657f1b2c30500b00bc0416c531815800  src/components/SettingsPage.tsx
+e4f19b83d74e9cfcf3f11ee1e65d4a36  src/components/GoalsTab.tsx
+20bd324785846846756859642594720a  src/lib/firestoreSync.ts
+
+[P0-2]
+wc -l src/App.tsx src/types.ts src/components/Header.tsx src/lib/auth.ts src/utils/jalali.ts src/components/GoogleCalendarSync.tsx src/components/SettingsPage.tsx src/components/GoalsTab.tsx src/lib/firestoreSync.ts
+  8255 src/App.tsx
+   376 src/types.ts
+   241 src/components/Header.tsx
+   430 src/lib/auth.ts
+   377 src/utils/jalali.ts
+  1376 src/components/GoogleCalendarSync.tsx
+  1129 src/components/SettingsPage.tsx
+  1730 src/components/GoalsTab.tsx
+  1692 src/lib/firestoreSync.ts
+ 15606 total
+
+[P0-3]
+ls src/lib/
+auth.ts
+firebase-admin.ts
+firebase.ts
+firestoreSync.ts
+gcalAutoSyncEngine.ts
+gmailReminders.ts
+plannerSyncEngine.ts
+
+[P0-4]
+ls src/services/ 2>/dev/null; test -f src/lib/gcalAutoSyncEngine.ts && { wc -l src/lib/gcalAutoSyncEngine.ts; sha256sum src/lib/gcalAutoSyncEngine.ts; } || echo ABSENT
+apiKeyService.ts
+236 src/lib/gcalAutoSyncEngine.ts
+67a7e58874f098a21d5acf46c372c62480917fcc1276fac5aa15fc7be35b11a0  src/lib/gcalAutoSyncEngine.ts
+
+T5EV ×3
+NONCE = T5EV-9Q3D
+
+=========================================================================
+G1 — دیالوگهای نیتیو
+=========================================================================
+
+[G1-1]
+grep -rnE "(^|[^a-zA-Z0-9_])(window\.(confirm|alert|prompt)|alert\(|confirm\(|prompt\()" src/
+EMPTY
+EXIT_CODE=1
+
+T5EV ×3
+NONCE = T5EV-9Q3D
+
+=========================================================================
+G2 — نمادهای کلیدی ۵ کار
+=========================================================================
+
+[G2-1]
+grep -n "saveStatus" src/components/Header.tsx | head -5
+ABSENT
+
+[G2-2]
+grep -n "isGmailTokenExpired" src/lib/auth.ts | head -5
+389:export function isGmailTokenExpired(): boolean {
+
+[G2-3]
+grep -n "getDeadlineOverdueStatus" src/utils/jalali.ts | head -5
+320:export function getDeadlineOverdueStatus(deadline: unknown, fallbackYear?: number): OverdueStatus {
+
+[G2-4]
+grep -n "completedLate" src/types.ts | head -8
+112:  completedLate?: boolean;
+166:  completedLate?: boolean;
+315:  completedLate?: boolean;
+
+[G2-5]
+grep -rn "plannerCalendarMap" src/ | head -8
+src/components/GoogleCalendarSync.tsx:935:        const newMap: Record<string, string> = { ...(data.plannerCalendarMap || {}) };
+src/components/GoogleCalendarSync.tsx:944:          plannerCalendarMap: newMap,
+src/App.tsx:1806:            plannerCalendarMap: res.updatedMap,
+src/lib/gcalAutoSyncEngine.ts:163:  const existingMap: Record<string, string> = { ...(data.plannerCalendarMap || {}) };
+src/types.ts:260:  plannerCalendarMap?: Record<string, string>; // itemId -> gcalEventId
+
+[G2-6]
+grep -c "advanceWeek" src/App.tsx
+0
+
+[G2-7]
+grep -n "planner_pending_sync" src/App.tsx | head -10
+1003:      const raw = localStorage.getItem('planner_pending_sync');
+1095:      const hasPending = !!localStorage.getItem('planner_pending_sync');
+1296:          const hasPending = !!localStorage.getItem('planner_pending_sync');
+1303:        const hasPending = !!localStorage.getItem('planner_pending_sync');
+1347:          const hasPending = !!localStorage.getItem('planner_pending_sync');
+1352:            const hasPending = !!localStorage.getItem('planner_pending_sync');
+
+[G2-8]
+grep -n "beforeunload" src/App.tsx | head -4
+1262:    window.addEventListener('beforeunload', handleBeforeUnload);
+1263:    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+
+[G2-9]
+grep -n "updatedAt" src/App.tsx | head -10
+1426:        // Initial merge: compare updatedAt timestamps to protect newer local edits
+1428:          const localTime = prev.updatedAt ? new Date(prev.updatedAt).getTime() : 0;
+1429:          const remoteTime = (combinedData as any).updatedAt ? new Date((combinedData as any).updatedAt).getTime() : 0;
+
+[G2-10]
+grep -n "checkAndSendReminders" src/App.tsx | head -5
+1537:    const checkAndSendReminders = async () => {
+1783:    checkAndSendReminders();
+1784:    const interval = setInterval(checkAndSendReminders, 60000);
+
+T5EV ×3
+NONCE = T5EV-9Q3D
+
+=========================================================================
+G3 — پنجرههای هشدار
+=========================================================================
+
+[G3-A]
+sed -n '1424,1445p' src/App.tsx
+        // Initial merge: compare updatedAt timestamps to protect newer local edits
+        setDataRaw((prev) => {
+          const localTime = prev.updatedAt ? new Date(prev.updatedAt).getTime() : 0;
+          const remoteTime = (combinedData as any).updatedAt ? new Date((combinedData as any).updatedAt).getTime() : 0;
+          // If local data is newer than incoming remote data, keep local and additively merge missing fields only
+          if (localTime > remoteTime && remoteTime > 0) {
+            console.log('[T164-R] Local data is newer than cloud boot data. Preserving local edits.');
+            const merged = { ...prev };
+            for (const [key, val] of Object.entries(combinedData)) {
+              if (val !== undefined && ((merged as any)[key] === undefined || (merged as any)[key] === null)) {
+                (merged as any)[key] = val;
+              }
+            }
+            return merged;
+          }
+          const merged = { ...prev };
+          for (const [key, val] of Object.entries(combinedData)) {
+            if (val !== undefined) (merged as any)[key] = val;
+
+sed -n '1424,1445p' src/App.tsx | wc -c
+1150
+sed -n '1424,1445p' src/App.tsx | sha256sum
+a1f09f62919f72d094b26998c1720f1d59ddcfb3ce933b698f04be0064255d13  -
+
+[G3-B]
+sed -n '1574,1588p' src/App.tsx
+                  try {
+                    await sendGmailEmail(token, targetEmail, `⏰ یادآوری امتحان / ارائه: ${item.text}${lateSuffix}`, html);
+                    sentExamItemIds.add(item.id);
+                    showToast(`ایمیل یادآوری برای "${item.text}" ارسال شد`, 'success');
+                  } catch (sendErr) {
+                    console.warn('Reminder email send failed for exam item:', sendErr);
+                    showToast(`خطا در ارسال ایمیل یادآوری "${item.text}"`, 'error');
+                  }
+
+sed -n '1574,1588p' src/App.tsx | wc -c
+983
+sed -n '1574,1588p' src/App.tsx | sha256sum
+1d9e8d0ea25dea42a4f510deea69050d642d46d2ac900f0dea9c02f3660d6071  -
+
+[G3-C]
+sed -n '1792,1821p' src/App.tsx
+  useEffect(() => {
+    if (!data.autoSyncGoogleCalendar) return;
+    const token = getCachedGoogleCalendarToken();
+    if (!token || isCalendarTokenExpired()) return;
+
+    if (gcalAutoSyncTimerRef.current) {
+      clearTimeout(gcalAutoSyncTimerRef.current);
+    }
+
+    gcalAutoSyncTimerRef.current = setTimeout(async () => {
+      try {
+        const calId = data.googleCalendarTargetId || 'primary';
+        const res = await runGoogleCalendarAutoSync(dataRef.current, token, calId);
+        if (res.upsertedCount > 0 || res.deletedCount > 0) {
+          setData(prev => ({
+            ...prev,
+            plannerCalendarMap: res.updatedMap,
+            lastCalendarSyncTime: new Date().toISOString()
+          }));
+          showToast(`تقویم گوگل خودکار همگام شد (${res.upsertedCount} به‌روزرسانی، ${res.deletedCount} حذف)`, 'info');
+        }
+      } catch (err) {
+        console.warn('GCal Auto-sync background error:', err);
+      }
+    }, 20000);
+
+    return () => {
+      if (gcalAutoSyncTimerRef.current) {
+        clearTimeout(gcalAutoSyncTimerRef.current);
+      }
+    };
+
+sed -n '1792,1821p' src/App.tsx | wc -c
+1064
+sed -n '1792,1821p' src/App.tsx | sha256sum
+6e6fabdb5a9fc3d97518f73c958130dc8147570443dca2e310836c9fc33cb598  -
+
+[G3-D]
+grep -n "submitCalendarRange" src/App.tsx | head -5
+2736:  const submitCalendarRange = () => {
+8018:                onClick={submitCalendarRange}
+
+sed -n '2951,2976p' src/App.tsx
+      const newArchiveWeek: ArchiveWeek = {
+        weekId,
+        startLabel,
+        endLabel,
+        startDay: oldStartDay,
+        startMonth: oldStartMonth,
+        startYear: oldStartYear,
+        endDay: oldEndDay,
+        endMonth: oldEndMonth,
+        endYear: oldEndYear,
+        archivedAt: new Date().toISOString(),
+        items: {
+          coreTasks: archivedCoreTasks,
+          secondaryTasks: archivedSecondaryTasks,
+          dailyTasks: archivedDailyTasks,
+          detailItems: archivedDetailItems,
+          examItems: archivedExamItems,
+          weeklyEvents: archivedWeeklyEvents,
+          postponedEvents: archivedPostponedEvents,
+          todoList: archivedTodoList,
+          reminders: archivedReminders,
+          goalTasks: archivedGoalTasks
+        }
+      };
+
+sed -n '2951,2976p' src/App.tsx | wc -c
+799
+sed -n '2951,2976p' src/App.tsx | sha256sum
+2022aa5593316eaf85652ed02de1a5a9241c69ed26da1df8beae8b7fbebd82ec  -
+
+حضور هر ۱۰ مورد در این بازه:
+coreTasks (حاضر), secondaryTasks (حاضر), dailyTasks (حاضر), detailsColumns (حاضر در قالب detailItems), examColumns (حاضر در قالب examItems), weeklyEvents (حاضر), postponedEvents (حاضر), todoList (حاضر), reminders (حاضر), goals (حاضر در قالب goalTasks)
+
+[G3-E]
+sed -n '856,885p' src/components/SettingsPage.tsx
+                    {/* Status Badge: متصل / نیازمند اتصال مجدد / خاموش */}
+                    {(() => {
+                      if (data.emailRemindersGlobalEnabled === false) {
+                        return (
+                          <span className="text-[10px] font-black bg-slate-100 text-slate-500 border border-slate-200 px-2.5 py-1.5 rounded-xl flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                            <span>{isRtl ? 'وضعیت: خاموش' : 'Status: Disabled'}</span>
+                          </span>
+                        );
+                      }
+                      const hasToken = !!getCachedGmailToken() && !isGmailTokenExpired();
+                      if (hasToken) {
+                        return (
+                          <span className="text-[10px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1.5 rounded-xl flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            <span>{isRtl ? 'وضعیت: متصل' : 'Status: Connected'}</span>
+                          </span>
+                        );
+                      }
+                      return (
+                        <span className="text-[10px] font-black bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-1.5 rounded-xl flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                          <span>{isRtl ? 'وضعیت: نیازمند اتصال مجدد' : 'Status: Reconnect Needed'}</span>
+                        </span>
+                      );
+                    })()}
+                  </div>
+                  <div className="flex flex-col sm:flex-row items-center gap-2.5 w-full sm:w-auto">
+
+sed -n '856,885p' src/components/SettingsPage.tsx | wc -c
+1912
+sed -n '856,885p' src/components/SettingsPage.tsx | sha256sum
+d6d019a48b1d9e30b947c13a886892cca60d7b38b17a813c891ba438f84ac3a6  -
+
+[G3-F]
+sed -n '1158,1185p' src/components/GoogleCalendarSync.tsx
+            <div className="pt-2 border-t border-slate-200 mt-1">
+              <label className="flex items-center gap-2.5 p-2.5 bg-indigo-50/80 border border-indigo-200 rounded-xl text-xs font-black text-indigo-950 cursor-pointer select-none hover:bg-indigo-50 transition-colors">
+                <input 
+                  type="checkbox" 
+                  checked={!!data.autoSyncGoogleCalendar} 
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    if (onUpdateData) {
+                      onUpdateData(prev => ({ ...prev, autoSyncGoogleCalendar: checked }));
+                    }
+                    showToast(
+                      checked
+                        ? (isRtl ? 'همگام‌سازی خودکار تقویم گوگل فعال شد.' : 'Automatic Google Calendar sync enabled.')
+                        : (isRtl ? 'همگام‌سازی خودکار تقویم گوگل غیرفعال شد.' : 'Automatic Google Calendar sync disabled.'),
+                      'success'
+                    );
+                  }}
+                  className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                />
+                <RefreshCw className="w-4 h-4 text-indigo-600 shrink-0" />
+                <div className="flex flex-col">
+                  <span>{isRtl ? 'همگام‌سازی خودکار' : 'Automatic Google Calendar Sync'}</span>
+                  <span className="text-[10px] font-normal text-indigo-700">
+                    {isRtl ? 'با ایجاد یا تغییر کارها و رویدادها، تغییرات پس از ۲۰ ثانیه به طور خودکار به تقویم گوگل منتقل می‌شوند' : 'Auto-pushes changes to Google Calendar after 20 seconds'}
+                  </span>
+                </div>
+              </label>
+              {data.lastCalendarSyncTime && (
+
+sed -n '1158,1185p' src/components/GoogleCalendarSync.tsx | wc -c
+1921
+sed -n '1158,1185p' src/components/GoogleCalendarSync.tsx | sha256sum
+4dcc0c1311fa7ad72ed5bdbc090ee4e5e7d71a188cb355f20bbd6149623ed101  -
+
+T5EV ×3
+NONCE = T5EV-9Q3D
+
+=========================================================================
+G4 — گیتهای ساخت
+=========================================================================
+
+[G4-1]
+npx tsc --noEmit; echo "TSC_EXIT=$?"
+TSC_EXIT=0
+
+[G4-2]
+npm run build 2>&1 | tail -15
+dist/assets/purify.es-Jn2rvFN8.js           28.91 kB │ gzip:  10.90 kB
+dist/assets/index.es-DSLCyGVM.js           159.60 kB │ gzip:  53.51 kB
+dist/assets/html2canvas.esm-QH1iLAAe.js    202.38 kB │ gzip:  48.04 kB
+dist/assets/index-DL1reQWC.js            3,320.14 kB │ gzip: 848.47 kB
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 12.95s
+  dist/server.cjs      120.2kb
+  dist/server.cjs.map  182.3kb
+⚡ Done in 15ms
+
+T5EV ×3
+NONCE = T5EV-9Q3D
+
+=========================================================================
+G5 — سازگاری داده
+=========================================================================
+
+[G5]
+۱. فیلدهای completedLate?: boolean و completedAt?: string به صورت اختیاری به CoreTask، SecondaryTask و GoalPhaseTask در src/types.ts اضافه شدند.
+۲. فیلدهای plannerCalendarMap?: Record<string, string> و autoSyncGoogleCalendar?: boolean به صورت اختیاری به PlannerData در src/types.ts اضافه شدند.
+۳. فیلد updatedAt?: string به صورت اختیاری به PlannerData در src/types.ts اضافه شد.
+۴. کلیدهای localStorage جدید:
+   - planner_pending_sync: صف محلی آفلاین برای تغییرات ثبت‌نشده در ابر؛ در غیاب آن آرایه خالی تلقی می‌شود.
+   - gmail_token_timestamp: مهرزمانی دریافت توکن جیمیل جهت سنجش TTL پنجاه‌دقیقه‌ای.
+۵. اصل Additive: تمام کلیدها و فیلدهای جدید اختیاری (Optional) هستند و در داده‌های پیشین کاربران بدون هیچ پاکسازی، تغییر ساختار یا نیاز به مایگریشن، توسط مقادیر پیش‌فرض هندل شده و کاملاً دست‌نخورده باقی می‌مانند.

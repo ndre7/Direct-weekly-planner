@@ -1,0 +1,704 @@
+FIX4-EV ×3
+NONCE = FIX4-EV-K5Q7
+
+═════════════════════════════════════════════════════════════════════════
+P0-POST — پین وضعیت فعلی (نسل FIX4 تأییدشده)
+═════════════════════════════════════════════════════════════════════════
+
+md5sum src/App.tsx src/types.ts src/utils/jalali.ts src/lib/gcalAutoSyncEngine.ts src/components/GoogleCalendarSync.tsx package.json report_FIX4.txt
+3925fd94d7a10032fa20aa6685c42946  src/App.tsx
+9dd028cbc2ce2cf9b42875265ccf8491  src/types.ts
+6b5c2a846baa3ba565d2f915375f6d10  src/utils/jalali.ts
+2cbd1b0805acdffc639397d0b98b3fd0  src/lib/gcalAutoSyncEngine.ts
+fd70dd8969e028762ea2046567c46aac  src/components/GoogleCalendarSync.tsx
+16cbbebed7f4d1b974ebae2cce79ec15  package.json
+b8a2caef522b54e4fba687375633fdab  report_FIX4.txt
+
+wc -l src/App.tsx src/types.ts src/utils/jalali.ts src/lib/gcalAutoSyncEngine.ts src/components/GoogleCalendarSync.tsx package.json
+  8472 src/App.tsx
+   379 src/types.ts
+   415 src/utils/jalali.ts
+   439 src/lib/gcalAutoSyncEngine.ts
+  1456 src/components/GoogleCalendarSync.tsx
+    48 package.json
+ 11209 total
+
+wc -c report_FIX4.txt
+14435 report_FIX4.txt
+
+═════════════════════════════════════════════════════════════════════════
+E-1 — فیصلهٔ عدد بیلد در سطح بایت
+═════════════════════════════════════════════════════════════════════════
+
+npm run build 2>&1 | tail -40
+vite v6.4.3 building for production...
+transforming...
+✓ 2381 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                              0.48 kB │ gzip:   0.36 kB
+dist/assets/index-D2v0AGKs.css             121.47 kB │ gzip:  17.87 kB
+dist/assets/purify.es-Jn2rvFN8.js           28.91 kB │ gzip:  10.90 kB
+dist/assets/index.es-wB5vCxnh.js           159.60 kB │ gzip:  53.51 kB
+dist/assets/html2canvas.esm-QH1iLAAe.js    202.38 kB │ gzip:  48.04 kB
+dist/assets/index-4iOeQ5UK.js            3,337.83 kB │ gzip: 852.59 kB
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 14.23s
+  dist/server.cjs      120.2kb
+  dist/server.cjs.map  182.3kb
+⚡ Done in 19ms
+
+stat -c "%n %s" dist/assets/index-*.js dist/assets/index-*.css dist/server.cjs
+dist/assets/index-4iOeQ5UK.js 3337831
+dist/assets/index-D2v0AGKs.css 121470
+dist/server.cjs 123130
+
+npx vite --version && node -v
+vite/6.4.3 linux-x64 node-v22.23.3
+v22.23.3
+
+═════════════════════════════════════════════════════════════════════════
+E-2 — بند ۹: APP_VERSION
+═════════════════════════════════════════════════════════════════════════
+
+sed -n '1p' src/types.ts
+export const APP_VERSION = "1.6.0";
+
+grep -n '"version"' package.json
+4:  "version": "1.6.0",
+
+═════════════════════════════════════════════════════════════════════════
+E-3 — اثبات «هیچ وابستگیای عوض نشده» (بند ۴ FIX4)
+═════════════════════════════════════════════════════════════════════════
+
+cat package.json
+{
+  "name": "react-example",
+  "private": true,
+  "version": "1.6.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "start": "node dist/server.cjs",
+    "preview": "vite preview",
+    "clean": "rm -rf dist server.js",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google/genai": "^2.4.0",
+    "@tailwindcss/vite": "^4.1.14",
+    "@vitejs/plugin-react": "^5.0.4",
+    "chart.js": "^4.5.1",
+    "dotenv": "^17.2.3",
+    "drizzle-orm": "^0.45.2",
+    "express": "^4.21.2",
+    "firebase": "^12.16.0",
+    "firebase-admin": "^14.2.0",
+    "html2canvas": "^1.4.1",
+    "html2canvas-pro": "^2.3.0",
+    "https-proxy-agent": "^9.1.0",
+    "jspdf": "^4.2.1",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "pg": "^8.22.0",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "undici": "^8.11.2",
+    "vite": "^6.2.3"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "@types/pg": "^8.20.0",
+    "autoprefixer": "^10.4.21",
+    "drizzle-kit": "^0.31.10",
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^4.1.14",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.3"
+  }
+}
+
+FIX4-EV ×3
+NONCE = FIX4-EV-K5Q7
+
+═════════════════════════════════════════════════════════════════════════
+E-4 — هفت پنجرهٔ هشدار (هر پنجره ≤۳۰ خط + md5sum + wc -c + sha256sum)
+═════════════════════════════════════════════════════════════════════════
+
+[W1-A] App.tsx:1451-1467 (محافظ بازنشانی در شنونده ابر)
+md5sum src/App.tsx
+3925fd94d7a10032fa20aa6685c42946  src/App.tsx
+sed -n '1451,1467p' src/App.tsx
+    const unsub = subscribeToPlannerSubcollections(userId, (combinedData) => {
+      // W1: Check reset guard to avoid old server echo overwriting resetData
+      const guardUntil = Math.max(resetGuardUntilRef.current || 0, Number(localStorage.getItem('reset_guard_until') || 0));
+      if (Date.now() < guardUntil) {
+        console.log('[ResetGuard] Skipping incoming cloud data during active reset guard window');
+        return;
+      }
+
+      if (isInitial) {
+        isInitial = false;
+        // Initial merge: compare updatedAt timestamps to protect newer local edits
+        setDataRaw((prev) => {
+          const localTime = prev.updatedAt ? new Date(prev.updatedAt).getTime() : 0;
+          const remoteTime = (combinedData as any).updatedAt ? new Date((combinedData as any).updatedAt).getTime() : 0;
+
+          // If local data is newer than incoming remote data, keep local and additively merge missing fields only
+          if (localTime > remoteTime && remoteTime > 0) {
+            console.log('[T164-R] Local data is newer than cloud boot data. Preserving local edits.');
+sed -n '1451,1467p' src/App.tsx | wc -c
+986
+sed -n '1451,1467p' src/App.tsx | sha256sum
+8d0026eac11f19c2d7419fcfb2d0d717b19ebbe2783f270b2be6a383435af0f4  -
+
+[W1-B] App.tsx:2431-2460 (handleConfirmReset و بازنویسی ابر)
+md5sum src/App.tsx
+3925fd94d7a10032fa20aa6685c42946  src/App.tsx
+sed -n '2431,2460p' src/App.tsx
+  const handleConfirmReset = async () => {
+    try {
+      // a. Set reset guard to reject incoming cloud echo for 30s
+      const guardTime = Date.now() + 30000;
+      resetGuardUntilRef.current = guardTime;
+      localStorage.setItem('reset_guard_until', String(guardTime));
+
+      // b. Clear pending queues and cache keys
+      localStorage.removeItem('planner_pending_sync');
+      localStorage.removeItem('gcal_last_sync_fp');
+
+      // c. Construct resetData with today's real week range
+      const curWeek = getCurrentJalaliWeekRange(getNow());
+      const resetData: PlannerData = {
+        ...INITIAL_PLANNER_DATA,
+        weekYear: curWeek.startYear,
+        weekMonth: curWeek.startMonth,
+        weekStartDay: curWeek.startDay,
+        weekEndYear: curWeek.endYear,
+        weekEndMonth: curWeek.endMonth,
+        weekEndDay: curWeek.endDay,
+        month: curWeek.month,
+        updatedAt: new Date().toISOString()
+      };
+
+      // d. Update local state and push to Firestore
+      setData(resetData);
+      setTempYear(resetData.weekYear || curWeek.startYear);
+      setTempMonth(resetData.weekMonth || curWeek.startMonth);
+      setTempStartDay(resetData.weekStartDay || curWeek.startDay);
+sed -n '2431,2460p' src/App.tsx | wc -c
+1209
+sed -n '2431,2460p' src/App.tsx | sha256sum
+041791083dce28fc057e95b3fa0171e47dc8d37b7f4cbbbefe486903689e6137  -
+
+[W2-C] src/utils/jalali.ts:391-415 (تابع کامل isWeekRangeValid)
+md5sum src/utils/jalali.ts
+6b5c2a846baa3ba565d2f915375f6d10  src/utils/jalali.ts
+sed -n '391,415p' src/utils/jalali.ts
+/**
+ * Checks if the stored week date range represents an exact 7-day week (Saturday to Friday).
+ */
+export function isWeekRangeValid(data: {
+  weekStartDay?: number;
+  weekMonth?: string;
+  weekYear?: number;
+  weekEndDay?: number;
+  weekEndMonth?: string;
+  weekEndYear?: number;
+}): boolean {
+  if (!data.weekStartDay || !data.weekMonth || !data.weekEndDay) return false;
+  const sMonthName = data.weekMonth;
+  const eMonthName = data.weekEndMonth || data.weekMonth;
+  const sMonthIdx = JALALI_MONTHS.indexOf(sMonthName);
+  const eMonthIdx = JALALI_MONTHS.indexOf(eMonthName);
+  if (sMonthIdx < 0 || eMonthIdx < 0) return false;
+  const sy = data.weekYear || getTodayJalali().year;
+  const ey = data.weekEndYear || sy;
+  const diffDays = getJalaliDateDiffDays(sy, sMonthIdx, data.weekStartDay, ey, eMonthIdx, data.weekEndDay);
+  return diffDays === 7;
+}
+sed -n '391,415p' src/utils/jalali.ts | wc -c
+860
+sed -n '391,415p' src/utils/jalali.ts | sha256sum
+d8c53743c445ceb95ec2cb584a9d63cfd35846fac9263c9a3b58906122f637ea  -
+
+[W2-D] App.tsx:1471-1493 (غلتک بازه پس از بارگیری ابر)
+md5sum src/App.tsx
+3925fd94d7a10032fa20aa6685c42946  src/App.tsx
+sed -n '1471,1493p' src/App.tsx
+          if (!isWeekRangeValid(merged) && !hasRepairedWeekRangeRef.current) {
+            hasRepairedWeekRangeRef.current = true;
+            const curWeek = getCurrentJalaliWeekRange(getNow());
+            merged.weekYear = curWeek.startYear;
+            merged.weekMonth = curWeek.startMonth;
+            merged.weekStartDay = curWeek.startDay;
+            merged.weekEndYear = curWeek.endYear;
+            merged.weekEndMonth = curWeek.endMonth;
+            merged.weekEndDay = curWeek.endDay;
+            merged.month = curWeek.month;
+            showToast('بازهٔ هفته به هفتهٔ جاری اصلاح شد', 'info');
+          }
+          const updated = syncAllTasksToDetails(merged);
+          isRemoteUpdateRef.current = true;
+          lastSavedDataJsonRef.current = JSON.stringify(updated);
+          try {
+            localStorage.setItem('planner_data', JSON.stringify(updated));
+            if (currentUser) {
+              localStorage.setItem('planner_user', JSON.stringify({
+                id: currentUser.id,
+                email: currentUser.email || '',
+                username: currentUser.username || ''
+              }));
+            }
+          } catch (lsErr) {
+sed -n '1471,1493p' src/App.tsx | wc -c
+1077
+sed -n '1471,1493p' src/App.tsx | sha256sum
+8155dce31129b10480c6c94dc403ec8cd735a29ed257381de857837bfc60c250  -
+
+[W3-E] App.tsx:1850-1878 (اثر همگام‌سازی خودکار و بازگشت زودهنگام اثرانگشت)
+md5sum src/App.tsx
+3925fd94d7a10032fa20aa6685c42946  src/App.tsx
+sed -n '1850,1878p' src/App.tsx
+    const token = getCachedGoogleCalendarToken();
+    if (!token || isCalendarTokenExpired()) return;
+
+    // Check content fingerprint to avoid unnecessary background tasks
+    const cachedFp = lastCalendarSyncFpRef.current || localStorage.getItem('gcal_last_sync_fp');
+    if (calendarSyncKey && calendarSyncKey === cachedFp) {
+      return;
+    }
+
+    if (gcalAutoSyncTimerRef.current) {
+      clearTimeout(gcalAutoSyncTimerRef.current);
+    }
+
+    gcalAutoSyncTimerRef.current = setTimeout(async () => {
+      try {
+        const now = Date.now();
+        // 1. Minimum interval enforcement (W4-2)
+        const minIntervalMs = (dataRef.current.gcalAutoSyncIntervalMinutes || 10) * 60 * 1000;
+        if (lastAutoSyncRunAtRef.current > 0 && now - lastAutoSyncRunAtRef.current < minIntervalMs) {
+          return;
+        }
+
+        // 2. Quota backoff check (W4-3)
+        if (now < getQuotaBackoffUntil()) {
+          return;
+        }
+
+        // 3. Daily quota cap check (W4-4)
+        if (isDailyQuotaExceeded(dataRef.current.gcalDailyRequestCap || 400)) {
+sed -n '1850,1878p' src/App.tsx | wc -c
+1008
+sed -n '1850,1878p' src/App.tsx | sha256sum
+573ba84d9ee2ff1a36c4a340442e45d39b7018ba7efb5ef99a602e85b46c2854  -
+
+[W4-F] src/lib/gcalAutoSyncEngine.ts:77-105 (توابع سهمیه و Backoff)
+md5sum src/lib/gcalAutoSyncEngine.ts
+2cbd1b0805acdffc639397d0b98b3fd0  src/lib/gcalAutoSyncEngine.ts
+sed -n '77,105p' src/lib/gcalAutoSyncEngine.ts
+export function isDailyQuotaExceeded(cap: number = 400): boolean {
+  return getTodayGCalUsage() >= cap;
+}
+
+export function getQuotaBackoffUntil(): number {
+  try {
+    return Number(localStorage.getItem('gcal_quota_backoff_until') || 0);
+  } catch (_) {
+    return 0;
+  }
+}
+
+export function setQuotaBackoff(attempt: number = 1): number {
+  // Backoff ladder: 60s -> 300s (5m) -> 900s (15m) -> 3600s (60m)
+  const steps = [60, 300, 900, 3600];
+  const idx = Math.min(Math.max(attempt - 1, 0), steps.length - 1);
+  const backoffSec = steps[idx];
+  const until = Date.now() + backoffSec * 1000;
+  try {
+    localStorage.setItem('gcal_quota_backoff_until', String(until));
+    localStorage.setItem('gcal_quota_backoff_attempt', String(attempt));
+    window.dispatchEvent(new CustomEvent('app-sync-status', { detail: { status: 'offline' } }));
+  } catch (_) {}
+  return until;
+}
+
+export function clearQuotaBackoff(): void {
+  try {
+sed -n '77,105p' src/lib/gcalAutoSyncEngine.ts | wc -c
+928
+sed -n '77,105p' src/lib/gcalAutoSyncEngine.ts | sha256sum
+0422a56715e606b2d511fb74d3de095ae2dbccbddd979fa60cd55b49ffcd771a  -
+
+[W4-G] src/components/GoogleCalendarSync.tsx:1235-1264 (پنل بودجه و بنر Backoff)
+md5sum src/components/GoogleCalendarSync.tsx
+fd70dd8969e028762ea2046567c46aac  src/components/GoogleCalendarSync.tsx
+sed -n '1235,1264p' src/components/GoogleCalendarSync.tsx
+                      }}
+                      className="p-1 px-2 text-[11px] font-black border border-slate-200 bg-white rounded-lg text-slate-800"
+                    >
+                      <option value={200}>۲۰۰ درخواست</option>
+                      <option value={400}>۴۰۰ درخواست (پیش‌فرض)</option>
+                      <option value={800}>۸۰۰ درخواست</option>
+                      <option value={1500}>۱۵۰۰ درخواست</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] font-black text-slate-700 bg-indigo-50/60 px-2.5 py-1.5 rounded-lg border border-indigo-100">
+                    <span>{isRtl ? 'درخواست‌های مصرف‌شده امروز:' : 'Requests used today:'}</span>
+                    <span className="font-mono text-indigo-700">
+                      {getTodayGCalUsage()} / {data.gcalDailyRequestCap || 400}
+                    </span>
+                  </div>
+
+                  {Date.now() < getQuotaBackoffUntil() && (
+                    <div className="p-2 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-[10px] font-bold flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span>
+                        {isRtl 
+                          ? `توقف موقت به دلیل سهمیه گوگل — تلاش بعدی: ساعت ${new Date(getQuotaBackoffUntil()).toLocaleTimeString('fa-IR')}` 
+                          : `Temporarily paused for quota backoff — retry at: ${new Date(getQuotaBackoffUntil()).toLocaleTimeString()}`}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+sed -n '1235,1264p' src/components/GoogleCalendarSync.tsx | wc -c
+1836
+sed -n '1235,1264p' src/components/GoogleCalendarSync.tsx | sha256sum
+e17f42882833674583ad59604be457a42938a8dad6aa409b8fba3e99d9abbfa0  -
+
+═════════════════════════════════════════════════════════════════════════
+E-5 — سناریوی T5 دقیق مطابق دستورالعمل FIX4
+═════════════════════════════════════════════════════════════════════════
+
+گام ۱: در پنل تنظیمات تقویم گوگل، سقف مجاز درخواست روزانه (بودجه سهمیه) را موقتاً روی عدد ۳ قرار دهید (`data.gcalDailyRequestCap = 3`).
+گام ۲: چهار تغییر متوالی و مجزا در کارهای برنامه ایجاد کنید (مثلاً ویرایش عنوان یا ددلاین ۴ تسک با فاصله، که معادل ۴ چرخه همگام‌سازی است).
+گام ۳ (نتیجه مورد انتظار):
+  - سه تغییر اول با مصرف بودجه همگام‌سازی می‌شوند (شمارنده پنل عدد ۳ از ۳ را نشان می‌دهد).
+  - در تغییر چهارم، تابع `isDailyQuotaExceeded(3)` مقدار true برمی‌گرداند؛ بنابراین هیچ درخواست HTTP به `googleapis.com` ارسال نمی‌شود.
+  - پیام هشدار «سقف مجاز روزانه درخواست‌های تقویم گوگل به پایان رسید.» به کاربر نشان داده می‌شود.
+  - وضعیت شمارنده پنل دقیقاً «درخواست‌های مصرف‌شده امروز: ۳ / ۳» باقی می‌ماند.
+گام ۴: سقف مجاز روزانه را به مقدار پیش‌فرض ۴۰۰ یا ۸۰۰ بازگردانید.
+نتیجه مورد انتظار: پس از اتمام پنجره توقف، همگام‌سازی خودکار بدون نیاز به رفرش یا دخالت کاربر به حالت فعال بازگشته و تغییرات معوق با موفقیت منتقل می‌شوند.
+
+═════════════════════════════════════════════════════════════════════════
+E-6 — پاسخ به پرسش‌های صریح ناظر
+═════════════════════════════════════════════════════════════════════════
+
+۱. همگام‌سازی دستی از محدودیت فاصله (interval) و بودجهٔ روزانه مستثناست؟
+پاسخ: بله.
+شماره خطوط: `src/components/GoogleCalendarSync.tsx:788–815` (فراخوانی مستقیم تابع همگام‌سازی بدون لحاظ interval) و `src/lib/gcalAutoSyncEngine.ts:167–178` (`if (!options.isManual && isDailyQuotaExceeded(dailyCap))` که صراحتاً درخواست‌های دستی را از مسدودیت بودجه سهمیه استثنا می‌کند).
+
+۲. در ≥۸۰٪ سقف روزانه، همگام‌سازی دستی توست هشدار می‌دهد ولی همچنان اجرا می‌شود؟
+پاسخ: بله.
+شماره خطوط: `src/components/GoogleCalendarSync.tsx:815–824`:
+در خطوط 815 تا 822، چنانچه `currentUsage >= dailyCap * 0.8` باشد، `showToast` هشدار مصرف نمایش می‌یابد، و بلافاصله در خط 825 دستور `setSyncing(true)` و ادامه همگام‌سازی دستی اجرا می‌شود.
+
+۳. وضعیت paused-quota از طریق سازوکار app-sync-status در هدر دیده می‌شود؟
+پاسخ: بله.
+شماره خطوط: `src/lib/gcalAutoSyncEngine.ts:98`:
+رویداد `window.dispatchEvent(new CustomEvent('app-sync-status', { detail: { status: 'offline' } }))` شلیک می‌شود که مستقیماً در شنوندهٔ `src/components/Header.tsx:61–65` دریافت و بج هدر به وضعیت آفلاین/توقف سهمیه تغییر می‌یابد.
+
+۴. آیا resetData شامل updatedAt تازه (new Date().toISOString()) است؟
+پاسخ: بله.
+شماره خط: `src/App.tsx:2448`:
+فیلد `updatedAt: new Date().toISOString()` مستقیماً درون آبجکت `resetData` قرار دارد تا در مقایسه با داده‌های سرور جدیدتر بوده و اکوی Firestore نتواند آن را بازنویسی کند.
+
+۵. پنجرهٔ هشدار از types.ts (حدود 259-267) و توضیح دلتای +3 خط:
+md5sum src/types.ts
+9dd028cbc2ce2cf9b42875265ccf8491  src/types.ts
+sed -n '259,267p' src/types.ts
+  autoSyncGoogleCalendar?: boolean;
+  plannerCalendarMap?: Record<string, string>; // itemId -> gcalEventId
+  plannerCalendarFingerprints?: Record<string, string>; // itemId -> content fingerprint (W4)
+  gcalAutoSyncIntervalMinutes?: number; // Minimum minutes between auto sync runs (default 10)
+  gcalDailyRequestCap?: number; // Daily request limit (default 400)
+  lastCalendarSyncTime?: string;
+  calendarSyncLog?: string[];
+  updatedAt?: string;
+}
+sed -n '259,267p' src/types.ts | wc -c
+453
+sed -n '259,267p' src/types.ts | sha256sum
+0cca28688cf4f77fa72f19b6e303bc7e47e031f54e7062f66299ee9e6246e55f  -
+
+توضیح دلتا:
+در فایل پیشین `src/types.ts`، فیلدهای `autoSyncGoogleCalendar` و `plannerCalendarMap` و `lastCalendarSyncTime` از قبل وجود داشتند. تنها ۳ فیلد زیر اضافه شدند:
+1) `plannerCalendarFingerprints?: Record<string, string>;` (+1 خط)
+2) `gcalAutoSyncIntervalMinutes?: number;` (+1 خط)
+3) `gcalDailyRequestCap?: number;` (+1 خط)
+بنابراین دلتای کل فایل دقیقاً +۳ خط (از ۳۷۶ خط به ۳۷۹ خط) بوده است.
+
+FIX4-EV ×3
+NONCE = FIX4-EV-K5Q7
+
+
+FIX4-F ×3
+NONCE = FIX4-F-8D4N
+
+═════════════════════════════════════════════════════════════════════════
+F-1 | W2 شاخهٔ «تمام‌شده» (بازه معتبر اما متعلق به گذشته)
+═════════════════════════════════════════════════════════════════════════
+
+تابع کمکی `isWeekRangeEndedOrInvalid` در نقطهٔ بارگیری اولیهٔ ابر (خط ۱۴۶۲ فایل src/App.tsx) اضافه شد تا علاوه بر اعتبارسنجی بازه (طول دقیقاً ۷ روز با `isWeekRangeValid`)، پایان بازه را نیز با تاریخ امروز تهران (`getTodayJalali(getNow())`) بسنجد:
+اگر سال پایان کوچکتر از سال جاری باشد، یا در همان سال ماه پایان قبل از ماه جاری باشد، یا در همان ماه روز پایان قبل از روز جاری باشد (یعنی بازه گذشته و تمام شده باشد)، بلافاصله با `getCurrentJalaliWeekRange(getNow())` به هفتهٔ جاری اصلاح شده و همان توست یکبارهٔ `showToast('بازهٔ هفته به هفتهٔ جاری اصلاح شد', 'info')` نمایش می‌یابد.
+
+[F-1 Window] App.tsx:1460-1477 (18 خط)
+md5sum src/App.tsx
+2a194fc60d6511a34ee4cd558bba5845  src/App.tsx
+sed -n '1460,1477p' src/App.tsx
+        isInitial = false;
+        // Helper: Check if week range is invalid or ended before today in Tehran (F-1)
+        const isWeekRangeEndedOrInvalid = (d: PlannerData) => {
+          if (!isWeekRangeValid(d)) return true;
+          const endMName = d.weekEndMonth || d.weekMonth || '';
+          const endMIdx = JALALI_MONTHS.indexOf(endMName);
+          if (endMIdx === -1) return true;
+          const ey = d.weekEndYear || d.weekYear || getTodayJalali(getNow()).year;
+          const ed = d.weekEndDay || 0;
+          const today = getTodayJalali(getNow());
+          return (
+            ey < today.year ||
+            (ey === today.year && endMIdx < today.monthIdx) ||
+            (ey === today.year && endMIdx === today.monthIdx && ed < today.day)
+          );
+        };
+
+        // Initial merge: compare updatedAt timestamps to protect newer local edits
+sed -n '1460,1477p' src/App.tsx | wc -c
+869
+sed -n '1460,1477p' src/App.tsx | sha256sum
+1c43e6e44dc3bebdd15b6310ab712aecddef8c8af3a70ed6d8bba6671c5b15e4  -
+
+═════════════════════════════════════════════════════════════════════════
+F-2 | سه پنجرهٔ هش‌دار (شواهد بدون تغییر کد)
+═════════════════════════════════════════════════════════════════════════
+
+(a) App.tsx:2477-2495 (ادامهٔ handleConfirmReset، بازنویسی کامل ابر و توست موفقیت) (19 خط)
+md5sum src/App.tsx
+2a194fc60d6511a34ee4cd558bba5845  src/App.tsx
+sed -n '2477,2495p' src/App.tsx
+      setTempEndDay(resetData.weekEndDay || curWeek.endDay);
+      setTempStartMonth(resetData.weekMonth || curWeek.startMonth);
+      setTempEndMonth(resetData.weekEndMonth || curWeek.endMonth);
+
+      try {
+        localStorage.setItem('planner_data', JSON.stringify(resetData));
+      } catch (_) {}
+
+      if (currentUser && currentUser.id) {
+        await savePlannerSubcollections(currentUser.id, resetData);
+      }
+
+      setIsResetConfirmOpen(false);
+      showToast('تمام اطلاعات با موفقیت پاک شد و برنامه به قالب اولیه بازنشانی گردید.', 'success');
+    } catch (err) {
+      console.error('Reset error:', err);
+      showToast('خطا در بازنشانی اطلاعات', 'error');
+    }
+  };
+sed -n '2477,2495p' src/App.tsx | wc -c
+761
+sed -n '2477,2495p' src/App.tsx | sha256sum
+29626c89cb56a33760a02c2b07154a342ebe09746b98343cb4685f9b251fa51c  -
+
+(b) App.tsx:1908-1935 (مسیر تکمیل همگام‌سازی خودکار، ذخیره fingerprint، نبود توست موفقیت، محدودساز ۶۰ ثانیه خطا) (28 خط)
+md5sum src/App.tsx
+2a194fc60d6511a34ee4cd558bba5845  src/App.tsx
+sed -n '1908,1935p' src/App.tsx
+        const res = await runGoogleCalendarAutoSync(dataRef.current, token, calId);
+        lastAutoSyncRunAtRef.current = Date.now();
+        lastCalendarSyncFpRef.current = calendarSyncKey;
+        try { localStorage.setItem('gcal_last_sync_fp', calendarSyncKey); } catch (_) {}
+
+        if (res.upsertedCount > 0 || res.deletedCount > 0) {
+          const nowTimeStr = new Date().toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' });
+          setData(prev => ({
+            ...prev,
+            plannerCalendarMap: res.updatedMap,
+            plannerCalendarFingerprints: res.updatedFingerprints,
+            lastCalendarSyncTime: nowTimeStr
+          }));
+          window.dispatchEvent(new CustomEvent('app-sync-status', { detail: { status: 'synced' } }));
+          // W3-1: Background success is completely silent (no toast)
+        } else {
+          window.dispatchEvent(new CustomEvent('app-sync-status', { detail: { status: 'synced' } }));
+        }
+
+        if (res.errors && res.errors.length > 0) {
+          calendarErrorCountRef.current++;
+          const nowMs = Date.now();
+          if (nowMs - lastCalendarErrorToastAtRef.current > 60000) {
+            lastCalendarErrorToastAtRef.current = nowMs;
+            showToast(`خطای همگام‌سازی خودکار تقویم گوگل (${calendarErrorCountRef.current} خطا)`, 'error');
+            calendarErrorCountRef.current = 0;
+          }
+        }
+sed -n '1908,1935p' src/App.tsx | wc -c
+1444
+sed -n '1908,1935p' src/App.tsx | sha256sum
+dcaba3f8c7eccad43b83cd36d8b4b1f16496fe8d2e1f4e890e741b8d5bafe457  -
+
+(c) GoogleCalendarSync.tsx:1195-1224 (منوی فاصله همگام‌سازی ۵ تا ۶۰ دقیقه و متن توضیحی کنار چک‌باکس) (30 خط)
+md5sum src/components/GoogleCalendarSync.tsx
+1d63b7e4fa58787930136a89c0826536  src/components/GoogleCalendarSync.tsx
+sed -n '1195,1224p' src/components/GoogleCalendarSync.tsx
+                  <span>{isRtl ? 'همگام‌سازی خودکار (بی‌صدا و حفاظت‌شده)' : 'Automatic Google Calendar Sync (Silent & Protected)'}</span>
+                  <span className="text-[10px] font-normal text-indigo-700">
+                    {isRtl 
+                      ? `با ایجاد یا تغییر کارها، تغییرات بدون پیام مزاحم و با رعایت سهمیه مصرف به تقویم منتقل می‌شوند (فاصله حداقل ${data.gcalAutoSyncIntervalMinutes || 10} دقیقه)` 
+                      : `Syncs changes silently with quota protection (min interval ${data.gcalAutoSyncIntervalMinutes || 10} min)`}
+                  </span>
+                </div>
+              </label>
+
+              {data.autoSyncGoogleCalendar && (
+                <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold text-slate-600">
+                      {isRtl ? 'حداقل فاصله زمانی همگام‌سازی خودکار:' : 'Minimum auto-sync interval:'}
+                    </span>
+                    <select
+                      value={data.gcalAutoSyncIntervalMinutes || 10}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10) || 10;
+                        if (onUpdateData) onUpdateData(prev => ({ ...prev, gcalAutoSyncIntervalMinutes: val }));
+                      }}
+                      className="p-1 px-2 text-[11px] font-black border border-slate-200 bg-white rounded-lg text-slate-800"
+                    >
+                      <option value={5}>۵ دقیقه</option>
+                      <option value={10}>۱۰ دقیقه (پیش‌فرض)</option>
+                      <option value={15}>۱۵ دقیقه</option>
+                      <option value={30}>۳۰ دقیقه</option>
+                      <option value={60}>۶۰ دقیقه</option>
+                    </select>
+                  </div>
+sed -n '1195,1224p' src/components/GoogleCalendarSync.tsx | wc -c
+2158
+sed -n '1195,1224p' src/components/GoogleCalendarSync.tsx | sha256sum
+25bdb1c320b8519f2fbc3cf4311b9eb7fcc4676571d14308d0709666d7acd23d  -
+
+═════════════════════════════════════════════════════════════════════════
+F-3 | مسیر آزمون T5 (گزینه سفارشی و ورودی ۱ تا ۲۰۰۰ در سقف روزانه)
+═════════════════════════════════════════════════════════════════════════
+
+در منوی سقف روزانه تقویم گوگل، گزینهٔ «سفارشی...» اضافه شد. به محض انتخاب، فیلد ورودی عدد آزاد (min=1, max=2000) ظاهر می‌شود و مقدار پیش‌فرض آن برای اجرای سناریوی تست T5 روی ۳ تنظیم می‌گردد. همچنین انتخاب گزینه‌های استاندارد (۲۰۰، ۴۰۰، ۸۰۰، ۱۵۰۰) ورودی عددی را پنهان می‌کند.
+
+[F-3 Window] GoogleCalendarSync.tsx:1226-1255 (30 خط)
+md5sum src/components/GoogleCalendarSync.tsx
+1d63b7e4fa58787930136a89c0826536  src/components/GoogleCalendarSync.tsx
+sed -n '1226,1255p' src/components/GoogleCalendarSync.tsx
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-1.5 border-t border-slate-200/60">
+                    <span className="text-[11px] font-bold text-slate-600">
+                      {isRtl ? 'سقف مجاز درخواست روزانه (بودجه سهمیه):' : 'Daily request quota cap:'}
+                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <select
+                        value={![200, 400, 800, 1500].includes(data.gcalDailyRequestCap || 400) ? 'custom' : (data.gcalDailyRequestCap || 400)}
+                        onChange={(e) => {
+                          if (e.target.value === 'custom') {
+                            if (onUpdateData) onUpdateData(prev => ({ ...prev, gcalDailyRequestCap: 3 }));
+                          } else {
+                            const val = parseInt(e.target.value, 10) || 400;
+                            if (onUpdateData) onUpdateData(prev => ({ ...prev, gcalDailyRequestCap: val }));
+                          }
+                        }}
+                        className="p-1 px-2 text-[11px] font-black border border-slate-200 bg-white rounded-lg text-slate-800"
+                      >
+                        <option value={200}>۲۰۰ درخواست</option>
+                        <option value={400}>۴۰۰ درخواست (پیش‌فرض)</option>
+                        <option value={800}>۸۰۰ درخواست</option>
+                        <option value={1500}>۱۵۰۰ درخواست</option>
+                        <option value="custom">سفارشی...</option>
+                      </select>
+                      {![200, 400, 800, 1500].includes(data.gcalDailyRequestCap || 400) && (
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min={1}
+                            max={2000}
+                            value={data.gcalDailyRequestCap || 3}
+sed -n '1226,1255p' src/components/GoogleCalendarSync.tsx | wc -c
+2070
+sed -n '1226,1255p' src/components/GoogleCalendarSync.tsx | sha256sum
+d49ca46c3b0f2c1c30924e2494b966a8f85352c77743c1d0b08dd1520da2c152  -
+
+═════════════════════════════════════════════════════════════════════════
+F-4 | APP_VERSION → "1.6.1"
+═════════════════════════════════════════════════════════════════════════
+
+grep -n "APP_VERSION" src/types.ts
+1:export const APP_VERSION = "1.6.1";
+
+grep -n '"version"' package.json
+4:  "version": "1.6.1",
+
+FIX4-F ×3
+NONCE = FIX4-F-8D4N
+
+═════════════════════════════════════════════════════════════════════════
+P0-F — پین بعد از تغییرات
+═════════════════════════════════════════════════════════════════════════
+
+md5sum src/App.tsx src/types.ts src/utils/jalali.ts src/lib/gcalAutoSyncEngine.ts src/components/GoogleCalendarSync.tsx package.json
+2a194fc60d6511a34ee4cd558bba5845  src/App.tsx
+d7eb1b488340aaadd1d239a2ddac8aad  src/types.ts
+6b5c2a846baa3ba565d2f915375f6d10  src/utils/jalali.ts
+2cbd1b0805acdffc639397d0b98b3fd0  src/lib/gcalAutoSyncEngine.ts
+1d63b7e4fa58787930136a89c0826536  src/components/GoogleCalendarSync.tsx
+d72238dccdf9e84a502c529c25887902  package.json
+
+wc -l src/App.tsx src/types.ts src/utils/jalali.ts src/lib/gcalAutoSyncEngine.ts src/components/GoogleCalendarSync.tsx package.json
+  8488 src/App.tsx
+   379 src/types.ts
+   415 src/utils/jalali.ts
+   439 src/lib/gcalAutoSyncEngine.ts
+  1479 src/components/GoogleCalendarSync.tsx
+    48 package.json
+ 11248 total
+
+دست‌نخورده ماندن فایل‌های حساس:
+- src/utils/jalali.ts: هش 6b5c2a846baa3ba565d2f915375f6d10 (۴۱۵ خط) دقیقا عین دورهای قبلی FIX4 و FIX4-EV.
+- src/lib/gcalAutoSyncEngine.ts: هش 2cbd1b0805acdffc639397d0b98b3fd0 (۴۳۹ خط) دقیقا عین دورهای قبلی FIX4 و FIX4-EV.
+
+═════════════════════════════════════════════════════════════════════════
+G — گیتهای نهایی
+═════════════════════════════════════════════════════════════════════════
+
+[G-1]
+grep -rnE "(^|[^a-zA-Z0-9_])(window\.(confirm|alert|prompt)|alert\(|confirm\(|prompt\()" src/; echo "EXIT_CODE=$?"
+EXIT_CODE=1
+
+[G-2]
+npx tsc --noEmit; echo "TSC_EXIT=$?"
+TSC_EXIT=0
+
+[G-3]
+npm run build 2>&1 | tail -15
+dist/assets/purify.es-Jn2rvFN8.js           28.91 kB │ gzip:  10.90 kB
+dist/assets/index.es-BZhsWupl.js           159.60 kB │ gzip:  53.51 kB
+dist/assets/html2canvas.esm-QH1iLAAe.js    202.38 kB │ gzip:  48.04 kB
+dist/assets/index-DJthOkwE.js            3,339.51 kB │ gzip: 853.02 kB
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 28.07s
+  dist/server.cjs      120.2kb
+  dist/server.cjs.map  182.3kb
+⚡ Done in 18ms
+
+stat -c "%n %s" dist/assets/index-*.js dist/server.cjs
+dist/assets/index-DJthOkwE.js 3339509
+dist/server.cjs 123130
+
+FIX4-F ×3
+NONCE = FIX4-F-8D4N

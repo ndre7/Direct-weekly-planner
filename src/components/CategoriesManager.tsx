@@ -44,9 +44,7 @@ export default function CategoriesManager({
   };
 
   const deleteCategory = (id: string) => {
-    if (window.confirm('آیا مایل به حذف این دسته‌بندی هستید؟')) {
-      onUpdateCategories(categories.filter((c) => c.id !== id));
-    }
+    onUpdateCategories(categories.filter((c) => c.id !== id));
   };
 
   const startEditing = (cat: Category) => {

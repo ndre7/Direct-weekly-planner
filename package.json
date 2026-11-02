@@ -1,7 +1,7 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.7.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -23,12 +23,14 @@
     "firebase-admin": "^14.2.0",
     "html2canvas": "^1.4.1",
     "html2canvas-pro": "^2.3.0",
+    "https-proxy-agent": "^9.1.0",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "pg": "^8.22.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
+    "undici": "^8.11.2",
     "vite": "^6.2.3"
   },
   "devDependencies": {

@@ -63,7 +63,7 @@ interface SidebarProps {
   setCurrentUser: (user: User | null) => void;
   onSyncData: (user: User, customData?: PlannerData) => Promise<void>;
   onLoadData: (user: User) => Promise<PlannerData | null>;
-  showToast: (msg: string) => void;
+  showToast: (msg: string, type?: 'success' | 'error') => void;
   lang: 'fa' | 'en';
   onOpenProfileModal?: () => void;
 }
@@ -747,16 +747,14 @@ export default function Sidebar({
         const cloudData = await onLoadData(loggedInUser);
         if (cloudData) {
           const cloudConfirmMsg = isRtl 
-            ? 'اطلاعات همگام‌سازی شده ابری شما پیدا شد. آیا می‌خواهید اطلاعات فعلی برنامه با نسخه ابری جایگزین شود؟'
-            : 'Your synchronized cloud backup was found. Do you want to load and replace your current local planner with the cloud version?';
-
-          if (window.confirm(cloudConfirmMsg)) {
+          const localTime = data.updatedAt ? new Date(data.updatedAt).getTime() : 0;
+          const cloudTime = cloudData.updatedAt ? new Date(cloudData.updatedAt).getTime() : 0;
+          if (cloudTime > localTime) {
             setData(cloudData);
-            showToast(isRtl ? 'اطلاعات ابری با موفقیت بارگیری و جایگزین شد.' : 'Cloud data loaded and restored.');
+            showToast(isRtl ? 'اطلاعات ابری تازه‌تر بارگیری شد.' : 'Newer cloud data loaded.');
           } else {
-            // Keep local and sync to cloud
             await onSyncData(loggedInUser, data);
-            showToast(isRtl ? 'داده‌های محلی فعلی شما روی حساب ابری ثبت شد.' : 'Local planner data backed up to the cloud.');
+            showToast(isRtl ? 'داده‌های محلی روی حساب ابری ثبت شد.' : 'Local planner data backed up to the cloud.');
           }
         } else {
           // No cloud data, upload local data
@@ -773,19 +771,13 @@ export default function Sidebar({
   };
 
   const handleLogout = async () => {
-    const logoutMsg = isRtl 
-      ? 'آیا مطمئن هستید که می‌خواهید از حساب ابری خود خارج شوید؟ داده‌های محلی شما باقی خواهند ماند.'
-      : 'Are you sure you want to sign out? Your offline data will remain safe.';
-
-    if (window.confirm(logoutMsg)) {
-      try {
-        await clientSignOut();
-      } catch (err) {
-        console.error("Firebase signOut error:", err);
-      }
+    try {
+      await clientSignOut();
       setCurrentUser(null);
       localStorage.removeItem('planner_user');
       showToast(isRtl ? 'با موفقیت از حساب کاربری خود خارج شدید.' : 'Signed out of cloud account successfully.');
+    } catch (err) {
+      console.error("Firebase signOut error:", err);
     }
   };
 
@@ -1291,7 +1283,11 @@ export default function Sidebar({
                           const loggedInUser = await clientGoogleLogin();
                           setCurrentUser(loggedInUser);
                           localStorage.setItem('planner_user', JSON.stringify(loggedInUser));
-                          showToast(isRtl ? 'ورود با گوگل با موفقیت انجام شد!' : 'Signed in with Google successfully!');
+                          if (loggedInUser.isDirectMode) {
+                            showToast(isRtl ? 'اتصال به سرور برقرار نشد؛ برنامه در حالت مستقیم ادامه می‌دهد' : 'Server connection failed; continuing in direct mode', 'error');
+                          } else {
+                            showToast(isRtl ? 'ورود با گوگل با موفقیت انجام شد!' : 'Signed in with Google successfully!');
+                          }
                           const cloudData = await onLoadData(loggedInUser);
                           if (cloudData) {
                             setData(cloudData);
@@ -1301,7 +1297,7 @@ export default function Sidebar({
                           setIsAuthExpanded(false);
                         } catch (err: any) {
                           console.error(err);
-                          setAuthError(err.message || 'ورود با گوگل ناموفق بود');
+                          setAuthError(getAuthErrorMessage(err, isRtl));
                         } finally {
                           setIsAuthLoading(false);
                         }
