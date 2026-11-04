@@ -59,6 +59,9 @@ function isAdmin(email?: string | null) {
   return !!email && ADMIN_EMAILS.includes(email.toLowerCase());
 }
 
+// تعلیق حساب (suspend) و یکتایی username در حالت آفلاین دسکتاپ به دلیل نبود PostgreSQL اعمال نمی‌شوند
+const hasSql = Boolean(process.env.SQL_HOST && process.env.SQL_USER && process.env.SQL_DB_NAME);
+
 app.use(express.json({ limit: "50mb" }));
 
 // --- API ROUTES ---
@@ -241,6 +244,14 @@ app.post("/api/auth/firebase-sync", requireAuth, async (req: AuthRequest, res) =
     const { username } = req.body;
     let normUsername: string | undefined = undefined;
 
+    if (!hasSql) {
+      return res.json({ success: true, localMode: true, user: {
+        id: userToken.uid,
+        email: userToken.email || '',
+        username: (userToken as any).name || (userToken.email || '').split('@')[0] || 'کاربر'
+      }});
+    }
+
     if (username && typeof username === 'string' && username.trim()) {
       normUsername = username.trim().toLowerCase();
       const existingUserWithUsername = await db
@@ -291,6 +302,15 @@ app.post("/api/auth/update-username", requireAuth, async (req: AuthRequest, res)
     }
 
     const trimmedUsername = username.trim().toLowerCase();
+
+    if (!hasSql) {
+      return res.json({
+        success: true,
+        localMode: true,
+        username: trimmedUsername,
+        email: userToken.email
+      });
+    }
 
     // Check if username is already taken by another user
     const existingUserWithUsername = await db
@@ -348,6 +368,15 @@ app.get("/api/auth/get-email", async (req, res) => {
 app.post("/api/auth/validate", requireAuth, async (req: AuthRequest, res) => {
   try {
     const userToken = req.user!;
+
+    if (!hasSql) {
+      return res.json({ success: true, localMode: true, user: {
+        id: userToken.uid,
+        email: userToken.email || '',
+        username: (userToken as any).name || (userToken.email || '').split('@')[0] || 'کاربر'
+      }});
+    }
+
     const userResult = await db.select().from(users).where(eq(users.uid, userToken.uid));
     
     if (userResult.length === 0) {
@@ -375,6 +404,15 @@ app.post("/api/auth/validate", requireAuth, async (req: AuthRequest, res) => {
 app.post("/api/auth/refresh", requireAuth, async (req: AuthRequest, res) => {
   try {
     const userToken = req.user!;
+
+    if (!hasSql) {
+      return res.json({ success: true, localMode: true, user: {
+        id: userToken.uid,
+        email: userToken.email || '',
+        username: (userToken as any).name || (userToken.email || '').split('@')[0] || 'کاربر'
+      }});
+    }
+
     const userResult = await db.select().from(users).where(eq(users.uid, userToken.uid));
     
     if (userResult.length === 0) {
@@ -403,7 +441,11 @@ app.post("/api/planner/sync", requireAuth, async (req: AuthRequest, res) => {
   try {
     const userToken = req.user!;
     const { data } = req.body;
-    
+
+    if (!hasSql) {
+      return res.json({ success: true, localMode: true });
+    }
+
     const userResult = await db.select().from(users).where(eq(users.uid, userToken.uid));
     if (userResult.length === 0) {
       return res.status(401).json({ error: "کاربر معتبر نیست" });
@@ -423,7 +465,11 @@ app.post("/api/planner/sync", requireAuth, async (req: AuthRequest, res) => {
 app.get("/api/planner/load", requireAuth, async (req: AuthRequest, res) => {
   try {
     const userToken = req.user!;
-    
+
+    if (!hasSql) {
+      return res.json({ success: true, localMode: true, data: null });
+    }
+
     const userResult = await db.select().from(users).where(eq(users.uid, userToken.uid));
     if (userResult.length === 0) {
       return res.status(401).json({ error: "کاربر معتبر نیست" });

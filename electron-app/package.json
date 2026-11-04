@@ -1,0 +1,49 @@
+{
+  "name": "weekly-planner",
+  "productName": "Weekly Planner",
+  "private": true,
+  "description": "Weekly Planner - offline-capable Persian weekly planner (Windows build)",
+  "main": "main.js",
+  "author": "ndredev",
+  "devDependencies": {
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.ndredev.weeklyplanner",
+    "productName": "Weekly Planner",
+    "copyright": "Copyright © 2026 ndredev",
+    "electronVersion": "38.0.0",
+    "asar": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "package.json",
+      ".env",
+      "dist/**/*",
+      "server-dist/**/*",
+      "node_modules/**/*",
+      "!node_modules/electron-builder/**",
+      "!node_modules/.bin/**",
+      "!node_modules/**/.bin/**"
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Weekly Planner",
+      "artifactName": "Weekly-Planner-Setup-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Weekly-Planner-Portable-${version}-${arch}.${ext}"
+    }
+  }
+}

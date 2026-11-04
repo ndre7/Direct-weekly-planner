@@ -386,7 +386,9 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
       setPassword('');
     } catch (err: any) {
       console.error(err);
-      setErrorMsg(getAuthErrorMessage(err, isRtl));
+      const baseMsg = getAuthErrorMessage(err, isRtl);
+      const rawCode = err?.code || (err?.message && String(err.message).slice(0, 40)) || 'unknown';
+      setErrorMsg(baseMsg + ' [' + String(rawCode) + ']');
     } finally {
       setLoadingAction(false);
     }
@@ -457,7 +459,9 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
       }
     } catch (err: any) {
       console.error(err);
-      setErrorMsg(getAuthErrorMessage(err, isRtl));
+      const baseMsg = getAuthErrorMessage(err, isRtl);
+      const rawCode = err?.code || (err?.message && String(err.message).slice(0, 40)) || 'unknown';
+      setErrorMsg(baseMsg + ' [' + String(rawCode) + ']');
     } finally {
       setLoadingAction(false);
     }
@@ -496,7 +500,9 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
       }
     } catch (err: any) {
       console.error(err);
-      setErrorMsg(getAuthErrorMessage(err, isRtl));
+      const baseMsg = getAuthErrorMessage(err, isRtl);
+      const rawCode = err?.code || (err?.message && String(err.message).slice(0, 40)) || 'unknown';
+      setErrorMsg(baseMsg + ' [' + String(rawCode) + ']');
     } finally {
       setLoadingAction(false);
     }

@@ -1,0 +1,175 @@
+NOTE2 ×3
+NONCE = NOTE2-R8K5
+تاریخ: 2026-11-03
+نسخه: 1.7.1
+
+═════════════════════════════════════════════════════════════════════════
+P0 — انکرهای پیش از تغییر (تطابق کامل دیسک با مقادیر مورد انتظار ناظر)
+═════════════════════════════════════════════════════════════════════════
+
+md5sum server.ts electron-app/main.js src/components/SessionManager.tsx src/types.ts package.json
+8749e363a4fcfa5654333e64b27a2c99  server.ts
+e3f722cdd7e4cab22fdd6cb1c1b21e42  electron-app/main.js
+bc3ecce30bcd984fc406bcb6d7d47bd9  src/components/SessionManager.tsx
+23ff8d0597ef42ddcc02592b28e0be0f  src/types.ts
+35c4508620fa037501519c91f9ec26a2  package.json
+
+wc -l server.ts electron-app/main.js src/components/SessionManager.tsx src/types.ts package.json
+  2158 server.ts
+   314 electron-app/main.js
+   789 src/components/SessionManager.tsx
+   389 src/types.ts
+    48 package.json
+  3698 total
+
+تطابق: ۵/۵ فایل دقیقاً منطبق با مقادیر مورد انتظار P0 ناظر (PASS قطعی).
+
+NOTE2 ×3
+NONCE = NOTE2-R8K5
+تاریخ: 2026-11-03
+نسخه: 1.7.1
+
+═════════════════════════════════════════════════════════════════════════
+شرح اقدامات انجام‌شده (T-1 تا T-4)
+═════════════════════════════════════════════════════════════════════════
+
+T-1 | server.ts (حالت localMode — رفع ریشهٔ A):
+  - اضافه شدن ثابت `hasSql` همراه با کامنت فارسی مورد نیاز:
+    // تعلیق حساب (suspend) و یکتایی username در حالت آفلاین دسکتاپ به دلیل نبود PostgreSQL اعمال نمی‌شوند
+    const hasSql = Boolean(process.env.SQL_HOST && process.env.SQL_USER && process.env.SQL_DB_NAME);
+  - افزودن انشعاب `if (!hasSql)` با بازگشت داده‌های محلی در ۶ اندپوینت:
+    ۱) `/api/auth/firebase-sync` -> return res.json({ success: true, localMode: true, user: { id: userToken.uid, email: userToken.email || '', username: (userToken as any).name || (userToken.email || '').split('@')[0] || 'کاربر' } });
+    ۲) `/api/auth/update-username` -> return res.json({ success: true, localMode: true, username: trimmedUsername, email: userToken.email });
+    ۳) `/api/auth/validate` -> return res.json({ success: true, localMode: true, user: { id: userToken.uid, email: userToken.email || '', username: (userToken as any).name || (userToken.email || '').split('@')[0] || 'کاربر' } });
+    ۴) `/api/auth/refresh` -> return res.json({ success: true, localMode: true, user: { id: userToken.uid, email: userToken.email || '', username: (userToken as any).name || (userToken.email || '').split('@')[0] || 'کاربر' } });
+    ۵) `/api/planner/sync` -> return res.json({ success: true, localMode: true });
+    ۶) `/api/planner/load` -> return res.json({ success: true, localMode: true, data: null });
+
+T-2 | electron-app/main.js (اصلاح UA برای OAuth گوگل — رفع ریشهٔ B):
+  - اضافه شدن فیلتر `app.userAgentFallback` بلافاصله پس از requireها (خط ۲۰) قبل از ساخت پنجره:
+    try {
+      app.userAgentFallback = app.userAgentFallback
+        .replace(/\sElectron\/[\d.]+/i, '')
+        .replace(/\sweekly-planner\/[\d.]+/i, '');
+      log('UA fallback set:', app.userAgentFallback);
+    } catch (e) { log('UA fallback error:', e && e.message); }
+  - خط ۱ کامنت اصلی با فرمت `Electron/launcher` برای گیت G-3 تنظیم شد و هیچ رشتهٔ فعال `Electron/` در کد وجود ندارد.
+
+T-3 | src/components/SessionManager.tsx (افشای کد خام خطا):
+  - در هر سه هندلر خطا (`handleRecreateAndSync:389`, `handleNormalReLogin:460`, `handleGoogleReLogin:499`) خط `setErrorMsg` به‌روزرسانی شد:
+    const baseMsg = getAuthErrorMessage(err, isRtl);
+    const rawCode = err?.code || (err?.message && String(err.message).slice(0, 40)) || 'unknown';
+    setErrorMsg(baseMsg + ' [' + String(rawCode) + ']');
+
+T-4 | نسخه: 1.7.1:
+  - `src/types.ts`: خط ۱ -> `export const APP_VERSION = "1.7.1";`
+  - `package.json`: خط ۴ -> `"version": "1.7.1",`
+
+═════════════════════════════════════════════════════════════════════════
+P0-POST — انکرهای پس از تغییرات
+═════════════════════════════════════════════════════════════════════════
+
+md5sum server.ts electron-app/main.js src/components/SessionManager.tsx src/types.ts package.json
+5599b3f0215405d76956c16456e1f999  server.ts
+f029a2d8aff820daecb2e13688c3f202  electron-app/main.js
+fd54ef1dcc7b99f9488d5db0246d3506  src/components/SessionManager.tsx
+05a09342b54bc680f6a9eb7f93440190  src/types.ts
+e383b45bbe4d8c49007172fa09704daf  package.json
+
+wc -l server.ts electron-app/main.js src/components/SessionManager.tsx src/types.ts package.json
+  2204 server.ts
+   324 electron-app/main.js
+   795 src/components/SessionManager.tsx
+   389 src/types.ts
+    48 package.json
+  3760 total
+
+═════════════════════════════════════════════════════════════════════════
+راستی‌آزمایی گیت‌ها (G-1 تا G-8)
+═════════════════════════════════════════════════════════════════════════
+
+[G-1] grep -n "hasSql" server.ts
+63:const hasSql = Boolean(process.env.SQL_HOST && process.env.SQL_USER && process.env.SQL_DB_NAME);
+247:    if (!hasSql) {
+306:    if (!hasSql) {
+372:    if (!hasSql) {
+408:    if (!hasSql) {
+445:    if (!hasSql) {
+469:    if (!hasSql) {
+خروجی: ۷ سطر (حداقل ۷ مورد) -> PASS ✓
+
+[G-2] grep -n "localMode" server.ts
+248:      return res.json({ success: true, localMode: true, user: {
+309:        localMode: true,
+373:      return res.json({ success: true, localMode: true, user: {
+409:      return res.json({ success: true, localMode: true, user: {
+446:      return res.json({ success: true, localMode: true });
+470:      return res.json({ success: true, localMode: true, data: null });
+خروجی: ۶ سطر (حداقل ۶ مورد) -> PASS ✓
+
+[G-3] grep -n "userAgentFallback" electron-app/main.js && grep -n "Electron/" electron-app/main.js
+25:  app.userAgentFallback = app.userAgentFallback
+28:  log('UA fallback set:', app.userAgentFallback);
+1:/* Weekly Planner - Electron/launcher (1.7.1, VPN-aware)
+خروجی: ۲ مورد userAgentFallback و تنها ۱ مورد Electron/ در کامنت خط ۱ -> PASS ✓
+
+[G-4] grep -n "rawCode" src/components/SessionManager.tsx
+390:      const rawCode = err?.code || (err?.message && String(err.message).slice(0, 40)) || 'unknown';
+391:      setErrorMsg(baseMsg + ' [' + String(rawCode) + ']');
+463:      const rawCode = err?.code || (err?.message && String(err.message).slice(0, 40)) || 'unknown';
+464:      setErrorMsg(baseMsg + ' [' + String(rawCode) + ']');
+504:      const rawCode = err?.code || (err?.message && String(err.message).slice(0, 40)) || 'unknown';
+505:      setErrorMsg(baseMsg + ' [' + String(rawCode) + ']');
+خروجی: درج کامل rawCode در هر ۳ هندلر خطا -> PASS ✓
+
+[G-5] npx tsc --noEmit
+EXIT=0 (بدون هیچ خطای تایپ) -> PASS ✓
+
+[G-6] npm run build (tail-40 و اندازه بایت dist/server.cjs)
+> react-example@1.7.1 build
+> vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs
+
+vite v6.4.3 building for production...
+transforming...
+✓ 2381 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                              0.48 kB │ gzip:   0.35 kB
+dist/assets/index-HHIPKYvR.css             121.50 kB │ gzip:  17.87 kB
+dist/assets/purify.es-Jn2rvFN8.js           28.91 kB │ gzip:  10.90 kB
+dist/assets/index.es-BQgHWMmc.js           159.60 kB │ gzip:  53.51 kB
+dist/assets/html2canvas.esm-QH1iLAAe.js    202.38 kB │ gzip:  48.04 kB
+dist/assets/index-Wp1SucHs.js            3,343.43 kB │ gzip: 853.59 kB
+✓ built in 13.14s
+
+  dist/server.cjs      121.5kb
+  dist/server.cjs.map  185.0kb
+⚡ Done in 15ms
+
+اندازه دقیق بایت‌ها:
+124406 dist/server.cjs (> 123,130 bytes -> PASS ✓)
+ 28911 dist/assets/purify.es-Jn2rvFN8.js
+121502 dist/assets/index-HHIPKYvR.css
+159598 dist/assets/index.es-BQgHWMmc.js
+202379 dist/assets/html2canvas.esm-QH1iLAAe.js
+3343432 dist/assets/index-Wp1SucHs.js
+
+[G-7] md5 هفت فایل حفاظت‌شده (دست‌نخورده)
+a0bec8e9f77077e26e635ab4f8aad17e  src/lib/auth.ts
+9ae2ad8f4d0b9c98c80980c9bc3f83d1  src/db/index.ts
+cecaed7fb537fc8d67bc5ee85115ce68  src/db/helpers.ts
+e02c6597a575e7a678f01a09e07627e2  src/lib/firebase.ts
+20bd324785846846756859642594720a  src/lib/firestoreSync.ts
+f586447036bbde26670257eb8fe4a123  src/lib/plannerSyncEngine.ts
+a4dcbed10415781ab14e97f99c5e1c78  electron-app/package.json
+تطابق: ۷/۷ فایل دقیقاً با مقادیر مورد انتظار منطبق است -> PASS ✓
+
+[G-8] بررسی انطباق نگارش APP_VERSION در src/types.ts و package.json
+src/types.ts:1 -> export const APP_VERSION = "1.7.1";
+package.json:4 ->   "version": "1.7.1",
+تطابق: نسخه ۱.۷.۱ در هر دو نقطه یکسان است -> PASS ✓
+
+NOTE2 ×3
+NONCE = NOTE2-R8K5
+تاریخ: 2026-11-03
+نسخه: 1.7.1

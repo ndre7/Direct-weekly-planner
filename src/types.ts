@@ -1,4 +1,4 @@
-export const APP_VERSION = "1.7.0";
+export const APP_VERSION = "1.7.1";
 
 export type Language = 'fa' | 'en';
 
