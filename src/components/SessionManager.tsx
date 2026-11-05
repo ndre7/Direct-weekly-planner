@@ -200,6 +200,8 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
             }
           }
 
+          const isNative = typeof window !== 'undefined' && Boolean((window as any).Capacitor?.isNativePlatform?.());
+
           // Validate with server
           const res = await timeSyncFetch('/api/auth/validate', {
             method: 'POST',
@@ -224,9 +226,17 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
             localStorage.setItem('planner_user', JSON.stringify(verifiedUser));
           } else {
             console.warn('Session verification failed on server:', resData);
-            if (res.status === 503) {
+            if (res.status === 503 || isNative) {
               setStatus('OFFLINE_MODE');
               setIsCriticalAuthFailure(false);
+              const verifiedUser: User = {
+                id: firebaseUser.uid,
+                email: firebaseUser.email!,
+                username,
+                token
+              };
+              setCurrentUser(verifiedUser);
+              localStorage.setItem('planner_user', JSON.stringify(verifiedUser));
             } else {
               setIsCriticalAuthFailure(true);
               if (res.status === 403) {
@@ -253,6 +263,28 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
         } catch (err) {
           console.error('Failed to validate session:', err);
           setStatus('OFFLINE_MODE');
+          setIsCriticalAuthFailure(false);
+          const isNative = typeof window !== 'undefined' && Boolean((window as any).Capacitor?.isNativePlatform?.());
+          if (isNative && auth.currentUser) {
+            const firebaseUser = auth.currentUser;
+            const savedUser = localStorage.getItem('planner_user');
+            let username = firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User';
+            if (savedUser) {
+              try {
+                const parsed = JSON.parse(savedUser);
+                if (parsed.username) username = parsed.username;
+              } catch (_) {}
+            }
+            const token = await getIdToken(firebaseUser).catch(() => '');
+            const verifiedUser: User = {
+              id: firebaseUser.uid,
+              email: firebaseUser.email!,
+              username,
+              token
+            };
+            setCurrentUser(verifiedUser);
+            localStorage.setItem('planner_user', JSON.stringify(verifiedUser));
+          }
         } finally {
           setChecking(false);
         }
@@ -270,7 +302,8 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
 
   // Scheduled retry every 60s when in OFFLINE_MODE (e.g. temporary 503 auth infra failure)
   useEffect(() => {
-    if (status !== 'OFFLINE_MODE' || !auth.currentUser) return;
+    const isNative = typeof window !== 'undefined' && Boolean((window as any).Capacitor?.isNativePlatform?.());
+    if (isNative || status !== 'OFFLINE_MODE' || !auth.currentUser) return;
 
     const timer = setInterval(async () => {
       try {

@@ -6,9 +6,12 @@ import {
   onAuthStateChanged,
   getIdToken,
   signInWithPopup,
+  signInWithRedirect,
   GoogleAuthProvider
 } from 'firebase/auth';
 import { auth, googleAuthProvider } from './firebase.ts';
+
+export const isNativePlatform = typeof window !== 'undefined' && Boolean((window as any).Capacitor?.isNativePlatform?.());
 
 export { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithCustomToken, signOut, onAuthStateChanged };
 
@@ -91,6 +94,24 @@ export async function clientRegister(email: string, username: string, password: 
     
     const token = await getIdToken(user);
     
+    if (isNativePlatform) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('app-toast', {
+          detail: {
+            message: 'ثبت‌نام مستقیم با فایربیس انجام شد',
+            type: 'info'
+          }
+        }));
+      }
+      return {
+        id: user.uid,
+        email: user.email!,
+        username: username || 'کاربر',
+        token,
+        isDirectMode: true,
+      };
+    }
+
     const res = await fetch('/api/auth/firebase-sync', {
       method: 'POST',
       headers: {
@@ -113,6 +134,17 @@ export async function clientRegister(email: string, username: string, password: 
       token,
     };
   } catch (err: any) {
+    if (isNativePlatform && auth.currentUser) {
+      const user = auth.currentUser;
+      const token = await getIdToken(user).catch(() => '');
+      return {
+        id: user.uid,
+        email: user.email!,
+        username: username || 'کاربر',
+        token,
+        isDirectMode: true,
+      };
+    }
     // If Email/Password provider is disabled in Firebase Console or returns operation-not-allowed, fallback to server registration
     if (err?.code?.includes('operation-not-allowed') || err?.message?.includes('operation-not-allowed') || err?.code === 'auth/operation-not-allowed') {
       const res = await fetch('/api/auth/server-register', {
@@ -145,6 +177,9 @@ export async function clientRegister(email: string, username: string, password: 
 export async function clientLogin(emailOrUsername: string, password: string) {
   let email = emailOrUsername;
   if (!emailOrUsername.includes('@')) {
+    if (isNativePlatform) {
+      throw new Error('در اپلیکیشن همراه، لطفاً ایمیل کامل خود را وارد کنید');
+    }
     const res = await fetch(`/api/auth/get-email?username=${encodeURIComponent(emailOrUsername)}`);
     if (res.ok) {
       const data = await safeParseJson(res);
@@ -159,6 +194,24 @@ export async function clientLogin(emailOrUsername: string, password: string) {
     const user = userCredential.user;
     const token = await getIdToken(user);
     
+    if (isNativePlatform) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('app-toast', {
+          detail: {
+            message: 'ورود مستقیم با فایربیس انجام شد',
+            type: 'info'
+          }
+        }));
+      }
+      return {
+        id: user.uid,
+        email: user.email!,
+        username: user.displayName || user.email?.split('@')[0] || 'کاربر',
+        token,
+        isDirectMode: true,
+      };
+    }
+
     const res = await fetch('/api/auth/firebase-sync', {
       method: 'POST',
       headers: {
@@ -180,6 +233,17 @@ export async function clientLogin(emailOrUsername: string, password: string) {
       token,
     };
   } catch (err: any) {
+    if (isNativePlatform && auth.currentUser) {
+      const user = auth.currentUser;
+      const token = await getIdToken(user).catch(() => '');
+      return {
+        id: user.uid,
+        email: user.email!,
+        username: user.displayName || user.email?.split('@')[0] || 'کاربر',
+        token,
+        isDirectMode: true,
+      };
+    }
     if (err?.code?.includes('operation-not-allowed') || err?.message?.includes('operation-not-allowed') || err?.code === 'auth/operation-not-allowed') {
       const res = await fetch('/api/auth/server-login', {
         method: 'POST',
@@ -209,6 +273,17 @@ export async function clientLogin(emailOrUsername: string, password: string) {
 }
 
 export async function clientGoogleLogin() {
+  if (isNativePlatform) {
+    await signInWithRedirect(auth, googleAuthProvider);
+    return {
+      id: 'redirecting',
+      email: '',
+      username: 'کاربر',
+      token: '',
+      isRedirecting: true,
+    };
+  }
+
   const userCredential = await signInWithPopup(auth, googleAuthProvider);
   const user = userCredential.user;
   const token = await getIdToken(user);
@@ -398,6 +473,9 @@ export function isGmailTokenExpired(): boolean {
 }
 
 export async function connectGoogleCalendar(): Promise<string> {
+  if (isNativePlatform) {
+    throw new Error('اتصال گوگل‌کالندر/جیمیل در این نسخهٔ اندروید فعال نیست');
+  }
   const provider = new GoogleAuthProvider();
   provider.addScope('https://www.googleapis.com/auth/calendar');
   provider.addScope('https://www.googleapis.com/auth/calendar.events');
@@ -413,6 +491,9 @@ export async function connectGoogleCalendar(): Promise<string> {
 }
 
 export async function connectGmail(): Promise<string> {
+  if (isNativePlatform) {
+    throw new Error('اتصال گوگل‌کالندر/جیمیل در این نسخهٔ اندروید فعال نیست');
+  }
   const provider = new GoogleAuthProvider();
   provider.addScope('https://www.googleapis.com/auth/gmail.send');
   provider.addScope('https://www.googleapis.com/auth/gmail.readonly');
